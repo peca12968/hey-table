@@ -88,11 +88,15 @@ class ArchiveTests(unittest.TestCase):
 
     def test_truncated_tail_in_second_archive_keeps_old_output(self):
         valid = self.external_file("valid.avro", V2, [NEW])
+        self.cli("export", "--reader", "v2", valid, "-o", self.output)
+        previous = self.output.read_bytes()
         cut = self.external_file("cut.avro", V1, [OLD])
         cut.write_bytes(cut.read_bytes()[:-1])
-        self.output.write_bytes(b"previous\n")
         self.cli("export", "--reader", "v2", valid, cut, "-o", self.output, success=False)
-        self.assertEqual(self.output.read_bytes(), b"previous\n")
+        self.assertEqual(self.output.read_bytes(), previous)
+        fresh = self.path / "new-output.jsonl"
+        self.cli("export", "--reader", "v2", valid, cut, "-o", fresh, success=False)
+        self.assertFalse(fresh.exists())
 
     def test_pack_defaults_and_invalid_second_line(self):
         source = self.path / "records.jsonl"
