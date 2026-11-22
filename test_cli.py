@@ -9,6 +9,13 @@ import sys
 import unittest
 
 EXAMPLE = Path(__file__).resolve().parent / "examples/aisles.txt"
+WEIGHTED = EXAMPLE.with_name("weighted-aisles.txt")
+
+
+def weight(tile):
+    if tile == "*":
+        return 1
+    return int(tile) if tile in "123456789" else 0
 
 
 def reference(rows):
@@ -37,12 +44,12 @@ def reference(rows):
     return None
 
 
-def cart_reference(rows, capacity):
+def cart_reference(rows, capacity=None, max_load=None):
     # Walk one cell, pick up one item or unload at the depot. Search the actual
     # state space, minimizing (steps, unloads), independently of subset tours.
     tiles = {(r, c): tile for r, row in enumerate(rows) for c, tile in enumerate(row) if tile != "#"}
     depot = next(cell for cell, tile in tiles.items() if tile == "D")
-    bits = {cell: 1 << i for i, cell in enumerate(cell for cell in tiles if tiles[cell] == "*")}
+    bits = {cell: 1 << i for i, cell in enumerate(cell for cell in tiles if weight(tiles[cell]))}
     goal = (1 << len(bits)) - 1
     initial = (depot, 0, 0)
     best = {initial: (0, 0)}
@@ -51,16 +58,19 @@ def cart_reference(rows, capacity):
         steps, trips, state = heappop(queue)
         if best[state] != (steps, trips):
             continue
-        cell, picked, load = state
-        if cell == depot and picked == goal and load == 0:
+        cell, picked, onboard = state
+        if cell == depot and picked == goal and not onboard:
             return steps, trips
         r, c = cell
-        options = [(steps + 1, trips, (neighbor, picked, load))
+        options = [(steps + 1, trips, (neighbor, picked, onboard))
                    for neighbor in ((r-1, c), (r+1, c), (r, c-1), (r, c+1)) if neighbor in tiles]
         bit = bits.get(cell, 0)
-        if bit and not (bit & picked) and load < capacity:
-            options.append((steps, trips, (cell, picked | bit, load + 1)))
-        if cell == depot and load:
+        if bit and not (bit & picked):
+            cargo = onboard | bit
+            weights = [weight(tiles[location]) for location, item in bits.items() if cargo & item]
+            if (capacity is None or len(weights) <= capacity) and (max_load is None or sum(weights) <= max_load):
+                options.append((steps, trips, (cell, picked | bit, cargo)))
+        if cell == depot and onboard:
             options.append((steps, trips + 1, (depot, picked, 0)))
         for new_steps, new_trips, target in options:
             score = (new_steps, new_trips)
@@ -85,24 +95,32 @@ class RouteTests(unittest.TestCase):
             self.assertNotEqual(rows[r - 1][c - 1], "#")
             if i:
                 self.assertEqual(abs(r - walk[i - 1][0]) + abs(c - walk[i - 1][1]), 1)
-            if rows[r - 1][c - 1] == "*" and [r, c] not in picks and (assigned is None or (r, c) in assigned):
+            if weight(rows[r - 1][c - 1]) and [r, c] not in picks and (assigned is None or (r, c) in assigned):
                 picks.append([r, c])
         self.assertEqual(picks, plan["pick_order"])
-        self.assertEqual(len(picks), sum(row.count("*") for row in rows) if assigned is None else len(assigned))
+        self.assertEqual(len(picks), sum(bool(weight(t)) for row in rows for t in row) if assigned is None else len(assigned))
 
-    def check_cart(self, rows, plan, capacity):
-        self.assertEqual(plan["capacity"], capacity)
+    def check_cart(self, rows, plan, capacity=None, max_load=None):
+        self.assertEqual(plan.get("capacity"), capacity)
+        self.assertEqual(plan.get("max_load"), max_load)
         picks = []
         walk = [plan["walk"][0]]
         self.assertEqual(rows[walk[0][0] - 1][walk[0][1] - 1], "D")
         for trip in plan["trips"]:
             assigned = set(map(tuple, trip["pick_order"]))
-            self.assertTrue(1 <= len(assigned) <= capacity)
+            self.assertTrue(assigned)
+            if capacity is not None:
+                self.assertLessEqual(len(assigned), capacity)
+            if max_load is not None:
+                self.assertEqual(trip["load"], sum(weight(rows[r-1][c-1]) for r, c in assigned))
+                self.assertLessEqual(trip["load"], max_load)
+            else:
+                self.assertNotIn("load", trip)
             self.check_walk(rows, trip, assigned)
             self.assertEqual(trip["walk"][0], walk[-1])
             walk.extend(trip["walk"][1:])
             picks.extend(trip["pick_order"])
-        expected = {(r, c) for r, row in enumerate(rows, 1) for c, tile in enumerate(row, 1) if tile == "*"}
+        expected = {(r, c) for r, row in enumerate(rows, 1) for c, tile in enumerate(row, 1) if weight(tile)}
         self.assertEqual(set(map(tuple, picks)), expected)
         self.assertEqual(len(picks), len(expected))
         self.assertEqual((plan["pick_order"], plan["walk"], plan["steps"]), (picks, walk, len(walk) - 1))
@@ -144,6 +162,69 @@ class RouteTests(unittest.TestCase):
                         plan = json.loads(result.stdout)
                         self.check_cart(rows, plan, capacity)
                         self.assertEqual((plan["steps"], len(plan["trips"])), expected)
+
+    def test_weighted_example_separates_both_constraints(self):
+        rows = WEIGHTED.read_text().splitlines()
+        for slots, limit, nearest, expected in [(None, 8, False, (52, 2)), (2, None, False, (56, 3)),
+                                                (2, 8, False, (58, 3)), (2, 8, True, (64, 3))]:
+            args = (["--capacity", str(slots)] if slots else []) + (["--max-load", str(limit)] if limit else [])
+            result = self.cli(*args, *(["--nearest"] if nearest else []), WEIGHTED)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            plan = json.loads(result.stdout)
+            self.check_cart(rows, plan, slots, limit)
+            self.assertEqual((plan["steps"], len(plan["trips"])), expected)
+            if not nearest:
+                self.assertEqual(cart_reference(rows, slots, limit), expected)
+        unlimited = json.loads(self.cli(WEIGHTED).stdout)
+        self.assertEqual(unlimited, json.loads(self.cli(EXAMPLE).stdout))
+
+    def test_weighted_floors_against_grid_search_and_check_nearest_walks(self):
+        rng = random.Random(779)
+        floors = [["D"], ["D#9"], ["D3*21"], ["2*D*2"]]
+        for _ in range(20):
+            tiles = ["#" if rng.random() < 0.17 else "." for _ in range(12)]
+            depot, *stops = rng.sample(range(12), rng.randint(3, 6))
+            tiles[depot] = "D"
+            for stop in stops:
+                tiles[stop] = rng.choice("*12345")
+            floors.append(["".join(tiles[i:i+4]) for i in (0, 4, 8)])
+        for rows in floors:
+            for slots, limit in [(None, 5), (2, 5), (3, 7)]:
+                args = ["--max-load", str(limit)] + (["--capacity", str(slots)] if slots else [])
+                expected = cart_reference(rows, slots, limit)
+                for nearest in [False, True]:
+                    with self.subTest(rows=rows, slots=slots, limit=limit, nearest=nearest):
+                        result = self.cli(*args, *(["--nearest"] if nearest else []), data="\n".join(rows))
+                        if expected is None:
+                            self.assertEqual((result.returncode, result.stdout), (2, ""))
+                        else:
+                            self.assertEqual(result.returncode, 0, result.stderr)
+                            plan = json.loads(result.stdout)
+                            self.check_cart(rows, plan, slots, limit)
+                            score = (plan["steps"], len(plan["trips"]))
+                            if nearest:
+                                self.assertGreaterEqual(score, expected)
+                            else:
+                                self.assertEqual(score, expected)
+
+    def test_load_limit_boundary_and_overweight_item(self):
+        result = self.cli("--nearest", "--max-load", "5", data="D332")
+        plan = json.loads(result.stdout)
+        self.check_cart(["D332"], plan, max_load=5)
+        self.assertEqual(plan["trips"][0]["pick_order"], [[1, 2], [1, 4]])
+        for options in [[], ["--nearest"]]:
+            result = self.cli(*options, "--max-load", "8", data="D*9")
+            self.assertEqual((result.returncode, result.stdout), (2, ""))
+            self.assertIn("row 1, column 3", result.stderr)
+            for value in ["0", "-1", "1.5", "2147483648", ""]:
+                self.assertEqual(self.cli(*options, "--max-load", value, data="D*").returncode, 2)
+            count = 64 if options else 14
+            rows = ["D" + "9" * count]
+            result = self.cli(*options, "--max-load", "2147483647", data=rows[0])
+            self.assertEqual(result.returncode, 0, result.stderr)
+            plan = json.loads(result.stdout)
+            self.check_cart(rows, plan, max_load=2147483647)
+            self.assertEqual([t["load"] for t in plan["trips"]], [9*count])
 
     def test_capacity_bounds(self):
         for invalid in ["0", "-1", "2.5", "999999999999999999999", "x", ""]:

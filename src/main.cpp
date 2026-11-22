@@ -17,6 +17,7 @@ struct Floor {
     int height = 0;
     std::string cells;
     std::vector<int> stops;  // Depot first, then all picks in row-major order.
+    std::vector<int> weights{0};  // Indexed by stop, with zero for the depot.
 };
 
 Floor read_floor(std::istream& input, int max_picks) {
@@ -34,8 +35,9 @@ Floor read_floor(std::istream& input, int max_picks) {
             if (tile == 'D') {
                 if (depot >= 0) throw std::runtime_error("multiple depots");
                 depot = pos;
-            } else if (tile == '*') {
+            } else if (tile == '*' || (tile >= '1' && tile <= '9')) {
                 floor.stops.push_back(pos);
+                floor.weights.push_back(tile == '*' ? 1 : tile - '0');
                 if (static_cast<int>(floor.stops.size()) > max_picks)
                     throw std::runtime_error("too many picks for this mode (limit " + std::to_string(max_picks) + ")");
             } else if (tile != '#' && tile != '.') {
@@ -95,35 +97,57 @@ Paths aisle_paths(const Floor& floor) {
 
 using Orders = std::vector<std::vector<int>>;
 
-Orders nearest_orders(const Matrix& distance, int capacity) {
+struct Cart {
+    int slots;
+    int max_load;
+
+    bool fits(int count, int weight) const { return count <= slots && weight <= max_load; }
+};
+
+Orders nearest_orders(const Matrix& distance, const std::vector<int>& weights, Cart cart) {
     int n = static_cast<int>(distance.size());
     std::vector<bool> visited(n);
     Orders orders;
-    for (int i = 1; i < n; ++i) {
-        if ((i - 1) % capacity == 0) orders.push_back({0});
-        auto& order = orders.back();
-        int best = -1;
-        for (int j = 1; j < n; ++j)
-            if (!visited[j] && (best < 0 || distance[order.back()][j] < distance[order.back()][best]))
-                best = j;
-        visited[best] = true;
-        order.push_back(best);
+    int remaining = n - 1;
+    while (remaining > 0) {
+        std::vector<int> order{0};
+        int load = 0;
+        while (true) {
+            int best = -1;
+            int next_count = static_cast<int>(order.size());  // Includes the starting depot.
+            for (int j = 1; j < n; ++j) {
+                if (visited[j] || !cart.fits(next_count, load + weights[j])) continue;
+                if (best < 0 || distance[order.back()][j] < distance[order.back()][best]) best = j;
+            }
+            if (best < 0) break;
+            visited[best] = true;
+            load += weights[best];
+            order.push_back(best);
+            --remaining;
+        }
+        order.push_back(0);
+        orders.push_back(std::move(order));
     }
-    for (auto& order : orders) order.push_back(0);
     return orders;
 }
 
-Orders exact_orders(const Matrix& distance, int capacity) {
+Orders exact_orders(const Matrix& distance, const std::vector<int>& weights, Cart cart) {
     int n = static_cast<int>(distance.size()) - 1;
     if (n == 0) return {};
     int full = (1 << n) - 1;
     // cost[mask,last] starts at the depot and ends at pick 'last'.
     std::vector<int> cost((full + 1) * n, infinity), previous(cost.size(), -1);
-    std::vector<int> size(full + 1), tour(full + 1, infinity), endpoint(full + 1, -1);
+    std::vector<int> size(full + 1), load(full + 1), tour(full + 1, infinity), endpoint(full + 1, -1);
+    for (int j = 0; j < n; ++j) {
+        int bit = 1 << j;
+        for (int mask = 0; mask < bit; ++mask) {
+            size[mask | bit] = size[mask] + 1;
+            load[mask | bit] = load[mask] + weights[j + 1];
+        }
+    }
     for (int j = 0; j < n; ++j) cost[(1 << j) * n + j] = distance[0][j + 1];
     for (int mask = 1; mask <= full; ++mask) {
-        size[mask] = size[mask / 2] + (mask & 1);
-        if (size[mask] > capacity) continue;
+        if (!cart.fits(size[mask], load[mask])) continue;
         for (int last = 0; last < n; ++last) {
             int current = cost[mask * n + last];
             if (current == infinity) continue;
@@ -132,9 +156,8 @@ Orders exact_orders(const Matrix& distance, int capacity) {
                 tour[mask] = round_trip;
                 endpoint[mask] = last;
             }
-            if (size[mask] == capacity) continue;
             for (int j = 0; j < n; ++j) {
-                if (mask & (1 << j)) continue;
+                if ((mask & (1 << j)) || !cart.fits(size[mask] + 1, load[mask] + weights[j + 1])) continue;
                 int index = (mask | (1 << j)) * n + j;
                 int proposal = current + distance[last + 1][j + 1];
                 if (proposal < cost[index]) {
@@ -147,7 +170,7 @@ Orders exact_orders(const Matrix& distance, int capacity) {
     // Partition remaining picks. Anchor each candidate trip on the lowest
     // remaining bit to avoid enumerating permutations of the same trips.
     std::vector<int> first_trip(full + 1);
-    if (capacity >= n) {
+    if (cart.fits(n, load[full])) {
         first_trip[full] = full;
     } else {
         using Score = std::pair<int, int>;  // minimize steps, then number of trips
@@ -158,7 +181,7 @@ Orders exact_orders(const Matrix& distance, int capacity) {
             int optional = mask ^ anchor;
             for (int sub = optional; ; sub = (sub - 1) & optional) {
                 int trip = sub | anchor;
-                if (size[trip] <= capacity) {
+                if (cart.fits(size[trip], load[trip])) {
                     const auto& rest = best[mask ^ trip];
                     Score proposal{tour[trip] + rest.first, 1 + rest.second};
                     if (proposal < best[mask]) {
@@ -212,6 +235,7 @@ void write_coords(const std::vector<int>& cells, int width) {
 struct Route {
     std::vector<int> walk;
     std::vector<int> picks;
+    int load = 0;
 };
 
 Route make_trip(const Floor& floor, const Paths& paths, const std::vector<int>& order) {
@@ -219,6 +243,7 @@ Route make_trip(const Floor& floor, const Paths& paths, const std::vector<int>& 
     std::vector<bool> assigned(floor.cells.size());
     for (int stop : order) {
         if (stop != 0) assigned[floor.stops[stop]] = true;
+        trip.load += floor.weights[stop];
     }
     for (int pos : trip.walk) {
         if (assigned[pos]) {
@@ -238,24 +263,27 @@ void write_route_fields(const Route& route, int width) {
 
 int main(int argc, char** argv) {
     if (argc == 2 && std::string(argv[1]) == "--help") {
-        std::cout << "pick-route [--nearest] [--capacity N] [FILE|-]\n";
+        std::cout << "pick-route [--nearest] [--capacity ITEMS] [--max-load WEIGHT] [FILE|-]\n";
         return 0;
     }
     try {
         bool nearest = false;
         int capacity = 0;
+        int max_load = 0;
         int arg = 1;
         while (arg < argc) {
             std::string option = argv[arg];
             if (option == "--nearest" && !nearest) {
                 nearest = true;
-            } else if (option == "--capacity" && !capacity) {
-                if (++arg >= argc) throw std::runtime_error("expected a positive cart capacity");
+            } else if (option == "--capacity" || option == "--max-load") {
+                int& limit = option == "--capacity" ? capacity : max_load;
+                if (limit) throw std::runtime_error("duplicate " + option);
+                if (++arg >= argc) throw std::runtime_error(option + " expects a positive integer");
                 std::string value = argv[arg];
                 auto end = value.data() + value.size();
-                auto parsed = std::from_chars(value.data(), end, capacity);
-                if (parsed.ec != std::errc{} || parsed.ptr != end || capacity < 1)
-                    throw std::runtime_error("expected a positive cart capacity");
+                auto parsed = std::from_chars(value.data(), end, limit);
+                if (parsed.ec != std::errc{} || parsed.ptr != end || limit < 1)
+                    throw std::runtime_error(option + " expects a positive integer");
             } else {
                 break;
             }
@@ -269,9 +297,17 @@ int main(int argc, char** argv) {
             if (!file) throw std::runtime_error("cannot open floor file");
         }
         Floor floor = read_floor(use_file ? static_cast<std::istream&>(file) : std::cin, nearest ? 64 : 14);
+        Cart cart{capacity ? capacity : infinity, max_load ? max_load : infinity};
+        for (std::size_t i = 1; i < floor.stops.size(); ++i) {
+            if (floor.weights[i] > cart.max_load) {
+                int pos = floor.stops[i];
+                throw std::runtime_error("pick exceeds max load at row " + std::to_string(pos / floor.width + 1)
+                                         + ", column " + std::to_string(pos % floor.width + 1));
+            }
+        }
         Paths paths = aisle_paths(floor);
-        int limit = capacity ? capacity : static_cast<int>(floor.stops.size());
-        auto orders = nearest ? nearest_orders(paths.distance, limit) : exact_orders(paths.distance, limit);
+        auto orders = nearest ? nearest_orders(paths.distance, floor.weights, cart)
+                              : exact_orders(paths.distance, floor.weights, cart);
         Route combined{{floor.stops[0]}, {}};
         std::vector<Route> trips;
         for (const auto& order : orders) {
@@ -282,12 +318,15 @@ int main(int argc, char** argv) {
         }
         std::cout << "{\"method\":\"" << (nearest ? "nearest" : "exact") << "\",";
         write_route_fields(combined, floor.width);
-        if (capacity) {
-            std::cout << ",\"capacity\":" << capacity << ",\"trips\":[";
+        if (capacity) std::cout << ",\"capacity\":" << capacity;
+        if (max_load) std::cout << ",\"max_load\":" << max_load;
+        if (capacity || max_load) {
+            std::cout << ",\"trips\":[";
             for (std::size_t i = 0; i < trips.size(); ++i) {
                 if (i) std::cout << ',';
                 std::cout << '{';
                 write_route_fields(trips[i], floor.width);
+                if (max_load) std::cout << ",\"load\":" << trips[i].load;
                 std::cout << '}';
             }
             std::cout << ']';
