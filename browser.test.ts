@@ -61,3 +61,56 @@ test("Chromium reconnects with its own Last-Event-ID and recovers both short and
     board.close();
   }
 });
+
+test("Chromium revalidates its snapshot and resumes live events across the handoff gap", async () => {
+  const board = new Board(":memory:");
+  const server = makeServer(board);
+  const statuses: number[] = [];
+  const cursors: (string | undefined)[] = [];
+  server.on("request", (req, res) => {
+    if (req.url === "/snapshot") res.on("finish", () => statuses.push(res.statusCode));
+    if (req.url?.startsWith("/events?")) cursors.push(req.headers["last-event-id"] as string | undefined);
+  });
+  const browser = await chromium.launch();
+  try {
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const base = "http://127.0.0.1:" + (server.address() as AddressInfo).port;
+    const page = await browser.newPage();
+    page.setDefaultTimeout(10000);
+    // Use the server's own origin without Playwright routing, which disables the browser cache.
+    await page.goto(base + "/probe");
+    const first = board.update("1", "A", "ready");
+    const load = () => page.evaluate(async () => (await fetch("/snapshot")).json());
+    const cold = await load();
+    assert.equal(cold.id, first.id);
+    assert.deepEqual(await load(), cold);
+    assert.deepEqual(statuses, [200, 304]);
+    const second = board.update("2", "B", "ready");
+    await page.evaluate((since: string) => {
+      window.received = [];
+      window.feed = new EventSource("/events?since=" + encodeURIComponent(since));
+      for (const type of ["change", "snapshot"] as const) {
+        window.feed.addEventListener(type, (e: MessageEvent<string>) => {
+          window.received.push({ id: e.lastEventId, event: type, data: JSON.parse(e.data) });
+        });
+      }
+    }, cold.id);
+    await page.waitForFunction(() => window.received.length >= 1);
+    server.closeAllConnections();
+    const third = board.update("3", "A", "closed");
+    await page.waitForFunction(() => window.received.length >= 2);
+    const events = await page.evaluate(() => { window.feed.close(); return window.received; });
+    assert.deepEqual(events.map(event => [event.event, event.id]), [["change", second.id], ["change", third.id]]);
+    assert.deepEqual(cursors, [undefined, second.id]);
+    assert.deepEqual(await load(), { id: third.id, event: "snapshot", data: [
+      { bay: "A", status: "closed" }, { bay: "B", status: "ready" }
+    ] });
+    assert.deepEqual(statuses, [200, 304, 200]);
+  } finally {
+    await browser.close();
+    server.closeAllConnections();
+    await new Promise<void>(resolve => server.close(() => resolve()));
+    board.close();
+  }
+});

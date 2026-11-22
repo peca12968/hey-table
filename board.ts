@@ -48,6 +48,19 @@ export class Board {
     return { epoch: String(row.epoch), revision: Number(row.revision) };
   }
 
+  private snapshot(id: string): Extract<BoardEvent, { event: "snapshot" }> {
+    const rows = this.db.prepare("SELECT bay,status FROM bays ORDER BY bay").all();
+    return { id, event: "snapshot", data: rows.map(row => ({ bay: String(row.bay), status: row.status as Status })) };
+  }
+
+  current(alreadySeen: (id: string) => boolean) {
+    return this.transaction("BEGIN", () => {
+      const { epoch, revision } = this.head();
+      const id = `${epoch}:${revision}`;
+      return { id, snapshot: alreadySeen(id) ? null : this.snapshot(id) };
+    });
+  }
+
   update(command: string, bay: string, status: string) {
     const validId = /^[A-Za-z0-9_-]{1,80}$/;
     if (typeof command !== "string" || typeof bay !== "string" || !validId.test(command) ||
@@ -79,9 +92,7 @@ export class Board {
       const seen = parts?.[1] === epoch ? Number(parts[2]) : -1;
       const first = this.db.prepare("SELECT MIN(revision) AS first FROM changes").get()!.first;
       if (seen < 0 || seen > revision || (first !== null && seen < Number(first) - 1)) {
-        const rows = this.db.prepare("SELECT bay,status FROM bays ORDER BY bay").all();
-        return [{ id: `${epoch}:${revision}`, event: "snapshot",
-                  data: rows.map(r => ({ bay: String(r.bay), status: r.status as Status })) }];
+        return [this.snapshot(`${epoch}:${revision}`)];
       }
       return this.db.prepare("SELECT revision,bay,status FROM changes WHERE revision>? ORDER BY revision LIMIT ?")
         .all(seen, limit).map(r => ({ id: `${epoch}:${r.revision}`, event: "change",

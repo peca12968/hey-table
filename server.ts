@@ -32,6 +32,34 @@ function json(res: ServerResponse, status: number, value: unknown) {
   res.writeHead(status, { "Content-Type": "application/json" }).end(JSON.stringify(value));
 }
 
+function matchesVersion(field: string | undefined, opaqueTag: string) {
+  if (!field) return false;
+  if (field.trim() === "*") return true;
+  // Commas are valid inside quoted tags. Consume each whole list member.
+  const member = /[ \t]*(?:(?:W\/)?"([\x21\x23-\x7e\x80-\xff]*)"[ \t]*)?(,|$)/y;
+  let matched = false;
+  while (member.lastIndex < field.length) {
+    const token = member.exec(field);
+    if (!token) return false;
+    if (token[1] === opaqueTag) matched = true;
+  }
+  return matched;
+}
+
+function sendSnapshot(board: Board, req: IncomingMessage, res: ServerResponse) {
+  const tag = (id: string) => "board-v1:" + id;
+  const result = board.current(id => matchesVersion(req.headers["if-none-match"], tag(id)));
+  res.setHeader("ETag", `W/"${tag(result.id)}"`);
+  res.setHeader("Cache-Control", "private, no-cache");
+  if (!result.snapshot) {
+    res.writeHead(304).end();
+    return;
+  }
+  const body = JSON.stringify(result.snapshot);
+  res.writeHead(200, { "Content-Type": "application/json", "Content-Length": Buffer.byteLength(body) });
+  res.end(req.method === "HEAD" ? undefined : body);
+}
+
 async function update(board: Board, req: IncomingMessage, res: ServerResponse) {
   const chunks: Buffer[] = [];
   let length = 0;
@@ -49,9 +77,15 @@ async function update(board: Board, req: IncomingMessage, res: ServerResponse) {
 export function makeServer(board: Board) {
   return createServer(async (req, res) => {
     try {
-      if (req.method === "GET" && req.url === "/events") {
+      const target = req.url ?? "";
+      const path = target.split("?", 1)[0];
+      if ((req.method === "GET" || req.method === "HEAD") && path === "/snapshot") {
+        sendSnapshot(board, req, res);
+      } else if (req.method === "GET" && path === "/events") {
         const header = req.headers["last-event-id"];
-        await stream(board, typeof header === "string" ? header : undefined, res);
+        const query = new URLSearchParams(target.slice(path.length + 1));
+        const cursor = typeof header === "string" ? header : query.get("since") ?? undefined;
+        await stream(board, cursor, res);
       } else if (req.method === "POST" && req.url === "/updates") {
         await update(board, req, res);
       } else {

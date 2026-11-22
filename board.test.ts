@@ -28,6 +28,12 @@ test("replay from the exact retention boundary or replace the board with one coh
     const restarted = new Board(path, 2);
     try { assert.deepEqual(restarted.read(), snapshot); }
     finally { restarted.close(); }
+    const atReadStart = a.current(() => {
+      b.update("cmd4", "C", "ready");
+      return false;
+    });
+    assert.deepEqual(atReadStart.snapshot, snapshot[0]);
+    assert.notEqual(a.current(() => true).id, atReadStart.id);
   } finally {
     b.close(); a.close(); rmSync(dir, { recursive: true, force: true });
   }

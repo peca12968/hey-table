@@ -63,3 +63,38 @@ test("an HTTP subscriber receives a live change, reconnects and recovers after r
     board.close();
   }
 });
+
+test("conditional snapshot handles validators, HEAD and a changed revision", async () => {
+  const board = new Board(":memory:");
+  const server = makeServer(board);
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  const url = "http://127.0.0.1:" + (server.address() as AddressInfo).port + "/snapshot";
+  try {
+    const first = await fetch(url);
+    const tag = first.headers.get("etag")!;
+    assert.match(tag, /^W\/"board-v1:/);
+    assert.equal(first.headers.get("cache-control"), "private, no-cache");
+    const body = await first.text();
+    assert.deepEqual(JSON.parse(body), board.read()[0]);
+    for (const value of ['"unknown,tag", ' + tag.slice(2), tag, "*"]) {
+      const response = await fetch(url, { headers: { "If-None-Match": value } });
+      assert.equal(response.status, 304);
+      assert.equal(response.headers.get("etag"), tag);
+      assert.equal(await response.text(), "");
+    }
+    const head = await fetch(url, { method: "HEAD" });
+    assert.equal(Number(head.headers.get("content-length")), Buffer.byteLength(body));
+    assert.equal(await head.text(), "");
+    assert.equal((await fetch(url, { headers: { "If-None-Match": tag + ", invalid" } })).status, 200);
+    board.update("new", "A", "ready");
+    const changed = await fetch(url, { headers: { "If-None-Match": tag } });
+    assert.equal(changed.status, 200);
+    assert.notEqual(changed.headers.get("etag"), tag);
+    assert.deepEqual(await changed.json(), board.read()[0]);
+  } finally {
+    server.closeAllConnections();
+    await new Promise<void>(resolve => server.close(() => resolve()));
+    board.close();
+  }
+});

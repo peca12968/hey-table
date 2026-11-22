@@ -19,6 +19,19 @@ node -e "fetch('http://127.0.0.1:8080/updates',{method:'POST',body:JSON.stringif
 
 訂閱者先收到 `snapshot`，再收到 A 月台的 `change`。初次提交的 HTTP 狀態碼為 201，以相同單號與內容重送會取得原始事件 ID 和 200；同單號改送其他狀態則為 409。月台狀態可取 ready、loading、closed。服務供受信任的本機操作環境使用。
 
+## 先讀取快照，再訂閱即時異動
+
+`GET /snapshot` 回傳與事件串流相同的 `{id, event, data}` JSON。看板可先顯示目前狀態，再用快照的 `id` 開啟串流。讀取與開始訂閱之間有其他人更新時，服務會補送這段期間的異動。
+
+```js
+const snapshot = await (await fetch("/snapshot")).json();
+const feed = new EventSource("/events?since=" + encodeURIComponent(snapshot.id));
+```
+
+快照附有包含資料庫識別碼和版本的 ETag。瀏覽器再次讀取時可用條件式 GET 確認版本，版本相同時服務回覆 304，直接略過月台資料表讀取。版本與月台明細在同一筆 SQLite 讀取交易中取得。只需要表頭的客戶端也可使用 HEAD。
+
+第一次連上串流時使用 `since`。瀏覽器斷線後，服務優先使用原生 `Last-Event-ID`，會從最近送達的事件接續。瀏覽器測試同時核對伺服器的 200 → 304 → 200 回應，以及快照之後兩筆事件只各收到一次。[瀏覽器演練](browser.test.ts)
+
 ## 續接規則
 
 每個事件 ID 由資料庫識別碼與遞增版本組成。更新、月台狀態、單號回條與歷史清理在同一筆 SQLite 交易中提交。預設保留最近 256 筆異動，可用環境變數 `BAY_RETENTION` 調整；回條會持續保留，舊命令重送時仍可辨識。
