@@ -69,6 +69,14 @@ python recovery.py restore-latest recovered.db --candidate first.db first.json -
 
 ## 如何確認可復原
 
+若最新備份已含誤操作，請用 `restore-latest --not-after` 指定最後可接受的備份時間。上、下限皆包含該瞬間，可一起使用。備份時間超出上限時，報告會記錄 `after recovery cutoff`，再檢查較早候選；合格時間範圍內的所有備份都無法驗證時，不會發佈還原檔。時間依備份收據的 `captured_at` 判定，復原粒度取決於現有備份。
+
+```sh
+python recovery.py restore-latest before.db --candidate first.db first.json --candidate second.db second.json --not-after 2026-04-01T10:00:00+08:00
+```
+
+跨專案演練將 BX-19 庫存依序寫為 8、11、0 件，每次提交後都備份。用 WAL Lantern 核對三筆交易各自的提交結束位置，再實際執行還原：一般還原得到 0 件，指定第二份收據的時間上限則還原出 11 件。最後一份備份通過完整性驗證，但它已包含錯誤更新。此演練在單一寫入者停下來時配對日誌與收據；一般 WAL 提交標記本身不含 UTC 時間。[事故復原演練](incident_drill.py) · [WAL Lantern](https://github.com/peca12968/wal-lantern)
+
 - 來源以唯讀方式開啟。程式先讀取頁數以固定交易視圖，再用 SQLite Online Backup API 分頁複製。WAL 模式的測試在複製兩批頁面之間透過另一條連線提交一筆資料，並確認還原結果仍是先前的已提交狀態。[SQLite Online Backup API](https://www.sqlite.org/backup.html)
 - 備份和還原都會對獨立副本執行 `integrity_check` 與 `foreign_key_check`，分別檢查 SQLite 結構與外鍵關聯。還原另核對 SHA-256。庫存演練透過服務本身檢查業務行為。[SQLite 完整性檢查](https://www.sqlite.org/pragma.html#pragma_integrity_check)
 - 副本在目的地所在磁碟產生。通過檢查後以硬連結發佈完整檔案。測試平行啟動四個獨立 CLI 程序還原至相同路徑，只有一個成功。既有目的檔或殘留的 SQLite 日誌檔會讓操作失敗。指令失敗時傳回非零結束碼。

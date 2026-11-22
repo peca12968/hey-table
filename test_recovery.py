@@ -164,6 +164,24 @@ class RecoveryTests(unittest.TestCase):
             snapshot(source, self.backup)
         self.assertFalse(self.backup.exists())
 
+    def test_inclusive_recovery_window_with_corrupt_and_out_of_window_versions(self):
+        older = self.candidate("early", "2026-04-01T03:00:00Z")
+        within = self.candidate("candidate", "2026-04-01T04:00:00Z")
+        later = self.candidate("late", "2026-04-01T05:00:00Z")
+        points = [later, older, within]
+        # Both bounds represent exactly the middle snapshot, using different offsets.
+        result = restore_latest(points, self.target, "2026-04-01T06:00:00+02:00", "2026-04-01T12:00:00+08:00")
+        self.assertEqual(result["snapshot"], str(within[0]))
+        self.assertEqual([item["reason"] for item in result["skipped"]], ["after recovery cutoff"])
+        within[0].write_bytes(b"damaged")
+        dest = self.root / "window.db"
+        with self.assertRaisesRegex(ValueError, "before recovery cutoff"):
+            restore_latest(points, dest, "2026-04-01T04:00:00Z", "2026-04-01T04:59:59Z")
+        self.assertFalse(dest.exists())
+        self.assertEqual(restore_latest(points, dest, not_after="2026-04-01T04:59:59Z")["snapshot"], str(older[0]))
+        with self.assertRaisesRegex(ValueError, "exceeds"):
+            restore_latest(points, self.root / "impossible.db", "2026-04-02T00:00:00Z", "2026-04-01T00:00:00Z")
+
     def candidate(self, name, when):
         db = self.root / (name + ".db")
         receipt = self.root / (name + ".json")

@@ -29,3 +29,16 @@ jobs:
           path: shift-vault-checkout
           persist-credentials: false
       - run: python vault_drill.py shift-vault-checkout
+      - uses: actions/checkout@v7
+        with:
+          repository: peca12968/wal-lantern
+          ref: 815888d38c9cd464dc455c2cb4fc7ec410be8fde
+          path: wal-lantern-checkout
+          persist-credentials: false
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: wal-lantern-checkout/go.mod
+          cache: false
+      - run: go build -o ../wal-lantern.exe .
+        working-directory: wal-lantern-checkout
+      - run: python incident_drill.py wal-lantern.exe

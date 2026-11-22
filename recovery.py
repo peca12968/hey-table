@@ -121,8 +121,11 @@ def timestamp(value):
         raise ValueError("Timestamp is outside the UTC date range") from exc
 
 
-def restore_latest(candidates, destination, not_before=None):
+def restore_latest(candidates, destination, not_before=None, not_after=None):
     floor = timestamp(not_before) if not_before is not None else None
+    ceiling = timestamp(not_after) if not_after is not None else None
+    if floor is not None and ceiling is not None and floor > ceiling:
+        raise ValueError("Earliest capture time exceeds latest capture time")
     versions = {}
     for source, receipt in candidates:
         try:
@@ -143,6 +146,9 @@ def restore_latest(candidates, destination, not_before=None):
     for captured in sorted(versions, reverse=True):
         source, sha = versions[captured]
         point = {"snapshot": str(source), "captured_at": captured.isoformat()}
+        if ceiling is not None and captured > ceiling:
+            skipped.append({**point, "reason": "after recovery cutoff"})
+            continue
         if floor is not None and captured < floor:
             skipped.append({**point, "reason": "before recovery cutoff"})
             continue
@@ -202,6 +208,7 @@ def main():
     latest.add_argument("--candidate", type=Path, nargs=2, metavar=("SNAPSHOT", "RECEIPT"),
                         action="append", required=True)
     latest.add_argument("--not-before", help="Earliest acceptable capture timestamp, inclusive")
+    latest.add_argument("--not-after", help="Latest acceptable capture timestamp, inclusive")
     archive = commands.add_parser("vault-snapshot", help="Capture a live database into Shift Vault")
     archive.add_argument("source", type=Path)
     archive.add_argument("repository", type=Path)
@@ -223,7 +230,7 @@ def main():
         elif args.command == "vault-restore":
             result = vault_restore(load_vault(args.shift_vault), args.repository, args.destination, args.sha256)
         else:
-            result = restore_latest(args.candidate, args.destination, args.not_before)
+            result = restore_latest(args.candidate, args.destination, args.not_before, args.not_after)
     except (OSError, sqlite3.Error, ValueError) as exc:
         print(exc, file=sys.stderr)
         return 1
