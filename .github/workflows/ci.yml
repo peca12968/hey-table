@@ -24,3 +24,13 @@ jobs:
       - name: Show container logs on failure
         if: failure()
         run: docker logs stockroom
+      - uses: actions/checkout@v7
+        with:
+          repository: peca12968/dock-outbox
+          ref: 4da92c62b158b80f09f09285ce8e9a68e68d757a
+          path: dock-checkout
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+      - run: python dock_drill.py dock-checkout

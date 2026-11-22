@@ -1,8 +1,12 @@
 """Transactional stock reservations. One short-lived connection per operation."""
 from contextlib import closing, contextmanager
 from pathlib import Path
+import re
 import sqlite3
 import time
+
+DOCK_ID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}")
+DOCK_SKU = re.compile(r"[A-Z0-9][A-Z0-9-]{0,31}")
 
 
 class Conflict(Exception):
@@ -40,6 +44,11 @@ CREATE TABLE IF NOT EXISTS shipment_returns (
     returnable_after INTEGER NOT NULL CHECK (returnable_after >= 0),
     PRIMARY KEY (reservation_id, shipment_id, return_id),
     FOREIGN KEY (reservation_id, shipment_id) REFERENCES fulfillments(reservation_id, shipment_id)
+);
+CREATE TABLE IF NOT EXISTS inbound_receipts (
+    id TEXT PRIMARY KEY,
+    sku TEXT NOT NULL REFERENCES products(sku),
+    quantity INTEGER NOT NULL CHECK (quantity BETWEEN 1 AND 9999)
 );
 """
 
@@ -117,6 +126,32 @@ class Store:
     def inventory(self):
         with self.current_inventory() as (conn, _):
             return [dict(row) for row in conn.execute("SELECT * FROM products ORDER BY sku")]
+
+    def apply_receipts(self, records):
+        applied = replayed = units = 0
+        with self.current_inventory() as (conn, _):
+            for receipt_id, sku, quantity in records:
+                if (not isinstance(receipt_id, str) or not DOCK_ID.fullmatch(receipt_id) or
+                        not isinstance(sku, str) or not DOCK_SKU.fullmatch(sku) or
+                        type(quantity) is not int or not 1 <= quantity <= 9999):
+                    raise ValueError("Invalid inbound receipt")
+                prior = conn.execute("SELECT sku,quantity FROM inbound_receipts WHERE id=?", (receipt_id,)).fetchone()
+                if prior is not None:
+                    if tuple(prior) != (sku, quantity):
+                        raise Conflict(f"Receipt {receipt_id} already recorded with different contents")
+                    replayed += 1
+                    continue
+                product = conn.execute("SELECT capacity FROM products WHERE sku=?", (sku,)).fetchone()
+                if product is None:
+                    raise Missing(f"Unknown inbound SKU: {sku}")
+                if product["capacity"] > 2**63 - 1 - quantity:
+                    raise Conflict(f"Capacity exceeds SQLite integer range for {sku}")
+                conn.execute("INSERT INTO inbound_receipts VALUES (?,?,?)", (receipt_id, sku, quantity))
+                conn.execute("UPDATE products SET capacity=capacity+?, available=available+? WHERE sku=?",
+                             (quantity, quantity, sku))
+                applied += 1
+                units += quantity
+        return {"applied": applied, "replayed": replayed, "units_added": units}
 
     def reserve(self, key, sku, quantity):
         with self.current_inventory() as (conn, now):

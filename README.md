@@ -64,6 +64,38 @@ SQLite 適合本機或單節點展示。此版本的使用情境是可信任的�
 
 收據上的 `returnable_after` 是登記當時的餘額。重送同一退貨單號但改數量，或嘗試退回超過該箱餘額的商品，會得到 HTTP 409。升級後可直接對舊箱單辦退。測試讓兩個 API 實例共用資料庫，先重送同一份兩件退貨單 12 次，再用 12 個不同單號競爭最後 3 件額度。另以收據寫入失敗驗證庫存同步回滾。[交易與並行測試](tests/test_api.py)
 
+### 從 Dock Outbox 收貨補庫存
+
+收貨員在 Dock Outbox 按下「送出收貨」，伺服器確認後才會留下可匯入的收據。Stockroom 以收據的 UUID 去重，每筆新收貨會同時增加實體庫存與可用庫存。既有訂單保留的件數繼續保留。
+
+在 Stockroom 專案根目錄執行以下命令。第一個路徑是 Dock Outbox 的收據資料庫，第二個是 Stockroom 服務使用的資料庫。請使用與服務相同的目的路徑，首次指定新檔時會建立含預設商品的 Stockroom 資料庫。
+
+```sh
+python -m stockroom.import_receipts ../dock-outbox/.dock-data/receipts.sqlite3 data/stockroom.db
+```
+
+每次從來源的同一個唯讀視圖逐筆掃描收據。JSON 結果以 `applied`、`replayed`、`units_added` 分別列出新收據數、已處理的收據數和新增件數。不同批貨即使料號與數量相同，只要識別碼不同，仍會分別入庫。來源在匯入期間新提交的收據可在下次執行時讀取。
+
+目的資料庫會在同一筆寫入交易記錄收據並增加庫存。遇到未知料號、同一識別碼對應不同內容或無效數量時，指令回報錯誤並回滾該批變更。補齊商品資料或修正來源後可再次執行。這個版本逐次檢查完整收據歷史，大批匯入期間其他 Stockroom 寫入會等待。[匯入指令](stockroom/import_receipts.py) · [交易實作](stockroom/store.py)
+
+要在暫存資料庫重現並行與失敗情境，需要 Python 3.12 和 Node.js 24 以上。
+
+```sh
+git clone https://github.com/peca12968/dock-outbox.git ../dock-outbox
+git -C ../dock-outbox checkout --detach 4da92c62b158b80f09f09285ce8e9a68e68d757a
+python dock_drill.py ../dock-outbox
+```
+
+| 操作 | KIT-01 實體庫存 | KIT-01 可用庫存 |
+| --- | ---: | ---: |
+| 原有 20 件，訂單先保留 7 件 | 20 | 13 |
+| 兩張收據共 10 件，8 個程序同時匯入 | 30 | 23 |
+| 接著收貨 4 件 KIT-01 與 2 件未建檔的 TOTE-02，整批回滾 | 30 | 23 |
+| 建立 TOTE-02 後重試，另有 2 件 TOTE-02 入庫 | 34 | 27 |
+| 解除原訂單保留 | 34 | 34 |
+
+演練會向實際 Dock Outbox HTTP 服務送件並重送，核對首次與重送的收據內容。八個獨立 Stockroom 程序中，恰有一個匯入兩張收據，另外七個各辨識出兩張重送。測試也涵蓋舊資料庫升級、批次尾端的衝突與 SQLite 整數上限。[跨專案演練](dock_drill.py) · [回滾測試](tests/test_import_receipts.py)
+
 ### 執行測試
 
 ```sh
