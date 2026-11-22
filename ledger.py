@@ -63,15 +63,26 @@ def import_feed(db, table, path):
     return duplicates
 
 
-def reconcile(db, orders, postings):
+def exception_record(order, currency, expected, received, state):
+    return {"order_id": order, "currency": currency, "state": state,
+            "expected_minor": expected, "received_minor": received,
+            "delta_minor": (received or 0) - (expected or 0)}
+
+
+def reconcile(db, orders, postings, *, track_changes=False):
+    sql = Path(__file__).with_name("reconcile.sql").read_text(encoding="utf-8")
     db.executescript(SCHEMA)
     with db:
         db.execute("BEGIN IMMEDIATE")
+        previous = {}
+        changes = {"new": [], "ongoing": [], "resolved": [], "absent": []}
+        if track_changes:
+            previous = {(row[0], row[1]): exception_record(*row)
+                        for row in db.execute(sql) if row[4] != "matched"}
         db.execute("DELETE FROM orders")
         db.execute("DELETE FROM postings")
         ignored = {name: import_feed(db, name, path)
                    for name, path in [("orders", orders), ("postings", postings)]}
-        sql = Path(__file__).with_name("reconcile.sql").read_text(encoding="utf-8")
         exceptions = []
         totals = {}
         matched = 0
@@ -82,12 +93,24 @@ def reconcile(db, orders, postings):
             total["expected_minor"] += expected or 0
             total["received_minor"] += received or 0
             total["delta_minor"] += delta
+            before = previous.pop((order, currency), None) if track_changes else None
             if state == "matched":
                 matched += 1
+                if before is not None:
+                    changes["resolved"].append({"before": before, "matched_minor": expected})
             else:
-                exceptions.append({"order_id": order, "currency": currency, "state": state,
-                                   "expected_minor": expected, "received_minor": received, "delta_minor": delta})
-    return {"matched": matched, "exceptions": exceptions, "by_currency": totals, "duplicates_ignored": ignored}
+                after = exception_record(*row)
+                exceptions.append(after)
+                if track_changes:
+                    if before is None:
+                        changes["new"].append(after)
+                    else:
+                        changes["ongoing"].append({"before": before, "after": after})
+    report = {"matched": matched, "exceptions": exceptions, "by_currency": totals, "duplicates_ignored": ignored}
+    if track_changes:
+        changes["absent"] = list(previous.values())
+        report["changes"] = changes
+    return report
 
 
 def main(argv=None):
@@ -96,10 +119,14 @@ def main(argv=None):
     parser.add_argument("postings", type=Path)
     parser.add_argument("--db", default=":memory:", help="SQLite snapshot destination")
     parser.add_argument("--strict", action="store_true", help="exit 3 when differences exist")
+    parser.add_argument("--changes", action="store_true",
+                        help="compare with the last successful snapshot in the specified database")
     args = parser.parse_args(argv)
+    if args.changes and args.db in ("", ":memory:"):
+        parser.error("--changes requires a persistent --db FILE")
     try:
         with closing(sqlite3.connect(args.db, timeout=15)) as db:
-            report = reconcile(db, args.orders, args.postings)
+            report = reconcile(db, args.orders, args.postings, track_changes=args.changes)
     except (ValueError, OSError, csv.Error, sqlite3.Error) as exc:
         print(str(exc), file=sys.stderr)
         return 2

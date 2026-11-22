@@ -21,6 +21,28 @@ python -m unittest -v
 
 ## 輸入與執行模式
 
+### 追蹤兩次對帳之間的變化
+
+從新的示範資料庫開始，將兩份完整的入帳快照依序交給同一個資料庫：
+
+```sh
+python ledger.py examples/orders.csv examples/postings.csv --db demo.db
+python ledger.py examples/orders.csv examples/postings-followup.csv --db demo.db --changes
+```
+
+第二份 JSON 報表中的 `changes` 以「訂單＋幣別」追蹤下表四種結果。
+
+| 欄位 | 示範結果 | 判斷依據 |
+| --- | --- | --- |
+| new | 1 筆。O-777 有一筆 USD 入帳待查 | 本次首次出現差異，或前次已匹配、本次又出現差異 |
+| ongoing | 3 筆。O-103 已部分入帳，USD 差額由 −2,500 縮至 −1,500 | 前後兩次都有差異，保留 before 與 after，可追蹤金額或類型變動 |
+| resolved | 1 筆。O-101 補入 200，現已匹配 4,200 | 本次應收與入帳兩側都存在，金額相符 |
+| absent | 1 筆。O-999 本次從來源消失 | 兩側都沒有本次資料，尚無結清證據 |
+
+比較基準是該資料庫上次成功載入的快照，舊版本建立的資料庫也能使用。新資料庫的基準為空。輸入錯誤會回滾，並行執行則依取得 SQLite 寫入鎖的順序比較。再次載入同一份快照時，持續存在的差異會歸入 ongoing。需要保存每一期的調查軌跡時，可把每次產生的 JSON 留存。未傳入 `--changes` 時沿用原有報表格式。
+
+### CSV 與結束碼
+
 訂單欄位為 `order_id,currency,amount_minor`。入帳欄位為 `posting_id,order_id,currency,amount_minor`。每張訂單對應一個幣別。兩份完整快照必須使用同樣的金額單位約定。負數可表示退款。相同主鍵且內容相同的列會計入重複次數，主鍵相同但內容衝突會中止匯入並回報行號。
 
 ```sh
