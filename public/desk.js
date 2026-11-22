@@ -16,6 +16,10 @@ function controls() {
   byId("network").textContent = navigator.onLine ? "網路已連線" : "目前離線";
 }
 
+function nextQueueControl() {
+  return count ? sync : byId("sku");
+}
+
 async function refresh() {
   if (!db) return;
   const entries = await pending(db);
@@ -27,16 +31,24 @@ async function refresh() {
   });
   document.querySelector("tbody").replaceChildren(...rows);
   count = entries.length;
-  if (conflict && !entries.some(entry => entry.sequence === conflict.sequence)) conflict = null;
-  byId("review").hidden = !conflict;
+  if (conflict && !entries.some(entry => entry.sequence === conflict.sequence)) {
+    conflict = null;
+    if (!busy) status.textContent = "此筆待送項目已在其他分頁完成核對。";
+  }
+  const review = byId("review");
+  const closingFocusedReview = !conflict && review.contains(document.activeElement);
+  review.hidden = !conflict;
   byId("count").textContent = count + " 筆";
   byId("empty").hidden = count > 0;
   byId("table").hidden = count === 0;
   controls();
+  if (closingFocusedReview && !busy) nextQueueControl().focus();
 }
 
 async function update(operation, focusAfter) {
   if (busy || !db) return;
+  const trigger = document.activeElement;
+  let showComparison = false;
   busy = true;
   controls();
   try {
@@ -44,6 +56,7 @@ async function update(operation, focusAfter) {
   } catch (error) {
     if (error instanceof ReceiptConflict) {
       conflict = error;
+      showComparison = true;
       const { local, received } = conflict;
       byId("comparison").textContent = "本機 " + local.sku + " × " + local.quantity +
         " 件。已入帳 " + received.sku + " × " + received.quantity + " 件。";
@@ -54,7 +67,10 @@ async function update(operation, focusAfter) {
     changes.postMessage("refresh");
     busy = false;
     await refresh();
-    if (focusAfter && document.activeElement === document.body) focusAfter.focus();
+    if (document.activeElement === document.body || document.activeElement === trigger) {
+      const target = showComparison && conflict ? byId("comparison") : focusAfter();
+      target.focus();
+    }
   }
 }
 
@@ -68,19 +84,19 @@ byId("form").addEventListener("submit", event => {
     sku.value = "";
     quantity.value = "1";
     return entry.sku + " 已存入本機。";
-  }, byId("sku"));
+  }, () => byId("sku"));
 });
 sync.addEventListener("click", () => update(async () => {
   status.textContent = "正在送往收貨站…";
   const sent = await synchronize(db);
   return "已確認 " + sent + " 筆收貨。";
-}));
+}, nextQueueControl));
 byId("accept").addEventListener("click", () => update(async () => {
   if (!conflict) return "請重新核對待送清單。";
   await acceptExisting(db, conflict);
   conflict = null;
-  return "已採用入帳資料。其餘待送項目可繼續送出。";
-}, sync));
+  return "已採用入帳資料並移除此筆待送項目。";
+}, () => conflict ? byId("comparison") : nextQueueControl()));
 changes.onmessage = refresh;
 window.addEventListener("pageshow", refresh);
 window.addEventListener("online", controls);

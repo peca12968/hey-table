@@ -1,4 +1,4 @@
-const shell = "dock-outbox-shell-v1";
+const shell = "dock-outbox-shell-v2";
 const paths = ["/", "/desk.css", "/desk.js", "/outbox.js"];
 self.addEventListener("install", event => {
   event.waitUntil(caches.open(shell).then(cache => cache.addAll(paths)));

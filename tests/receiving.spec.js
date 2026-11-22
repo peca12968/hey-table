@@ -95,15 +95,23 @@ test("a conflicting receipt stops the queue and leaves the unsent tail intact", 
   });
   const seeded = await request.post(station.url + "/api/receipts", { data: { ...records[1], quantity: 2 } });
   expect(seeded.status()).toBe(201);
-  await send(page).click();
+  await send(page).focus();
+  await page.keyboard.press("Enter");
   await expect(page.getByRole("status")).toContainText("HTTP 409");
   await expect(page.locator("tbody tr")).toHaveCount(2);
   expect(station.rows()).toEqual([{ sku: "CR-42", quantity: 2 }, { sku: "BX-19", quantity: 4 }]);
-  await expect(page.getByText("本機 CR-42 × 6 件。已入帳 CR-42 × 2 件。")).toBeVisible();
-  await page.getByRole("button", { name: "採用已入帳資料並移除此待送項目" }).click();
+  const comparison = page.getByText("本機 CR-42 × 6 件。已入帳 CR-42 × 2 件。");
+  await expect(comparison).toBeFocused();
+  await page.keyboard.press("Enter");
+  await expect(comparison).toBeVisible();
+  await page.keyboard.press("Tab");
+  await expect(page.getByRole("button", { name: "採用已入帳資料並移除此待送項目" })).toBeFocused();
+  await page.keyboard.press("Enter");
   await expect(page.locator("tbody tr")).toHaveCount(1);
-  await send(page).click();
+  await expect(send(page)).toBeFocused();
+  await page.keyboard.press("Enter");
   await expect(page.getByRole("status")).toHaveText("已確認 1 筆收貨。");
+  await expect(page.getByLabel("料號")).toBeFocused();
   expect(station.rows()).toEqual([{ sku: "CR-42", quantity: 2 }, { sku: "BX-19", quantity: 4 }, { sku: "AX-21", quantity: 8 }]);
 });
 
@@ -119,4 +127,32 @@ test("independent entries for the same SKU survive narrow-screen entry and cross
   await send(page).click();
   await expect(other.getByText("清單目前是空的")).toBeVisible();
   expect(station.rows()).toEqual([{ sku: "BX-19", quantity: 7 }, { sku: "BX-19", quantity: 7 }]);
+});
+
+test("resolving the last conflict in a second tab restores the entry field in both tabs", async ({ page, context, request, station }) => {
+  await open(page, station.url);
+  await add(page, "CR-42", 6);
+  const other = await context.newPage();
+  await open(other, station.url);
+  const id = await page.evaluate(async () => {
+    const {openOutbox, pending} = await import("/outbox.js");
+    const db = await openOutbox();
+    try { return (await pending(db))[0].id; } finally { db.close(); }
+  });
+  expect((await request.post(station.url + "/api/receipts", {data: {id, sku: "CR-42", quantity: 2}})).status()).toBe(201);
+  for (const tab of [page, other]) {
+    await send(tab).focus();
+    await tab.keyboard.press("Enter");
+    await expect(tab.locator("#comparison")).toBeFocused();
+  }
+  await other.keyboard.press("Tab");
+  await expect(other.locator("#accept")).toBeFocused();
+  await other.keyboard.press("Enter");
+  for (const tab of [page, other]) {
+    await expect(tab.locator("#review")).toBeHidden();
+    await expect(tab.getByLabel("料號")).toBeFocused();
+    await expect(send(tab)).toBeDisabled();
+  }
+  await expect(page.getByRole("status")).toHaveText("此筆待送項目已在其他分頁完成核對。");
+  expect(station.rows()).toEqual([{sku: "CR-42", quantity: 2}]);
 });
