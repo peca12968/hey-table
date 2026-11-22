@@ -8,7 +8,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from ledger import main
+from ledger import main, reconcile
 
 EXAMPLES = Path(__file__).parent / "examples"
 
@@ -20,12 +20,13 @@ class ReconciliationTests(unittest.TestCase):
         self.root = Path(temp.name)
         self.db = self.root / "snapshot.db"
 
-    def invoke(self, orders=None, postings=None, strict=False, changes=False):
+    def invoke(self, orders=None, postings=None, strict=False, changes=False, explain=False):
         out, err = io.StringIO(), io.StringIO()
         args = [str(orders or EXAMPLES / "orders.csv"), str(postings or EXAMPLES / "postings.csv"),
                 "--db", str(self.db)]
         with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
-            code = main(args + (["--strict"] if strict else []) + (["--changes"] if changes else []))
+            code = main(args + (["--strict"] if strict else []) + (["--changes"] if changes else [])
+                        + (["--explain"] if explain else []))
         return code, json.loads(out.getvalue()) if out.getvalue() else None, err.getvalue()
 
     def feed(self, name, text):
@@ -111,6 +112,83 @@ class ReconciliationTests(unittest.TestCase):
         self.assertEqual(changes["resolved"], [])
         self.assertEqual(len(changes["absent"]), 5)
 
+    def test_example_explains_four_usd_movements_and_keeps_other_currencies_separate(self):
+        self.assertNotIn("movements_by_currency", self.invoke()[1])
+        followup = EXAMPLES / "postings-followup.csv"
+        code, report, _ = self.invoke(postings=followup, explain=True, strict=True)
+        self.assertEqual(code, 3)
+        self.assertNotIn("changes", report)
+        movements = report["movements_by_currency"]
+        usd = movements["USD"]
+        self.assertEqual((usd["opening_delta_minor"], usd["change_minor"], usd["closing_delta_minor"]),
+                         (-3150, 700, -2450))
+        self.assertEqual([(r["record_id"], r["effect_minor"]) for r in usd["lines"]],
+                         [("P-05", -800), ("P-07", 200), ("P-08", 1000), ("P-09", 300)])
+        self.assertIsNone(usd["lines"][0]["after_minor"])
+        for currency, expected in [("EUR", 1250), ("TWD", 0)]:
+            self.assertEqual(movements[currency], {"opening_delta_minor": expected, "change_minor": 0,
+                                                  "closing_delta_minor": expected, "lines": []})
+        repeat = self.invoke(postings=followup, changes=True, explain=True)[1]
+        self.assertIn("changes", repeat)
+        for bridge in repeat["movements_by_currency"].values():
+            self.assertEqual(bridge["lines"], [])
+            self.assertEqual(bridge["change_minor"], 0)
+
+    def test_moves_refunds_zero_amounts_and_disappearing_currency(self):
+        order_head = "order_id,currency,amount_minor\n"
+        posting_head = "posting_id,order_id,currency,amount_minor\n"
+        old_orders = self.feed("old-o.csv", order_head + "A,USD,100\nB,JPY,0\nC,EUR,70\n")
+        new_orders = self.feed("new-o.csv", order_head + "A,USD,120\nC,USD,70\n")
+        old_posts = self.feed("old-p.csv", posting_head + "P,A,USD,-20\nQ,A,USD,40\nR,C,EUR,70\n")
+        new_posts = self.feed("new-p.csv", posting_head + "P,A,USD,-50\nQ,C,USD,40\nR,C,USD,70\n")
+        first = self.invoke(old_orders, old_posts, explain=True)[1]["movements_by_currency"]
+        self.assertEqual(first["USD"]["opening_delta_minor"], 0)
+        result = self.invoke(new_orders, new_posts, explain=True)[1]["movements_by_currency"]
+        def amounts(currency):
+            return [(r["source"], r["record_id"], r["order_id"], r["before_minor"], r["after_minor"],
+                     r["effect_minor"]) for r in result[currency]["lines"]]
+        self.assertEqual(amounts("JPY"), [("orders", "B", "B", 0, None, 0)])
+        self.assertEqual(amounts("EUR"), [("orders", "C", "C", 70, None, 70),
+                                         ("postings", "R", "C", 70, None, -70)])
+        self.assertEqual(amounts("USD"), [("orders", "A", "A", 100, 120, -20),
+                                         ("orders", "C", "C", None, 70, -70),
+                                         ("postings", "P", "A", -20, -50, -30),
+                                         ("postings", "Q", "A", 40, None, -40),
+                                         ("postings", "Q", "C", None, 40, 40),
+                                         ("postings", "R", "C", None, 70, 70)])
+        self.assertEqual((result["USD"]["opening_delta_minor"], result["USD"]["closing_delta_minor"]),
+                         (-80, -130))
+        self.assertEqual(result["EUR"]["change_minor"], 0)
+        self.assertEqual(result["JPY"]["closing_delta_minor"], 0)
+
+    def test_failed_import_preserves_baseline_and_allows_same_connection_retry(self):
+        bad = self.feed("bad.csv", "posting_id,order_id,currency,amount_minor\nP,A,USD,not-money\n")
+        with contextlib.closing(sqlite3.connect(self.db)) as db:
+            orders = EXAMPLES / "orders.csv"
+            reconcile(db, orders, EXAMPLES / "postings.csv", explain=True)
+            with self.assertRaises(ValueError):
+                reconcile(db, orders, bad, explain=True)
+            report = reconcile(db, orders, EXAMPLES / "postings-followup.csv", explain=True)
+            self.assertEqual(report["movements_by_currency"]["USD"]["opening_delta_minor"], -3150)
+            self.assertEqual(db.execute("SELECT count(*) FROM sqlite_temp_master").fetchone()[0], 0)
+
+    def test_single_unit_change_above_float_precision_remains_exact(self):
+        orders = self.feed("orders.csv", "order_id,currency,amount_minor\n")
+        header = "posting_id,order_id,currency,amount_minor\n"
+        amount = 999_999_999_999
+        count = 9010
+        body = "".join(f"P{i},A,USD,{amount}\n" for i in range(count))
+        postings = self.feed("postings.csv", header + body)
+        self.assertEqual(self.invoke(orders, postings)[0], 0)
+        with postings.open("a", encoding="utf-8") as stream:
+            stream.write("adjustment,A,USD,-1\n")
+        movement = self.invoke(orders, postings, explain=True)[1]["movements_by_currency"]["USD"]
+        self.assertGreater(count * amount, 2**53)
+        self.assertEqual(movement["opening_delta_minor"], count * amount)
+        self.assertEqual(movement["closing_delta_minor"], count * amount - 1)
+        self.assertEqual(movement["change_minor"], -1)
+        self.assertEqual([r["effect_minor"] for r in movement["lines"]], [-1])
+
     def test_parallel_cli_imports_compare_with_the_last_committed_writer(self):
         # Each snapshot has one missing posting. Only the second writer can see the other's order.
         postings = self.feed("empty.csv", "posting_id,order_id,currency,amount_minor\n")
@@ -118,13 +196,21 @@ class ReconciliationTests(unittest.TestCase):
         for order in ["A", "B"]:
             source = self.feed(f"{order}.csv", f"order_id,currency,amount_minor\n{order},USD,1\n")
             args = [sys.executable, str(EXAMPLES.parent / "ledger.py"), str(source), str(postings),
-                    "--db", str(self.db), "--changes"]
+                    "--db", str(self.db), "--changes", "--explain"]
             jobs.append(subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True))
         results = []
         for job in jobs:
             stdout, stderr = job.communicate(timeout=20)
             self.assertEqual(job.returncode, 0, stderr)
-            results.append(json.loads(stdout)["changes"])
+            report = json.loads(stdout)
+            movement = report["movements_by_currency"]["USD"]
+            next_order = report["changes"]["new"][0]["order_id"]
+            effects = {line["order_id"]: line["effect_minor"] for line in movement["lines"]}
+            self.assertEqual(effects.pop(next_order), -1)
+            absent = report["changes"]["absent"]
+            self.assertEqual(effects, {row["order_id"]: 1 for row in absent})
+            self.assertEqual(movement["opening_delta_minor"], -len(absent))
+            results.append(report["changes"])
         first, second = sorted(results, key=lambda result: len(result["absent"]))
         self.assertEqual(first["absent"], [])
         self.assertEqual(second["absent"], first["new"])

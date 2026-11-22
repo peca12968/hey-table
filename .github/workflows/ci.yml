@@ -15,3 +15,8 @@ jobs:
           python-version: ${{ matrix.python }}
       - run: python -m unittest -v
       - run: python ledger.py examples/orders.csv examples/postings.csv
+      - name: Explain the USD difference between the sample snapshots
+        run: |
+          python ledger.py examples/orders.csv examples/postings.csv --db "$RUNNER_TEMP/demo.db" > /dev/null
+          python ledger.py examples/orders.csv examples/postings-followup.csv --db "$RUNNER_TEMP/demo.db" --explain > "$RUNNER_TEMP/report.json"
+          jq -e '.movements_by_currency.USD | select([.opening_delta_minor, .change_minor, .closing_delta_minor] == [-3150, 700, -2450])' "$RUNNER_TEMP/report.json"

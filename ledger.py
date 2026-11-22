@@ -22,6 +22,11 @@ CREATE TABLE IF NOT EXISTS postings (
 );
 CREATE INDEX IF NOT EXISTS postings_order ON postings(order_id, currency);
 """
+SOURCE_AMOUNTS = """
+SELECT 'orders' AS source, order_id AS record_id, order_id, currency, amount_minor FROM orders
+UNION ALL
+SELECT 'postings', posting_id, order_id, currency, amount_minor FROM postings
+"""
 
 
 def parse_row(table, row):
@@ -69,11 +74,50 @@ def exception_record(order, currency, expected, received, state):
             "delta_minor": (received or 0) - (expected or 0)}
 
 
-def reconcile(db, orders, postings, *, track_changes=False):
+def explain_movements(db, totals):
+    opening = dict(db.execute("""
+        SELECT currency, SUM(CASE source WHEN 'orders' THEN -amount_minor ELSE amount_minor END)
+        FROM temp.prior_amounts GROUP BY currency
+    """))
+    movements = {}
+    for currency in sorted(opening.keys() | totals.keys()):
+        before = opening.get(currency, 0)
+        after = totals[currency]["delta_minor"] if currency in totals else 0
+        movements[currency] = {"opening_delta_minor": before, "closing_delta_minor": after,
+                               "change_minor": after - before, "lines": []}
+    # The source table's primary key is already unique. Grouping also by order
+    # and currency splits a reassigned posting into its outgoing and incoming legs.
+    rows = db.execute(f"""
+        WITH current_amounts AS ({SOURCE_AMOUNTS}),
+        versions AS (
+            SELECT source, record_id, order_id, currency, amount_minor AS old, NULL AS new
+            FROM temp.prior_amounts
+            UNION ALL
+            SELECT source, record_id, order_id, currency, NULL, amount_minor FROM current_amounts
+        )
+        SELECT source, record_id, order_id, currency, MAX(old), MAX(new) FROM versions
+        GROUP BY currency, source, record_id, order_id
+        HAVING MAX(old) IS NOT MAX(new)
+        ORDER BY currency, source, record_id, order_id
+    """)
+    for source, key, order, currency, old, new in rows:
+        difference = (new or 0) - (old or 0)
+        effect = -difference if source == "orders" else difference
+        movements[currency]["lines"].append({"source": source, "record_id": key, "order_id": order,
+                                            "before_minor": old, "after_minor": new, "effect_minor": effect})
+    for currency, movement in movements.items():
+        if sum(line["effect_minor"] for line in movement["lines"]) != movement["change_minor"]:
+            raise ValueError(f"Movement total does not balance for {currency}")
+    return movements
+
+
+def reconcile(db, orders, postings, *, track_changes=False, explain=False):
     sql = Path(__file__).with_name("reconcile.sql").read_text(encoding="utf-8")
     db.executescript(SCHEMA)
     with db:
         db.execute("BEGIN IMMEDIATE")
+        if explain:
+            db.execute("CREATE TEMP TABLE prior_amounts AS " + SOURCE_AMOUNTS)
         previous = {}
         changes = {"new": [], "ongoing": [], "resolved": [], "absent": []}
         if track_changes:
@@ -106,10 +150,15 @@ def reconcile(db, orders, postings, *, track_changes=False):
                         changes["new"].append(after)
                     else:
                         changes["ongoing"].append({"before": before, "after": after})
+        if explain:
+            movements = explain_movements(db, totals)
+            db.execute("DROP TABLE temp.prior_amounts")
     report = {"matched": matched, "exceptions": exceptions, "by_currency": totals, "duplicates_ignored": ignored}
     if track_changes:
         changes["absent"] = list(previous.values())
         report["changes"] = changes
+    if explain:
+        report["movements_by_currency"] = movements
     return report
 
 
@@ -121,12 +170,14 @@ def main(argv=None):
     parser.add_argument("--strict", action="store_true", help="exit 3 when differences exist")
     parser.add_argument("--changes", action="store_true",
                         help="compare with the last successful snapshot in the specified database")
+    parser.add_argument("--explain", action="store_true",
+                        help="explain each currency's change in net difference using source records")
     args = parser.parse_args(argv)
-    if args.changes and args.db in ("", ":memory:"):
-        parser.error("--changes requires a persistent --db FILE")
+    if (args.changes or args.explain) and args.db in ("", ":memory:"):
+        parser.error("snapshot comparison requires a persistent --db FILE")
     try:
         with closing(sqlite3.connect(args.db, timeout=15)) as db:
-            report = reconcile(db, args.orders, args.postings, track_changes=args.changes)
+            report = reconcile(db, args.orders, args.postings, track_changes=args.changes, explain=args.explain)
     except (ValueError, OSError, csv.Error, sqlite3.Error) as exc:
         print(str(exc), file=sys.stderr)
         return 2
