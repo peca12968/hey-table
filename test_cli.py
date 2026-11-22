@@ -6,6 +6,7 @@ import random
 import subprocess
 import tempfile
 import unittest
+import zipfile
 
 
 ROOT = Path(__file__).resolve().parent
@@ -21,12 +22,92 @@ class ParcelWindowsTests(unittest.TestCase):
         build = tempfile.TemporaryDirectory()
         cls.addClassCleanup(build.cleanup)
         subprocess.run(["javac", "--release", "21", "-Xlint:all", "-Werror", "-d", build.name,
-                        str(ROOT / "src/ParcelWindows.java")], check=True, timeout=45)
+                        str(ROOT / "src/ParcelWindows.java"), str(ROOT / "src/ParcelBatch.java")],
+                       check=True, timeout=45)
         cls.cmd = ["java", "-cp", build.name, "ParcelWindows"]
 
     def run_cli(self, data="", *args):
         return subprocess.run([*self.cmd, *args], input=data, text=True,
                               capture_output=True, timeout=15)
+
+    def batch(self, mode, number, parent, target, data=b""):
+        return subprocess.run([*self.cmd[:-1], "ParcelBatch", mode, str(number), parent, target, "-"],
+                              input=data, capture_output=True, timeout=15)
+
+    def run_parts(self, parts):
+        output = []
+        with tempfile.TemporaryDirectory() as directory:
+            parent = "-"
+            for i, data in enumerate(parts, 1):
+                target = Path(directory) / f"{i}.zip"
+                result = self.batch("finish" if i == len(parts) else "append", i, parent, target, data)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                with zipfile.ZipFile(target) as archive:
+                    self.assertEqual(archive.namelist(), ["records.tsv", "state.bin"])
+                    output.append(archive.read("records.tsv"))
+                parent = target
+        return b"".join(output)
+
+    def test_restart_at_every_example_boundary(self):
+        data = (ROOT / "examples/scans.tsv").read_bytes()
+        lines = data.splitlines(keepends=True)
+        expected = subprocess.run(self.cmd, input=data, capture_output=True, check=True, timeout=15).stdout
+        for cut in range(len(lines) + 1):
+            with self.subTest(cut=cut):
+                self.assertEqual(self.run_parts([b"".join(lines[:cut]), b"".join(lines[cut:])]), expected)
+
+    def test_failed_batch_can_retry_and_final_cannot_continue(self):
+        with tempfile.TemporaryDirectory() as directory:
+            parent, target, other = [Path(directory) / name for name in ("1.zip", "2.zip", "3.zip")]
+            first = self.batch("append", 1, "-", parent, b"SCAN\t1970-01-01T00:00:00.000000001Z\ta\tH\n")
+            self.assertEqual(first.returncode, 0, first.stderr)
+            original = parent.read_bytes()
+            data = b"WATERMARK\t1970-01-01T00:05:00Z\n"
+            for number, previous, payload in [(2, parent, data + b"BAD\n"), (2, parent, b"\xff"),
+                                               (3, parent, data), (2, "-", data)]:
+                self.assertNotEqual(self.batch("finish", number, previous, target, payload).returncode, 0)
+                self.assertFalse(target.exists())
+                self.assertEqual(parent.read_bytes(), original)
+            retry = self.batch("finish", 2, parent, target, data)
+            self.assertEqual(retry.returncode, 0, retry.stderr)
+            with zipfile.ZipFile(target) as archive:
+                records = archive.read("records.tsv").splitlines()
+                self.assertEqual(len(records), 2)
+                self.assertTrue(records[1].startswith(b"SUMMARY\taccepted=1\t"))
+            self.assertNotEqual(self.batch("append", 3, target, other).returncode, 0)
+            self.assertFalse(other.exists())
+
+    def test_checkpoint_damage_and_unknown_version(self):
+        with tempfile.TemporaryDirectory() as directory:
+            parent, damaged, target = [Path(directory) / name for name in ("1.zip", "bad.zip", "2.zip")]
+            self.assertEqual(self.batch("append", 1, "-", parent).returncode, 0)
+            with zipfile.ZipFile(parent) as archive:
+                state = archive.read("state.bin")
+            for bad_state in [state[:-1], b"XYZ!" + state[4:], state + b"extra"]:
+                with zipfile.ZipFile(damaged, "w") as archive:
+                    archive.writestr("records.tsv", b"")
+                    archive.writestr("state.bin", bad_state)
+                self.assertNotEqual(self.batch("finish", 2, damaged, target).returncode, 0)
+                self.assertFalse(target.exists())
+            with zipfile.ZipFile(damaged, "w", compression=zipfile.ZIP_STORED) as archive:
+                archive.writestr("records.tsv", b"uniquely-marked-output")
+                archive.writestr("state.bin", state)
+            damaged.write_bytes(damaged.read_bytes().replace(b"uniquely-marked-output", b"damaged!-marked-output"))
+            self.assertNotEqual(self.batch("finish", 2, damaged, target).returncode, 0)
+            self.assertFalse(target.exists())
+
+    def test_competing_writers_publish_one_complete_batch(self):
+        with tempfile.TemporaryDirectory() as directory, ThreadPoolExecutor(max_workers=2) as pool:
+            target = Path(directory) / "1.zip"
+            hubs = ["TPE", "KHH"]
+            attempts = [pool.submit(self.batch, "finish", 1, "-", target,
+                                    f"SCAN\t{iso(0)}\ta\t{hub}\n".encode()) for hub in hubs]
+            results = [attempt.result() for attempt in attempts]
+            self.assertEqual(sorted(r.returncode for r in results), [0, 1])
+            winner = hubs[next(i for i, r in enumerate(results) if r.returncode == 0)]
+            with zipfile.ZipFile(target) as archive:
+                self.assertIsNone(archive.testzip())
+                self.assertIn(f"\t{winner}\t1".encode(), archive.read("records.tsv"))
 
     def test_example_counts_and_rejections(self):
         result = self.run_cli("", ROOT / "examples/scans.tsv")
@@ -109,6 +190,8 @@ class ParcelWindowsTests(unittest.TestCase):
 
         result = self.run_cli("\n".join(inputs) + "\n")
         self.assertEqual(result.returncode, 0, result.stderr)
+        parts = [("\n".join(inputs[i:i + 150]) + "\n").encode() for i in range(0, len(inputs), 150)]
+        self.assertEqual(self.run_parts(parts).decode().splitlines(), result.stdout.splitlines())
         rows = [line.split("\t") for line in result.stdout.splitlines()]
         counts = Counter((s[0] // 300 * 300, s[2]) for s in accepted)
         self.assertEqual([r for r in rows if r[0] == "WINDOW"], [

@@ -19,4 +19,5 @@ jobs:
         with:
           python-version: '3.13'
       - run: python -m unittest -v
+      - run: python batch_demo.py
       - run: java src/ParcelWindows.java examples/scans.tsv

@@ -19,7 +19,7 @@ import java.util.regex.Pattern;
 public final class ParcelWindows {
     private static final long WINDOW_SECONDS = 300;
     private static final long LATENESS_SECONDS = 120;
-    private static final Pattern IDENTIFIER = Pattern.compile("[A-Za-z0-9_.-]{1,80}");
+    static final Pattern IDENTIFIER = Pattern.compile("[A-Za-z0-9_.-]{1,80}");
 
     record Scan(Instant time, String id, String hub) {}
 
@@ -39,10 +39,17 @@ public final class ParcelWindows {
             this.out = out;
         }
 
+        static Instant windowStart(Instant time) {
+            return Instant.ofEpochSecond(Math.floorDiv(time.getEpochSecond(), WINDOW_SECONDS) * WINDOW_SECONDS);
+        }
+
+        boolean closed(Instant start) {
+            return watermark != null && !start.plusSeconds(WINDOW_SECONDS).isAfter(watermark);
+        }
+
         void scan(Scan event) {
-            long index = Math.floorDiv(event.time().getEpochSecond(), WINDOW_SECONDS);
-            Instant start = Instant.ofEpochSecond(index * WINDOW_SECONDS);
-            if (watermark != null && !start.plusSeconds(WINDOW_SECONDS).isAfter(watermark)) {
+            Instant start = windowStart(event.time());
+            if (closed(start)) {
                 late++;
                 reject("late", event);
                 return;
@@ -59,12 +66,16 @@ public final class ParcelWindows {
                 return;
             }
 
+            remember(start, event);
+            accepted++;
+            advance(event.time().minusSeconds(LATENESS_SECONDS));
+        }
+
+        void remember(Instant start, Scan event) {
             Bucket bucket = windows.computeIfAbsent(start, ignored -> new Bucket());
             bucket.counts.merge(event.hub(), 1L, Long::sum);
             bucket.ids.add(event.id());
             activeIds.put(event.id(), event);
-            accepted++;
-            advance(event.time().minusSeconds(LATENESS_SECONDS));
         }
 
         void reject(String reason, Scan event) {
@@ -105,8 +116,7 @@ public final class ParcelWindows {
         return OffsetDateTime.parse(value).toInstant();
     }
 
-    static void process(BufferedReader reader, PrintStream out) throws IOException {
-        Counter counter = new Counter(out);
+    static void consume(BufferedReader reader, Counter counter) throws IOException {
         long number = 0;
         String line;
         while ((line = reader.readLine()) != null) {
@@ -126,10 +136,15 @@ public final class ParcelWindows {
             } catch (DateTimeException | IllegalArgumentException error) {
                 throw new IllegalArgumentException("line " + number + ": " + error.getMessage(), error);
             }
-            if (out.checkError()) {
+            if (counter.out.checkError()) {
                 throw new IOException("output stream failed");
             }
         }
+    }
+
+    static void process(BufferedReader reader, PrintStream out) throws IOException {
+        Counter counter = new Counter(out);
+        consume(reader, counter);
         counter.finish();
         if (out.checkError()) {
             throw new IOException("output stream failed");
