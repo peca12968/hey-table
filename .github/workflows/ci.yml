@@ -16,4 +16,9 @@ jobs:
       - name: Exercise container
         run: |
           docker run -d --name stockroom -p 127.0.0.1:8000:8000 stockroom
-          curl -fsS --retry 10 --retry-delay 1 --retry-connrefused http://localhost:8000/inventory | python -c "import json,sys; assert json.load(sys.stdin)[0]['available']==20"
+          curl -fsS --retry 20 --retry-delay 1 --retry-all-errors http://127.0.0.1:8000/inventory -o /tmp/stockroom-inventory.json
+          python -c "import json; assert json.load(open('/tmp/stockroom-inventory.json'))[0]['available']==20"
+          python demo.py
+      - name: Show container logs on failure
+        if: failure()
+        run: docker logs stockroom
