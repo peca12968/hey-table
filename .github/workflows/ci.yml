@@ -1,0 +1,22 @@
+name: Verify parcel event windows
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  stream:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        java: ['21', '25']
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: ${{ matrix.java }}
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.13'
+      - run: python -m unittest -v
+      - run: java src/ParcelWindows.java examples/scans.tsv
