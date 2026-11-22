@@ -1,0 +1,17 @@
+name: Verify point-in-time forecasts
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  backtest:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+      - run: python -m unittest -v
+      - run: python backtest.py examples/sales.csv --first 2026-06-15 --last 2026-06-18 --truth-as-of 2026-06-22 --details
