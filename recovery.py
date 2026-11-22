@@ -3,6 +3,7 @@ import argparse
 from contextlib import closing
 from datetime import datetime, timezone
 import hashlib
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -56,20 +57,26 @@ def digest(path):
         return hashlib.file_digest(stream, "sha256").hexdigest()
 
 
+def capture(source, staged):
+    """Create a checked, self-contained database in a private staging directory."""
+    staged.touch(mode=0o600, exist_ok=False)
+    with closing(readonly(source)) as live, closing(sqlite3.connect(staged)) as copy:
+        # Pin the committed view for the entire incremental backup.
+        live.execute("BEGIN")
+        if live.execute("PRAGMA page_count").fetchone()[0] == 0:
+            raise ValueError("Source has no database pages")
+        captured_at = datetime.now(timezone.utc).isoformat()
+        live.backup(copy, pages=128)
+        live.rollback()
+        copy.execute("PRAGMA journal_mode=DELETE")
+    check_database(staged)
+    return captured_at
+
+
 def snapshot(source, destination):
     with TemporaryDirectory(dir=destination.parent) as temp:
         staged = Path(temp) / "snapshot.db"
-        staged.touch(mode=0o600)
-        with closing(readonly(source)) as live, closing(sqlite3.connect(staged)) as copy:
-            # Pin the committed view for the entire incremental backup.
-            live.execute("BEGIN")
-            if live.execute("PRAGMA page_count").fetchone()[0] == 0:
-                raise ValueError("Source has no database pages")
-            captured_at = datetime.now(timezone.utc).isoformat()
-            live.backup(copy, pages=128)
-            live.rollback()
-            copy.execute("PRAGMA journal_mode=DELETE")
-        check_database(staged)
+        captured_at = capture(source, staged)
         sha = digest(staged)
         size = staged.stat().st_size
         publish(staged, destination)
@@ -150,6 +157,37 @@ def restore_latest(candidates, destination, not_before=None):
     raise ValueError("No usable recovery point: " + json.dumps(skipped))
 
 
+def load_vault(checkout):
+    path = checkout / "vault.py"
+    if not path.is_file():
+        raise ValueError(f"Shift Vault checkout missing at {path}. Use --shift-vault PATH.")
+    spec = importlib.util.spec_from_file_location("shift_vault", path)
+    vault = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(vault)
+    return vault
+
+
+def vault_snapshot(vault, source, repository):
+    vault.external_file(repository, source)
+    with TemporaryDirectory() as temp:
+        staged = Path(temp) / "snapshot.db"
+        captured_at = capture(source, staged)
+        stored = vault.backup(repository, staged)
+    return {"sha256": stored["snapshot"], "captured_at": captured_at, "bytes": stored["size"],
+            "chunks": stored["chunks"], "added_bytes": stored["added_bytes"],
+            "reused_bytes": stored["reused_bytes"]}
+
+
+def vault_restore(vault, repository, destination, expected):
+    vault.external_file(repository, destination)
+    with TemporaryDirectory(dir=destination.parent) as temp:
+        staged = Path(temp) / "restored.db"
+        result = vault.restore(repository, expected.lower(), staged)
+        check_database(staged)
+        publish(staged, destination)
+    return {"restored": str(destination), "sha256": result["snapshot"], "bytes": result["size"]}
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
@@ -164,12 +202,26 @@ def main():
     latest.add_argument("--candidate", type=Path, nargs=2, metavar=("SNAPSHOT", "RECEIPT"),
                         action="append", required=True)
     latest.add_argument("--not-before", help="Earliest acceptable capture timestamp, inclusive")
+    archive = commands.add_parser("vault-snapshot", help="Capture a live database into Shift Vault")
+    archive.add_argument("source", type=Path)
+    archive.add_argument("repository", type=Path)
+    recover = commands.add_parser("vault-restore", help="Restore a Shift Vault snapshot to a new database")
+    recover.add_argument("repository", type=Path)
+    recover.add_argument("destination", type=Path)
+    recover.add_argument("--sha256", required=True)
+    for command in (archive, recover):
+        command.add_argument("--shift-vault", type=Path, default=Path(__file__).resolve().parent.parent / "shift-vault",
+                             help="Path to the Shift Vault checkout (default: sibling shift-vault directory)")
     args = parser.parse_args()
     try:
         if args.command == "snapshot":
             result = snapshot(args.source, args.destination)
         elif args.command == "restore":
             result = restore(args.source, args.destination, args.sha256)
+        elif args.command == "vault-snapshot":
+            result = vault_snapshot(load_vault(args.shift_vault), args.source, args.repository)
+        elif args.command == "vault-restore":
+            result = vault_restore(load_vault(args.shift_vault), args.repository, args.destination, args.sha256)
         else:
             result = restore_latest(args.candidate, args.destination, args.not_before)
     except (OSError, sqlite3.Error, ValueError) as exc:

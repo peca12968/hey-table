@@ -22,3 +22,10 @@ jobs:
           path: stockroom-checkout
           persist-credentials: false
       - run: python stockroom_drill.py stockroom-checkout
+      - uses: actions/checkout@v7
+        with:
+          repository: peca12968/shift-vault
+          ref: 9e09bbd0e92ee666c4007f3a6fcfaae1b0bf9598
+          path: shift-vault-checkout
+          persist-credentials: false
+      - run: python vault_drill.py shift-vault-checkout

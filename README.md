@@ -30,6 +30,29 @@ python recovery.py restore backup.db restored.db --sha256 <備份時輸出的64�
 
 請將第二行的佔位符連同角括號換成實際摘要。第一行以 JSON 輸出路徑、檔案大小和 SHA-256。將這筆紀錄獨立保存，還原時用它比對備份。目的路徑的上層目錄須已存在，並支援硬連結，例如 NTFS 或 ext4。請還原至新的資料庫路徑。
 
+## 把線上快照存成增量備份
+
+若需保存同一資料庫的多個版本，可以讓 Shift Vault 共用版本之間的區塊。從本專案根目錄下載 CI 使用的版本，然後執行演練。
+
+```sh
+git clone https://github.com/peca12968/shift-vault.git ../shift-vault
+git -C ../shift-vault checkout --detach 9e09bbd0e92ee666c4007f3a6fcfaae1b0bf9598
+python vault_drill.py ../shift-vault
+```
+
+要備份自己的資料庫，可在服務仍開啟時執行以下命令。將第一行輸出的 JSON 收據獨立保存，還原時以收據裡的 `sha256` 取代第二行的 `SNAPSHOT_ID`。目的檔請指定新路徑。若 Shift Vault 放在其他目錄，在任一命令後加上 `--shift-vault 路徑`。
+
+```sh
+python recovery.py vault-snapshot live.db ./backup-store
+python recovery.py vault-restore ./backup-store recovered.db --sha256 SNAPSHOT_ID
+```
+
+備份先用 SQLite Online Backup API 取得包含已提交 WAL 交易的獨立副本，通過資料庫與外鍵檢查後交給 Shift Vault 分塊。還原時先在目的地所在磁碟重組並驗證區塊與整檔摘要，再檢查 SQLite 結構與外鍵，最後發佈可直接開啟的資料庫。兩個方向都需要足以容納一份完整快照的暫存空間。[SQLite 整合](recovery.py) · [Shift Vault 固定版本](https://github.com/peca12968/shift-vault/tree/9e09bbd0e92ee666c4007f3a6fcfaae1b0bf9598)
+
+演練保留一條開啟的寫入連線，在第 2,001 筆掃描提交前後各備份一次。兩次還原分別讀回 2,000 與 2,001 筆，並逐筆比對流水號與原始內容。第二版備份時還有一筆未提交的寫入，兩份快照都排除了該筆紀錄。本機合成範例的第二版共 921,600 位元組，其中新增 8,218、沿用 913,382。這兩個數字只計分塊內容，SQLite 版本與資料頁配置會影響結果。
+
+演練最後破壞第二版專用的區塊，確認新版本無法發佈，接著用第一版的摘要取回完整的 2,000 筆。若損壞的是共用區塊，引用它的版本都會受影響。[跨專案整合測試](vault_drill.py)
+
 ## 最新備份損壞時回到哪一版
 
 在兩個不同的備份時間點各執行一次 `snapshot`，保存各自的 JSON 收據。以下範例適用於 sh 或 PowerShell 7。每組候選檔都應來自同一個應用程式的同一份資料庫，收據可與備份分開保存。
