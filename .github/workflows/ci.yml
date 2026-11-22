@@ -1,0 +1,38 @@
+name: Verify Stockroom Kubernetes rollout
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  rollout:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7
+        with:
+          repository: peca12968/stockroom-reservations
+          ref: 1bec99199cf0ee8ed9d9b3d34ddbaad10dc01930
+          path: app
+          persist-credentials: false
+      - name: Install pinned kind and kubectl
+        shell: bash
+        run: |
+          mkdir "$RUNNER_TEMP/cluster-tools"
+          cd "$RUNNER_TEMP/cluster-tools"
+          curl --fail --location --retry 3 -o kind https://github.com/kubernetes-sigs/kind/releases/download/v0.33.0/kind-linux-amd64
+          curl --fail --location --retry 3 -o kubectl https://dl.k8s.io/release/v1.37.0/bin/linux/amd64/kubectl
+          echo 'aee6151561422756b764a4ae28e7f44cda5af5a9eead3cc9985112b1de8d8e0d  kind' | sha256sum -c -
+          echo '6129359f4e1f3848a5572ccb0b26cf28b8ca08cef38c95a765b2f64a2c961a2f  kubectl' | sha256sum -c -
+          chmod +x kind kubectl
+          echo "$PWD" >> "$GITHUB_PATH"
+      - name: Build, deploy, replace the pod and verify the reservation
+        shell: bash
+        run: |
+          python3 drill.py app > "$RUNNER_TEMP/result.json"
+          cat "$RUNNER_TEMP/result.json"
+          {
+            echo '### Stockroom rollout evidence'
+            echo '~~~json'
+            cat "$RUNNER_TEMP/result.json"
+            echo '~~~'
+          } >> "$GITHUB_STEP_SUMMARY"
