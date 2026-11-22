@@ -11,7 +11,12 @@ import threading
 import unittest
 from unittest.mock import patch
 
-from recovery import readonly, restore, snapshot
+from recovery import readonly, restore, restore_latest, snapshot
+
+
+def cli(*args):
+    cmd = [sys.executable, str(Path(__file__).with_name("recovery.py")), *map(str, args)]
+    return subprocess.run(cmd, capture_output=True, text=True, timeout=15)
 
 
 class RecoveryTests(unittest.TestCase):
@@ -34,10 +39,6 @@ class RecoveryTests(unittest.TestCase):
         """)
 
     def test_cli_captures_committed_wal_excluding_open_and_later_transactions(self):
-        def cli(*args):
-            cmd = [sys.executable, str(Path(__file__).with_name("recovery.py")), *map(str, args)]
-            return subprocess.run(cmd, capture_output=True, text=True, timeout=15)
-
         self.writer.execute("INSERT INTO parent VALUES (2)")
         self.assertGreater(Path(str(self.live) + "-wal").stat().st_size, 0)
         call = cli("snapshot", self.live, self.backup)
@@ -124,14 +125,16 @@ class RecoveryTests(unittest.TestCase):
 
         def attempt(_):
             gate.wait(timeout=10)
-            try:
-                restore(self.backup, self.target, sha)
-                return True
-            except FileExistsError:
-                return False
+            return cli("restore", self.backup, self.target, "--sha256", sha)
 
         with ThreadPoolExecutor(max_workers=4) as pool:
-            self.assertEqual(sum(pool.map(attempt, range(4))), 1)
+            calls = list(pool.map(attempt, range(4)))
+        self.assertCountEqual([call.returncode for call in calls], [0, 1, 1, 1])
+        for call in calls:
+            if call.returncode:
+                self.assertIn(self.target.name, call.stderr)
+            else:
+                self.assertEqual(json.loads(call.stdout)["sha256"], sha)
         self.assertEqual(hashlib.sha256(self.target.read_bytes()).hexdigest(), sha)
         self.target.write_bytes(b"existing destination")
         for action in [lambda: snapshot(self.live, self.target),
@@ -160,3 +163,80 @@ class RecoveryTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "no database pages"):
             snapshot(source, self.backup)
         self.assertFalse(self.backup.exists())
+
+    def candidate(self, name, when):
+        db = self.root / (name + ".db")
+        receipt = self.root / (name + ".json")
+        record = snapshot(self.live, db)
+        # Fix time for deterministic cutoff, offset, and ordering cases.
+        record["captured_at"] = when
+        receipt.write_text(json.dumps(record), encoding="utf-8")
+        return db, receipt
+
+    def test_latest_cli_uses_capture_time_and_restores_last_verified_contents(self):
+        old = self.candidate("z", "2026-04-01T12:00:00+08:00")
+        self.writer.execute("INSERT INTO parent VALUES (2)")
+        self.writer.commit()
+        newest = self.candidate("a", "2026-04-01T05:00:00Z")
+        missing = self.candidate("b", "2026-04-01T06:00:00Z")
+        missing[0].unlink()
+        args = ["--candidate", *old, "--candidate", *missing, "--candidate", *newest]
+        call = cli("restore-latest", self.target, *args)
+        self.assertEqual(call.returncode, 0, call.stderr)
+        report = json.loads(call.stdout)
+        self.assertEqual(report["snapshot"], str(newest[0]))
+        self.assertEqual([x["reason"] for x in report["skipped"]], ["snapshot missing"])
+        with closing(readonly(self.target)) as db:
+            self.assertEqual(db.execute("SELECT COUNT(*) FROM parent").fetchone(), (2,))
+
+        newest[0].write_bytes(b"damaged")
+        second = self.root / "fallback.db"
+        call = cli("restore-latest", second, *args, "--not-before", "2026-04-01T04:00:00Z")
+        self.assertEqual(call.returncode, 0, call.stderr)
+        report = json.loads(call.stdout)
+        self.assertEqual(report["captured_at"], "2026-04-01T04:00:00+00:00")
+        self.assertEqual(report["snapshot"], str(old[0]))
+        self.assertEqual([x["reason"] for x in report["skipped"]],
+                         ["snapshot missing", "Snapshot SHA-256 mismatch"])
+        with closing(readonly(second)) as db:
+            self.assertEqual(db.execute("SELECT COUNT(*) FROM parent").fetchone(), (1,))
+
+        too_old = self.root / "too-old.db"
+        call = cli("restore-latest", too_old, *args, "--not-before", "2026-04-01T04:00:01Z")
+        self.assertEqual(call.returncode, 1)
+        self.assertIn("before recovery cutoff", call.stderr)
+        self.assertFalse(too_old.exists())
+
+    def test_latest_validates_receipts_before_publishing_and_rejects_ties(self):
+        new = self.candidate("one", "2026-04-01T04:00:00Z")
+        other = self.candidate("two", "2026-04-01T12:00:00+08:00")
+        with self.assertRaisesRegex(ValueError, "duplicate capture time"):
+            restore_latest([new, other], self.target)
+        for bad in [{}, {"captured_at": "2026-03-30T09:00:00"}, {"captured_at": "2026-03-30T09:00:00Z",
+                                                                 "sha256": "incomplete"}]:
+            other[1].write_text(json.dumps(bad), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "two.json"):
+                restore_latest([new, other], self.target)
+        self.assertFalse(self.target.exists())
+
+    def test_latest_propagates_destination_errors_without_trying_an_older_snapshot(self):
+        old = self.candidate("old", "2026-04-01T04:00:00Z")
+        new = self.candidate("new", "2026-04-01T05:00:00Z")
+        self.target.write_bytes(b"original destination")
+        with patch("recovery.restore", wraps=restore) as calls:
+            with self.assertRaises(FileExistsError):
+                restore_latest([old, new], self.target)
+            self.assertEqual([call.args[0] for call in calls.call_args_list], [new[0]])
+        self.assertEqual(self.target.read_bytes(), b"original destination")
+
+    def test_latest_rejects_a_malformed_database_even_with_a_matching_receipt(self):
+        old = self.candidate("old", "2026-04-01T04:00:00Z")
+        bad, receipt = self.candidate("bad", "2026-04-01T05:00:00Z")
+        data = b"SQLite format 3\x00" + bytes(512)
+        bad.write_bytes(data)
+        record = json.loads(receipt.read_text(encoding="utf-8"))
+        record["sha256"] = hashlib.sha256(data).hexdigest()
+        receipt.write_text(json.dumps(record), encoding="utf-8")
+        result = restore_latest([old, (bad, receipt)], self.target)
+        self.assertEqual(result["snapshot"], str(old[0]))
+        self.assertEqual([x["snapshot"] for x in result["skipped"]], [str(bad)])
