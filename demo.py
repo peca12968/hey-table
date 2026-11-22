@@ -31,10 +31,32 @@ def demonstrate_fulfillment():
     assert after["capacity"] == before["capacity"] - 3 and after["available"] == before["available"] - 3
 
 
+def demonstrate_return():
+    key = uuid4().hex
+    before = next(row for row in call("/inventory")[1] if row["sku"] == "KIT-01")
+    call("/reservations", "POST", {"sku": "KIT-01", "quantity": 8}, {"Idempotency-Key": key})
+    order = f"/reservations/{key}"
+    call(order + "/fulfillments", "POST", {"quantity": 3}, {"Idempotency-Key": "box"})
+    call(order, "DELETE")
+    box = order + "/fulfillments/box"
+    first = call(box + "/returns", "POST", {"quantity": 2}, {"Idempotency-Key": "inspection"})
+    replay = call(box + "/returns", "POST", {"quantity": 2}, {"Idempotency-Key": "inspection"})
+    assert first[0] == 201 and replay == (200, first[1])
+    balance = call(box)[1]
+    assert (balance["dispatched"], balance["restocked"], balance["returnable"]) == (3, 2, 1)
+    after = next(row for row in call("/inventory")[1] if row["sku"] == "KIT-01")
+    assert after["capacity"] == before["capacity"] - 1 and after["available"] == before["available"] - 1
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--fulfill", action="store_true", help="ship three units from an eight-unit reservation")
-    if parser.parse_args().fulfill:
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--fulfill", action="store_true", help="ship three units from an eight-unit reservation")
+    mode.add_argument("--restock", action="store_true", help="inspect and restock two of three shipped units")
+    args = parser.parse_args()
+    if args.restock:
+        demonstrate_return()
+    elif args.fulfill:
         demonstrate_fulfillment()
     else:
         key = uuid4().hex

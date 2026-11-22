@@ -32,6 +32,15 @@ CREATE TABLE IF NOT EXISTS fulfillments (
     held_after INTEGER NOT NULL CHECK (held_after >= 0),
     PRIMARY KEY (reservation_id, shipment_id)
 );
+CREATE TABLE IF NOT EXISTS shipment_returns (
+    reservation_id TEXT NOT NULL,
+    shipment_id TEXT NOT NULL,
+    return_id TEXT NOT NULL,
+    quantity INTEGER NOT NULL CHECK (quantity > 0),
+    returnable_after INTEGER NOT NULL CHECK (returnable_after >= 0),
+    PRIMARY KEY (reservation_id, shipment_id, return_id),
+    FOREIGN KEY (reservation_id, shipment_id) REFERENCES fulfillments(reservation_id, shipment_id)
+);
 """
 
 
@@ -168,3 +177,42 @@ class Store:
                          (key, shipment_id, quantity, held_after))
             return {"reservation_id": key, "shipment_id": shipment_id, "quantity": quantity,
                     "held_after": held_after}, True
+
+    @staticmethod
+    def shipment_balance(conn, key, shipment_id):
+        row = conn.execute("""
+            SELECT f.reservation_id, f.shipment_id, f.quantity AS dispatched, r.sku,
+                   COALESCE((SELECT SUM(sr.quantity) FROM shipment_returns sr
+                             WHERE sr.reservation_id=f.reservation_id AND sr.shipment_id=f.shipment_id), 0)
+                       AS restocked
+            FROM fulfillments f JOIN reservations r ON r.id=f.reservation_id
+            WHERE f.reservation_id=? AND f.shipment_id=?
+        """, (key, shipment_id)).fetchone()
+        if row is None:
+            raise Missing("Unknown shipment")
+        return dict(row) | {"returnable": row["dispatched"] - row["restocked"]}
+
+    def shipment(self, key, shipment_id):
+        with closing(self.connect()) as conn:
+            return self.shipment_balance(conn, key, shipment_id)
+
+    def restock(self, key, shipment_id, return_id, quantity):
+        with self.current_inventory() as (conn, _):
+            ids = (key, shipment_id, return_id)
+            receipt = conn.execute("""SELECT * FROM shipment_returns
+                                      WHERE reservation_id=? AND shipment_id=? AND return_id=?""", ids).fetchone()
+            if receipt:
+                if receipt["quantity"] != quantity:
+                    raise Conflict("Return key already used with different quantity")
+                return dict(receipt), False
+            balance = self.shipment_balance(conn, key, shipment_id)
+            remaining = balance["returnable"] - quantity
+            if remaining < 0:
+                raise Conflict("Return exceeds the units outstanding for this shipment")
+            conn.execute("""UPDATE products SET capacity=capacity+?, available=available+? WHERE sku=?""",
+                         (quantity, quantity, balance["sku"]))
+            conn.execute("""INSERT INTO shipment_returns(reservation_id, shipment_id, return_id, quantity,
+                                                        returnable_after) VALUES (?, ?, ?, ?, ?)""",
+                         (*ids, quantity, remaining))
+            return {"reservation_id": key, "shipment_id": shipment_id, "return_id": return_id,
+                    "quantity": quantity, "returnable_after": remaining}, True

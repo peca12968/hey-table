@@ -45,6 +45,23 @@ class Receipt(BaseModel):
     held_after: int
 
 
+class ShipmentBalance(BaseModel):
+    reservation_id: str
+    shipment_id: str
+    sku: str
+    dispatched: int
+    restocked: int
+    returnable: int
+
+
+class ReturnReceipt(BaseModel):
+    reservation_id: str
+    shipment_id: str
+    return_id: str
+    quantity: int
+    returnable_after: int
+
+
 RequestKey = Annotated[str, Header(pattern=r"^[a-zA-Z0-9_-]{1,80}$")]
 
 
@@ -56,7 +73,7 @@ def create_app(path: Path, *, ttl_seconds=900, clock=time.time):
         store.initialize()
         yield
 
-    app = FastAPI(title="Stockroom Reservations", version="1.2", lifespan=lifespan)
+    app = FastAPI(title="Stockroom Reservations", version="1.3", lifespan=lifespan)
 
     @app.exception_handler(Missing)
     async def missing(request, exc):
@@ -91,6 +108,18 @@ def create_app(path: Path, *, ttl_seconds=900, clock=time.time):
               responses={200: {"model": Receipt, "description": "Original shipment receipt"}})
     def fulfill(key: str, shipment: Quantity, response: Response, idempotency_key: RequestKey):
         receipt, created = store.fulfill(key, idempotency_key, shipment.quantity)
+        if not created:
+            response.status_code = 200
+        return receipt
+
+    @app.get("/reservations/{key}/fulfillments/{shipment_id}", response_model=ShipmentBalance)
+    def shipment(key: str, shipment_id: str):
+        return store.shipment(key, shipment_id)
+
+    @app.post("/reservations/{key}/fulfillments/{shipment_id}/returns", response_model=ReturnReceipt,
+              status_code=201, responses={200: {"model": ReturnReceipt, "description": "Original return receipt"}})
+    def restock(key: str, shipment_id: str, returned: Quantity, response: Response, idempotency_key: RequestKey):
+        receipt, created = store.restock(key, shipment_id, idempotency_key, returned.quantity)
         if not created:
             response.status_code = 200
         return receipt

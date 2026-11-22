@@ -153,6 +153,78 @@ def ship(client, key, shipment, quantity):
                        json={"quantity": quantity})
 
 
+def restock(client, key, shipment, receipt, quantity):
+    return client.post(f"/reservations/{key}/fulfillments/{shipment}/returns",
+                       headers={"Idempotency-Key": receipt}, json={"quantity": quantity})
+
+
+def test_existing_shipment_return_after_expiry_and_restart(tmp_path):
+    path = tmp_path / "returns.db"
+    now = 100
+    with TestClient(create_app(path, ttl_seconds=10, clock=lambda: now)) as http:
+        reserve(http, "order", 8)
+        ship(http, "order", "red", 3)
+        ship(http, "order", "blue", 1)
+    # A pre-returns database has shipment receipts but no return ledger.
+    with closing(sqlite3.connect(path)) as db:
+        db.execute("DROP TABLE shipment_returns")
+    now = 110
+    with TestClient(create_app(path, clock=lambda: now)) as http:
+        assert restock(http, "order", "red", "first", 4).status_code == 409
+        first = restock(http, "order", "red", "first", 2)
+        assert first.status_code == 201 and first.json()["returnable_after"] == 1
+        assert counts(http, "order") == ("expired", 4, 0, 4)
+        assert http.get("/inventory").json() == [{"sku": "KIT-01", "capacity": 18, "available": 18}]
+        assert restock(http, "order", "red", "last", 1).status_code == 201
+        assert restock(http, "order", "blue", "first", 1).status_code == 201
+    with TestClient(create_app(path, clock=lambda: now)) as http:
+        replay = restock(http, "order", "red", "first", 2)
+        assert replay.status_code == 200 and replay.json() == first.json()
+        assert restock(http, "order", "red", "first", 1).status_code == 409
+        assert http.get("/reservations/order/fulfillments/red").json() == {
+            "reservation_id": "order", "shipment_id": "red", "sku": "KIT-01",
+            "dispatched": 3, "restocked": 3, "returnable": 0}
+        assert available(http) == 20
+        assert reserve(http, "next", 20).status_code == 201
+
+
+def test_competing_returns_cannot_restock_more_than_dispatched(tmp_path):
+    path = tmp_path / "shared.db"
+    with TestClient(create_app(path)) as a, TestClient(create_app(path)) as b:
+        reserve(a, "r", 8)
+        ship(a, "r", "box", 5)
+        clients = (a, b)
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            dupes = list(pool.map(lambda i: restock(clients[i % 2], "r", "box", "batch", 2), range(12)))
+            assert sorted(r.status_code for r in dupes) == [200] * 11 + [201]
+            assert all(r.json() == dupes[0].json() for r in dupes)
+            attempts = list(pool.map(lambda i: restock(clients[i % 2], "r", "box", str(i), 1), range(12)))
+            assert sorted(r.status_code for r in attempts) == [201] * 3 + [409] * 9
+        assert counts(b, "r") == ("held", 5, 3, 0)
+        assert a.get("/inventory").json() == [{"sku": "KIT-01", "capacity": 20, "available": 17}]
+        assert b.delete("/reservations/r").json()["state"] == "released"
+        assert available(a) == 20
+
+
+def test_return_write_failure_and_invalid_inputs_do_not_credit_inventory(tmp_path):
+    path = tmp_path / "returns.db"
+    with TestClient(create_app(path), raise_server_exceptions=False) as http:
+        reserve(http, "r", 2)
+        ship(http, "r", "box", 2)
+        assert restock(http, "r", "missing", "check", 1).status_code == 404
+        assert restock(http, "other", "box", "check", 1).status_code == 404
+        assert restock(http, "r", "box", "check", True).status_code == 422
+        with closing(sqlite3.connect(path)) as db:
+            db.execute("""CREATE TRIGGER fail_return BEFORE INSERT ON shipment_returns
+                          BEGIN SELECT RAISE(ABORT, 'simulated return receipt failure'); END""")
+            assert restock(http, "r", "box", "check", 1).status_code == 500
+            assert http.get("/inventory").json() == [{"sku": "KIT-01", "capacity": 18, "available": 18}]
+            assert http.get("/reservations/r/fulfillments/box").json()["restocked"] == 0
+            db.execute("DROP TRIGGER fail_return")
+        assert restock(http, "r", "box", "check", 1).status_code == 201
+        assert counts(http, "r") == ("fulfilled", 2, 0, 0)
+
+
 def counts(client, key):
     progress = client.get(f"/reservations/{key}").json()
     assert progress["quantity"] == progress["shipped"] + progress["held"] + progress["returned"]
