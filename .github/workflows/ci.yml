@@ -1,0 +1,24 @@
+name: SQLite recovery drill
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  recovery:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        python: ['3.12', '3.13']
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ matrix.python }}
+      - run: python -m unittest -v
+      - uses: actions/checkout@v7
+        with:
+          repository: peca12968/stockroom-reservations
+          ref: 1bec99199cf0ee8ed9d9b3d34ddbaad10dc01930
+          path: stockroom-checkout
+          persist-credentials: false
+      - run: python stockroom_drill.py stockroom-checkout
