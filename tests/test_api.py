@@ -2,12 +2,13 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from contextlib import closing
 import sqlite3
-from threading import Barrier
+from threading import Barrier, Event
 
 import pytest
 from fastapi.testclient import TestClient
 
 from stockroom.api import create_app
+from stockroom.store import Store
 
 
 @pytest.fixture
@@ -142,5 +143,151 @@ def test_upgrades_database_without_inventing_deadlines_for_old_holds(tmp_path):
         assert available(client) == 13
         old = reserve(client, "legacy", 7).json()
         assert old["expires_at_ms"] is None and old["state"] == "held"
+        assert ship(client, "legacy", "first-box", 3).status_code == 201
         assert client.delete("/reservations/legacy").json()["state"] == "released"
-        assert available(client) == 20
+        assert available(client) == 17
+
+
+def ship(client, key, shipment, quantity):
+    return client.post(f"/reservations/{key}/fulfillments", headers={"Idempotency-Key": shipment},
+                       json={"quantity": quantity})
+
+
+def counts(client, key):
+    progress = client.get(f"/reservations/{key}").json()
+    assert progress["quantity"] == progress["shipped"] + progress["held"] + progress["returned"]
+    return progress["state"], progress["shipped"], progress["held"], progress["returned"]
+
+
+def test_partial_dispatch_replay_restart_and_expiry(tmp_path):
+    path = tmp_path / "warehouse.db"
+    now = 100
+    with TestClient(create_app(path, ttl_seconds=10, clock=lambda: now)) as http:
+        reserve(http, "order", 8)
+        first = ship(http, "order", "box-1", 3)
+        assert first.status_code == 201
+        assert first.json() == {"reservation_id": "order", "shipment_id": "box-1", "quantity": 3, "held_after": 5}
+        assert ship(http, "order", "box-2", 2).json()["held_after"] == 3
+        assert counts(http, "order") == ("held", 5, 3, 0)
+        assert http.get("/inventory").json() == [{"sku": "KIT-01", "capacity": 15, "available": 12}]
+    now = 110
+    with TestClient(create_app(path, clock=lambda: now)) as http:
+        assert ship(http, "order", "late", 1).status_code == 409
+        replay = ship(http, "order", "box-1", 3)
+        assert replay.status_code == 200 and replay.json() == first.json()
+        assert ship(http, "order", "box-1", 1).status_code == 409
+        assert counts(http, "order") == ("expired", 5, 0, 3)
+        assert http.delete("/reservations/order").json()["state"] == "expired"
+        assert available(http) == 15
+
+
+def test_concurrent_shipments_against_two_service_instances(tmp_path):
+    path = tmp_path / "shared.db"
+    with TestClient(create_app(path)) as left, TestClient(create_app(path)) as right:
+        reserve(left, "r", 8)
+        clients = [left, right]
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            replies = list(pool.map(lambda i: ship(clients[i % 2], "r", "retry", 3), range(12)))
+            assert [r.status_code for r in replies].count(201) == 1
+            assert [r.status_code for r in replies].count(200) == 11
+            assert all(r.json() == replies[0].json() for r in replies)
+            replies = list(pool.map(lambda i: ship(clients[i % 2], "r", f"box-{i}", 1), range(12)))
+            codes = [r.status_code for r in replies]
+            assert codes.count(201) == 5 and codes.count(409) == 7
+        assert counts(right, "r") == ("fulfilled", 8, 0, 0)
+        assert left.delete("/reservations/r").json()["state"] == "fulfilled"
+        assert reserve(right, "r", 8).json()["state"] == "fulfilled"
+        assert left.get("/inventory").json() == [{"sku": "KIT-01", "capacity": 12, "available": 12}]
+
+
+def test_cancel_and_dispatch_race_returns_only_unshipped_units(client):
+    reserve(client, "order", 8)
+    assert ship(client, "order", "early", 2).status_code == 201
+    start = Barrier(2)
+
+    def dispatch():
+        start.wait(timeout=10)
+        return ship(client, "order", "late", 3)
+
+    with ThreadPoolExecutor() as pool:
+        attempt = pool.submit(dispatch)
+        start.wait(timeout=10)
+        assert client.delete("/reservations/order").json()["state"] == "released"
+        code = attempt.result().status_code
+    assert code in (201, 409)
+    shipped = 5 if code == 201 else 2
+    assert counts(client, "order") == ("released", shipped, 0, 8 - shipped)
+    assert available(client) == 20 - shipped
+
+
+def test_failed_shipment_leaves_key_and_stock_available(client):
+    assert ship(client, "r", "box", 1).status_code == 404
+    assert client.get("/reservations/r").status_code == 404
+    for key in ["r", "s"]:
+        reserve(client, key, 2)
+        assert ship(client, key, "box", True).status_code == 422
+        assert ship(client, key, "box", 3).status_code == 409
+        assert ship(client, key, "box", 2).status_code == 201
+        assert counts(client, key) == ("fulfilled", 2, 0, 0)
+
+
+def test_receipt_insert_failure_rolls_back_all_stock_changes(tmp_path):
+    path = tmp_path / "warehouse.db"
+    with TestClient(create_app(path), raise_server_exceptions=False) as http:
+        reserve(http, "r", 4)
+        with closing(sqlite3.connect(path)) as db:
+            db.execute("""CREATE TRIGGER stop_receipt BEFORE INSERT ON fulfillments
+                          BEGIN SELECT RAISE(ABORT, 'simulated receipt failure'); END""")
+            assert ship(http, "r", "box", 4).status_code == 500
+            assert counts(http, "r") == ("held", 0, 4, 0)
+            assert http.get("/inventory").json() == [{"sku": "KIT-01", "capacity": 20, "available": 16}]
+            db.execute("DROP TRIGGER stop_receipt")
+        assert ship(http, "r", "box", 4).status_code == 201
+
+
+def test_request_waiting_for_writer_cannot_dispatch_past_deadline(tmp_path, monkeypatch):
+    path = tmp_path / "locked.db"
+    now = 100
+    with TestClient(create_app(path, ttl_seconds=1, clock=lambda: now)) as http:
+        reserve(http, "r", 8)
+        assert ship(http, "r", "early", 3).status_code == 201
+        connected = Event()
+        original = Store.connect
+
+        def connect(store):
+            db = original(store)
+            connected.set()
+            return db
+
+        monkeypatch.setattr(Store, "connect", connect)
+        with closing(sqlite3.connect(path)) as writer, ThreadPoolExecutor() as pool:
+            writer.execute("BEGIN IMMEDIATE")
+            try:
+                attempt = pool.submit(ship, http, "r", "late", 5)
+                assert connected.wait(timeout=5)
+                now = 101
+            finally:
+                writer.rollback()
+            assert attempt.result(timeout=5).status_code == 409
+        assert counts(http, "r") == ("expired", 3, 0, 5)
+        assert available(http) == 17
+
+
+def test_upgrades_deadline_schema_and_preserves_earlier_states(tmp_path):
+    path = tmp_path / "v1-1.db"
+    with closing(sqlite3.connect(path)) as db:
+        db.executescript("""
+            CREATE TABLE products(sku TEXT PRIMARY KEY, capacity INTEGER, available INTEGER);
+            CREATE TABLE reservations(id TEXT PRIMARY KEY, sku TEXT, quantity INTEGER, state TEXT,
+                                      expires_at_ms INTEGER, timed_out INTEGER NOT NULL DEFAULT 0);
+            INSERT INTO products VALUES ('KIT-01',20,12);
+            INSERT INTO reservations VALUES ('open','KIT-01',8,'held',100000,0);
+            INSERT INTO reservations VALUES ('old','KIT-01',4,'released',1000,1);
+        """)
+    with TestClient(create_app(path, clock=lambda: 50)) as http:
+        assert counts(http, "old") == ("expired", 0, 0, 4)
+        assert counts(http, "open") == ("held", 0, 8, 0)
+        assert ship(http, "open", "box", 3).status_code == 201
+    with TestClient(create_app(path, clock=lambda: 100)) as http:
+        assert counts(http, "open") == ("expired", 3, 0, 5)
+        assert available(http) == 17

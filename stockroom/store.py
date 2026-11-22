@@ -25,6 +25,13 @@ CREATE TABLE IF NOT EXISTS reservations (
     quantity INTEGER NOT NULL CHECK (quantity > 0),
     state TEXT NOT NULL CHECK (state IN ('held', 'released'))
 );
+CREATE TABLE IF NOT EXISTS fulfillments (
+    reservation_id TEXT NOT NULL REFERENCES reservations(id),
+    shipment_id TEXT NOT NULL,
+    quantity INTEGER NOT NULL CHECK (quantity > 0),
+    held_after INTEGER NOT NULL CHECK (held_after >= 0),
+    PRIMARY KEY (reservation_id, shipment_id)
+);
 """
 
 
@@ -52,6 +59,9 @@ class Store:
             if "expires_at_ms" not in columns:
                 conn.execute("ALTER TABLE reservations ADD COLUMN expires_at_ms INTEGER")
                 conn.execute("ALTER TABLE reservations ADD COLUMN timed_out INTEGER NOT NULL DEFAULT 0")
+            if "shipped" not in columns:
+                conn.execute("""ALTER TABLE reservations ADD COLUMN shipped INTEGER NOT NULL DEFAULT 0
+                                CHECK (shipped BETWEEN 0 AND quantity)""")
             conn.execute("""CREATE INDEX IF NOT EXISTS active_deadlines ON reservations(expires_at_ms)
                             WHERE state='held' AND expires_at_ms IS NOT NULL""")
             conn.execute("INSERT OR IGNORE INTO products VALUES ('KIT-01', 20, 20)")
@@ -70,7 +80,7 @@ class Store:
             # Serialize deadline checks with holds and cancellations under the same write lock.
             conn.execute("""
                 UPDATE products SET available=available+due.quantity
-                FROM (SELECT sku, SUM(quantity) AS quantity FROM reservations
+                FROM (SELECT sku, SUM(quantity - shipped) AS quantity FROM reservations
                       WHERE state='held' AND expires_at_ms<=? GROUP BY sku) AS due
                 WHERE products.sku=due.sku
             """, (now,))
@@ -81,9 +91,19 @@ class Store:
     @staticmethod
     def reservation(row):
         result = dict(row)
+        shipped = result.pop("shipped")
         if result.pop("timed_out"):
             result["state"] = "expired"
+        elif shipped == result["quantity"]:
+            result["state"] = "fulfilled"
         return result
+
+    @staticmethod
+    def find_reservation(conn, key):
+        row = conn.execute("SELECT * FROM reservations WHERE id=?", (key,)).fetchone()
+        if row is None:
+            raise Missing("Unknown reservation")
+        return row
 
     def inventory(self):
         with self.current_inventory() as (conn, _):
@@ -112,12 +132,39 @@ class Store:
 
     def release(self, key):
         with self.current_inventory() as (conn, _):
-            row = conn.execute("SELECT * FROM reservations WHERE id=?", (key,)).fetchone()
-            if row is None:
-                raise Missing("Unknown reservation")
+            row = self.find_reservation(conn, key)
             if row["state"] == "held":
                 conn.execute("UPDATE products SET available=available+? WHERE sku=?",
-                             (row["quantity"], row["sku"]))
+                             (row["quantity"] - row["shipped"], row["sku"]))
                 conn.execute("UPDATE reservations SET state='released' WHERE id=?", (key,))
                 return self.reservation(row) | {"state": "released"}
             return self.reservation(row)
+
+    def progress(self, key):
+        with self.current_inventory() as (conn, _):
+            row = self.find_reservation(conn, key)
+            outstanding = row["quantity"] - row["shipped"]
+            held = outstanding if row["state"] == "held" else 0
+            return self.reservation(row) | {"shipped": row["shipped"], "held": held,
+                                            "returned": outstanding - held}
+
+    def fulfill(self, key, shipment_id, quantity):
+        with self.current_inventory() as (conn, _):
+            row = self.find_reservation(conn, key)
+            receipt = conn.execute("""SELECT * FROM fulfillments
+                                      WHERE reservation_id=? AND shipment_id=?""", (key, shipment_id)).fetchone()
+            if receipt:
+                if receipt["quantity"] != quantity:
+                    raise Conflict("Shipment key already used with different quantity")
+                return dict(receipt), False
+            held_after = row["quantity"] - row["shipped"] - quantity
+            if row["state"] != "held" or held_after < 0:
+                raise Conflict("Insufficient held units for shipment")
+            # Reserving already deducted availability. Dispatch removes physical units.
+            conn.execute("UPDATE products SET capacity=capacity-? WHERE sku=?", (quantity, row["sku"]))
+            conn.execute("""UPDATE reservations SET shipped=shipped+?, state=? WHERE id=?""",
+                         (quantity, "held" if held_after else "released", key))
+            conn.execute("INSERT INTO fulfillments(reservation_id, shipment_id, quantity, held_after) VALUES (?,?,?,?)",
+                         (key, shipment_id, quantity, held_after))
+            return {"reservation_id": key, "shipment_id": shipment_id, "quantity": quantity,
+                    "held_after": held_after}, True

@@ -6,8 +6,8 @@ jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: '3.12'
       - run: pip install -r requirements-dev.txt
@@ -19,6 +19,7 @@ jobs:
           curl -fsS --retry 20 --retry-delay 1 --retry-all-errors http://127.0.0.1:8000/inventory -o /tmp/stockroom-inventory.json
           python -c "import json; assert json.load(open('/tmp/stockroom-inventory.json'))[0]['available']==20"
           python demo.py
+          python demo.py --fulfill
       - name: Show container logs on failure
         if: failure()
         run: docker logs stockroom
