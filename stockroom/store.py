@@ -36,6 +36,13 @@ CREATE TABLE IF NOT EXISTS fulfillments (
     held_after INTEGER NOT NULL CHECK (held_after >= 0),
     PRIMARY KEY (reservation_id, shipment_id)
 );
+CREATE TABLE IF NOT EXISTS reservation_releases (
+    reservation_id TEXT NOT NULL REFERENCES reservations(id),
+    release_id TEXT NOT NULL,
+    quantity INTEGER NOT NULL CHECK (quantity > 0),
+    held_after INTEGER NOT NULL CHECK (held_after >= 0),
+    PRIMARY KEY (reservation_id, release_id)
+);
 CREATE TABLE IF NOT EXISTS shipment_returns (
     reservation_id TEXT NOT NULL,
     shipment_id TEXT NOT NULL,
@@ -80,6 +87,9 @@ class Store:
             if "shipped" not in columns:
                 conn.execute("""ALTER TABLE reservations ADD COLUMN shipped INTEGER NOT NULL DEFAULT 0
                                 CHECK (shipped BETWEEN 0 AND quantity)""")
+            if "reduced" not in columns:
+                conn.execute("""ALTER TABLE reservations ADD COLUMN reduced INTEGER NOT NULL DEFAULT 0
+                                CHECK (reduced BETWEEN 0 AND quantity - shipped)""")
             conn.execute("""CREATE INDEX IF NOT EXISTS active_deadlines ON reservations(expires_at_ms)
                             WHERE state='held' AND expires_at_ms IS NOT NULL""")
             conn.execute("INSERT OR IGNORE INTO products VALUES ('KIT-01', 20, 20)")
@@ -98,7 +108,7 @@ class Store:
             # Serialize deadline checks with holds and cancellations under the same write lock.
             conn.execute("""
                 UPDATE products SET available=available+due.quantity
-                FROM (SELECT sku, SUM(quantity - shipped) AS quantity FROM reservations
+                FROM (SELECT sku, SUM(quantity - shipped - reduced) AS quantity FROM reservations
                       WHERE state='held' AND expires_at_ms<=? GROUP BY sku) AS due
                 WHERE products.sku=due.sku
             """, (now,))
@@ -110,6 +120,7 @@ class Store:
     def reservation(row):
         result = dict(row)
         shipped = result.pop("shipped")
+        result.pop("reduced")
         if result.pop("timed_out"):
             result["state"] = "expired"
         elif shipped == result["quantity"]:
@@ -179,16 +190,38 @@ class Store:
             row = self.find_reservation(conn, key)
             if row["state"] == "held":
                 conn.execute("UPDATE products SET available=available+? WHERE sku=?",
-                             (row["quantity"] - row["shipped"], row["sku"]))
+                             (self.held_units(row), row["sku"]))
                 conn.execute("UPDATE reservations SET state='released' WHERE id=?", (key,))
                 return self.reservation(row) | {"state": "released"}
             return self.reservation(row)
+
+    @staticmethod
+    def held_units(row):
+        return row["quantity"] - row["shipped"] - row["reduced"] if row["state"] == "held" else 0
+
+    def release_units(self, key, release_id, quantity):
+        with self.current_inventory() as (conn, _):
+            row = self.find_reservation(conn, key)
+            receipt = conn.execute("""SELECT * FROM reservation_releases
+                                      WHERE reservation_id=? AND release_id=?""", (key, release_id)).fetchone()
+            if receipt:
+                if receipt["quantity"] != quantity:
+                    raise Conflict("Release key already used with different quantity")
+                return dict(receipt), False
+            held_after = self.held_units(row) - quantity
+            if held_after < 0:
+                raise Conflict("Release exceeds the remaining hold")
+            conn.execute("UPDATE products SET available=available+? WHERE sku=?", (quantity, row["sku"]))
+            conn.execute("UPDATE reservations SET reduced=reduced+?, state=? WHERE id=?",
+                         (quantity, "held" if held_after else "released", key))
+            conn.execute("INSERT INTO reservation_releases VALUES (?,?,?,?)", (key, release_id, quantity, held_after))
+            return {"reservation_id": key, "release_id": release_id, "quantity": quantity, "held_after": held_after}, True
 
     def progress(self, key):
         with self.current_inventory() as (conn, _):
             row = self.find_reservation(conn, key)
             outstanding = row["quantity"] - row["shipped"]
-            held = outstanding if row["state"] == "held" else 0
+            held = self.held_units(row)
             return self.reservation(row) | {"shipped": row["shipped"], "held": held,
                                             "returned": outstanding - held}
 
@@ -201,8 +234,8 @@ class Store:
                 if receipt["quantity"] != quantity:
                     raise Conflict("Shipment key already used with different quantity")
                 return dict(receipt), False
-            held_after = row["quantity"] - row["shipped"] - quantity
-            if row["state"] != "held" or held_after < 0:
+            held_after = self.held_units(row) - quantity
+            if held_after < 0:
                 raise Conflict("Insufficient held units for shipment")
             # Reserving already deducted availability. Dispatch removes physical units.
             conn.execute("UPDATE products SET capacity=capacity-? WHERE sku=?", (quantity, row["sku"]))

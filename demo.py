@@ -48,13 +48,30 @@ def demonstrate_return():
     assert after["capacity"] == before["capacity"] - 1 and after["available"] == before["available"] - 1
 
 
+def demonstrate_reduction():
+    key = uuid4().hex
+    path = f"/reservations/{key}"
+    call("/reservations", "POST", {"sku": "KIT-01", "quantity": 8}, {"Idempotency-Key": key})
+    call(path + "/fulfillments", "POST", {"quantity": 3}, {"Idempotency-Key": "box"})
+    edit = {"Idempotency-Key": "remove-two"}
+    first = call(path + "/releases", "POST", {"quantity": 2}, edit)
+    assert first[0] == 201 and first[1]["held_after"] == 3
+    call(path, "DELETE")
+    assert call(path + "/releases", "POST", {"quantity": 2}, edit) == (200, first[1])
+    _, progress = call(path)
+    assert (progress["shipped"], progress["held"], progress["returned"]) == (3, 0, 5)
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--fulfill", action="store_true", help="ship three units from an eight-unit reservation")
     mode.add_argument("--restock", action="store_true", help="inspect and restock two of three shipped units")
+    mode.add_argument("--reduce", action="store_true", help="release two held units after a partial shipment")
     args = parser.parse_args()
-    if args.restock:
+    if args.reduce:
+        demonstrate_reduction()
+    elif args.restock:
         demonstrate_return()
     elif args.fulfill:
         demonstrate_fulfillment()

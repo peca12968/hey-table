@@ -143,6 +143,7 @@ def test_upgrades_database_without_inventing_deadlines_for_old_holds(tmp_path):
         assert available(client) == 13
         old = reserve(client, "legacy", 7).json()
         assert old["expires_at_ms"] is None and old["state"] == "held"
+        assert reduce_hold(client, "legacy", "edit", 2).json()["held_after"] == 5
         assert ship(client, "legacy", "first-box", 3).status_code == 201
         assert client.delete("/reservations/legacy").json()["state"] == "released"
         assert available(client) == 17
@@ -343,6 +344,105 @@ def test_request_waiting_for_writer_cannot_dispatch_past_deadline(tmp_path, monk
             assert attempt.result(timeout=5).status_code == 409
         assert counts(http, "r") == ("expired", 3, 0, 5)
         assert available(http) == 17
+
+
+def reduce_hold(client, key, receipt_id, quantity):
+    return client.post(f"/reservations/{key}/releases", json={"quantity": quantity},
+                       headers={"Idempotency-Key": receipt_id})
+
+
+@pytest.mark.parametrize("closing_action", ["cancel", "expire", "ship", "reduce"])
+def test_partial_release_survives_restart_and_each_closing_action(tmp_path, closing_action):
+    path = tmp_path / "edits.db"
+    now = 10
+    with TestClient(create_app(path, ttl_seconds=5, clock=lambda: now)) as http:
+        reserve(http, "cart", 8)
+        assert ship(http, "cart", "box", 3).status_code == 201
+        assert reduce_hold(http, "cart", "edit", 6).status_code == 409
+        result = reduce_hold(http, "cart", "edit", 2)
+        receipt = {"reservation_id": "cart", "release_id": "edit", "quantity": 2, "held_after": 3}
+        assert (result.status_code, result.json()) == (201, receipt)
+        assert counts(http, "cart") == ("held", 3, 3, 2)
+        assert http.get("/inventory").json() == [{"sku": "KIT-01", "capacity": 17, "available": 14}]
+    with TestClient(create_app(path, ttl_seconds=90, clock=lambda: now)) as http:
+        assert http.get("/reservations/cart").json()["expires_at_ms"] == 15000
+        if closing_action == "expire":
+            now = 15
+        elif closing_action == "cancel":
+            assert http.delete("/reservations/cart").status_code == 200
+        elif closing_action == "ship":
+            assert ship(http, "cart", "last", 4).status_code == 409
+            assert ship(http, "cart", "last", 3).status_code == 201
+        else:
+            assert reduce_hold(http, "cart", "last", 3).status_code == 201
+        shipped = 6 if closing_action == "ship" else 3
+        state = "expired" if closing_action == "expire" else "released"
+        assert counts(http, "cart") == (state, shipped, 0, 8 - shipped)
+        replay = reduce_hold(http, "cart", "edit", 2)
+        assert (replay.status_code, replay.json()) == (200, receipt)
+        assert reduce_hold(http, "cart", "edit", 1).status_code == 409
+        assert reduce_hold(http, "cart", "another", 1).status_code == 409
+        assert available(http) == 20 - shipped
+
+
+def test_partial_release_and_dispatch_compete_for_the_same_units(tmp_path):
+    path = tmp_path / "shared.db"
+    with TestClient(create_app(path)) as left, TestClient(create_app(path)) as right:
+        reserve(left, "cart", 8)
+        with ThreadPoolExecutor(max_workers=10) as pool:
+            repeats = list(pool.map(lambda i: reduce_hold((left, right)[i % 2], "cart", "edit", 2), range(12)))
+            assert sorted(r.status_code for r in repeats) == [200] * 11 + [201]
+            assert all(r.json()["held_after"] == 6 for r in repeats)
+            def take(i):
+                if i % 2:
+                    return ship(right, "cart", f"box-{i}", 1)
+                return reduce_hold(left, "cart", f"edit-{i}", 1)
+            replies = list(pool.map(take, range(16)))
+        assert sorted(r.status_code for r in replies) == [201] * 6 + [409] * 10
+        shipped = sum(r.status_code == 201 for r in replies[1::2])
+        assert counts(left, "cart") == ("released", shipped, 0, 8 - shipped)
+        assert right.get("/inventory").json() == [{"sku": "KIT-01", "capacity": 20 - shipped, "available": 20 - shipped}]
+
+
+def test_release_receipt_failure_rolls_back_and_leaves_the_key_reusable(tmp_path):
+    path = tmp_path / "rollback.db"
+    with TestClient(create_app(path), raise_server_exceptions=False) as http:
+        reserve(http, "cart", 5)
+        assert reduce_hold(http, "missing", "edit", 1).status_code == 404
+        assert reduce_hold(http, "cart", "edit", True).status_code == 422
+        with closing(sqlite3.connect(path)) as db:
+            db.execute("""CREATE TRIGGER fail_release BEFORE INSERT ON reservation_releases
+                          BEGIN SELECT RAISE(ABORT, 'release receipt failed'); END""")
+            assert reduce_hold(http, "cart", "edit", 2).status_code == 500
+            assert counts(http, "cart") == ("held", 0, 5, 0)
+            assert available(http) == 15
+            db.execute("DROP TRIGGER fail_release")
+        assert reduce_hold(http, "cart", "edit", 2).status_code == 201
+
+
+def test_reduced_hold_races_with_buyer_cancellation_and_shipment_at_expiry(tmp_path):
+    now = 10
+    path = tmp_path / "expiry.db"
+    with TestClient(create_app(path, ttl_seconds=1, clock=lambda: now)) as http:
+        reserve(http, "cart", 20)
+        ship(http, "cart", "first", 3)
+        receipt = reduce_hold(http, "cart", "edit", 2).json()
+        now = 11
+        start = Barrier(4)
+        def simultaneous(action):
+            start.wait(timeout=10)
+            return action()
+        with ThreadPoolExecutor(max_workers=4) as pool:
+            buyer, cancellation, shipment, replay = list(pool.map(simultaneous, [
+                lambda: reserve(http, "buyer", 17),
+                lambda: http.delete("/reservations/cart"),
+                lambda: ship(http, "cart", "late", 1),
+                lambda: reduce_hold(http, "cart", "edit", 2),
+            ]))
+        assert (buyer.status_code, cancellation.json()["state"], shipment.status_code) == (201, "expired", 409)
+        assert (replay.status_code, replay.json()) == (200, receipt)
+        assert counts(http, "cart") == ("expired", 3, 0, 17)
+        assert available(http) == 0
 
 
 def test_upgrades_deadline_schema_and_preserves_earlier_states(tmp_path):

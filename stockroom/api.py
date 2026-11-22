@@ -62,6 +62,13 @@ class ReturnReceipt(BaseModel):
     returnable_after: int
 
 
+class ReleaseReceipt(BaseModel):
+    reservation_id: str
+    release_id: str
+    quantity: int
+    held_after: int
+
+
 RequestKey = Annotated[str, Header(pattern=r"^[a-zA-Z0-9_-]{1,80}$")]
 
 
@@ -73,7 +80,7 @@ def create_app(path: Path, *, ttl_seconds=900, clock=time.time):
         store.initialize()
         yield
 
-    app = FastAPI(title="Stockroom Reservations", version="1.3", lifespan=lifespan)
+    app = FastAPI(title="Stockroom Reservations", version="1.4", lifespan=lifespan)
 
     @app.exception_handler(Missing)
     async def missing(request, exc):
@@ -99,6 +106,14 @@ def create_app(path: Path, *, ttl_seconds=900, clock=time.time):
     @app.delete("/reservations/{key}", response_model=Reservation)
     def release(key: str):
         return store.release(key)
+
+    @app.post("/reservations/{key}/releases", response_model=ReleaseReceipt, status_code=201,
+              responses={200: {"model": ReleaseReceipt, "description": "Original release receipt"}})
+    def release_units(key: str, reduction: Quantity, response: Response, idempotency_key: RequestKey):
+        receipt, created = store.release_units(key, idempotency_key, reduction.quantity)
+        if not created:
+            response.status_code = 200
+        return receipt
 
     @app.get("/reservations/{key}", response_model=Progress)
     def progress(key: str):
