@@ -283,6 +283,52 @@ class RouteTests(unittest.TestCase):
             self.assertEqual(plan["steps"], expected)
             self.check_walk(rows, plan)
 
+    def test_closure_combinations_against_grid_search(self):
+        rows = EXAMPLE.with_name("maintenance.txt").read_text().splitlines()
+        locations = [(1, 3), (3, 3), (1, 5), (1, 6), (2, 8), (3, 1)]
+        open_cells = {(r, c) for r, row in enumerate(rows, 1) for c, tile in enumerate(row, 1) if tile != "#"}
+        picks = {p for p in open_cells if weight(rows[p[0]-1][p[1]-1])}
+        for mask in range(1 << len(locations)):
+            closed = {cell for i, cell in enumerate(locations) if mask & (1 << i)}
+            available = open_cells - closed
+            reached = {(1, 1)}
+            while True:
+                neighbors = {(r+dr, c+dc) for r, c in reached for dr, dc in ((0, 1), (0, -1), (1, 0), (-1, 0))}
+                more = (neighbors & available) - reached
+                if not more:
+                    break
+                reached.update(more)
+            effective = ["".join(tile if (r, c) in reached else "#" for c, tile in enumerate(row, 1))
+                         for r, row in enumerate(rows, 1)]
+            expected = cart_reference(effective, capacity=2, max_load=5)
+            args = [v for r, c in sorted(closed) for v in ("--close", str(r), str(c))]
+            for method in ([], ["--nearest"]):
+                with self.subTest(closed=closed, method=method):
+                    result = self.cli("--reachable-only", *args, *method, "--capacity", "2", "--max-load", "5",
+                                      data="\n".join(rows))
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    plan = json.loads(result.stdout)
+                    self.assertEqual(plan["complete"], picks <= reached)
+                    self.assertEqual(plan["unreachable"], list(map(list, sorted(picks - reached))))
+                    self.check_cart(effective, plan, 2, 5)
+                    if not method:
+                        self.assertEqual((plan["steps"], len(plan["trips"])), expected)
+
+    def test_invalid_closures_partial_order_limits_and_strict_output(self):
+        for args in (["--close", "1", "1"], ["--close", "0", "2"], ["--close", "1", "4"], ["--close", "1"]):
+            result = self.cli(*args, data="D.*")
+            self.assertEqual((result.returncode, result.stdout), (2, ""))
+        strict = self.cli("--close", "1", "2", data="D.*")
+        self.assertEqual((strict.returncode, strict.stdout), (2, ""))
+        self.assertIn("unreachable pick at row 1, column 3", strict.stderr)
+        partial = self.cli("--reachable-only", "--close", "1", "2", "--close", "1", "2",
+                           data="D." + "*" * 16)
+        plan = json.loads(partial.stdout)
+        self.assertEqual((plan["complete"], len(plan["unreachable"]), plan["walk"]), (False, 16, [[1, 1]]))
+        self.assertEqual(self.cli("--reachable-only", data="D" + "*" * 15).returncode, 2)
+        self.assertEqual(self.cli("--reachable-only", "--max-load", "3", data="D4").returncode, 2)
+        self.assertEqual(self.cli("--close", "1", "3", data="D*#").stdout, self.cli(data="D*#").stdout)
+
     def test_exact_limit_and_explicit_large_order_mode(self):
         for count, options in [(14, []), (15, ["--nearest"]), (64, ["--nearest"])]:
             floor = "D" + "*" * count

@@ -58,39 +58,63 @@ struct Paths {
     Matrix parent;    // One BFS tree per stop for reconstructing the actual walk.
 };
 
-Paths aisle_paths(const Floor& floor) {
+struct Search {
+    std::vector<int> distance;
+    std::vector<int> parent;
+};
+
+Search search_from(const Floor& floor, int origin) {
+    std::vector<int> distance(floor.cells.size(), -1), parent(floor.cells.size(), -1);
+    std::queue<int> pending;
+    pending.push(origin);
+    distance[origin] = 0;
+    while (!pending.empty()) {
+        int pos = pending.front();
+        pending.pop();
+        int row = pos / floor.width, col = pos % floor.width;
+        auto visit = [&](int r, int c) {
+            if (r < 0 || r >= floor.height || c < 0 || c >= floor.width) return;
+            int next = r * floor.width + c;
+            if (floor.cells[next] == '#' || distance[next] >= 0) return;
+            parent[next] = pos;
+            distance[next] = distance[pos] + 1;
+            pending.push(next);
+        };
+        visit(row - 1, col);
+        visit(row, col - 1);
+        visit(row, col + 1);
+        visit(row + 1, col);
+    }
+    return {std::move(distance), std::move(parent)};
+}
+
+Paths aisle_paths(Floor& floor, bool reachable_only, int max_picks, std::vector<int>& unreachable) {
+    Search depot = search_from(floor, floor.stops[0]);
+    std::size_t kept = 1;
+    for (std::size_t i = 1; i < floor.stops.size(); ++i) {
+        int cell = floor.stops[i];
+        if (depot.distance[cell] < 0) {
+            if (!reachable_only)
+                throw std::runtime_error("unreachable pick at row " + std::to_string(cell / floor.width + 1)
+                                         + ", column " + std::to_string(cell % floor.width + 1));
+            unreachable.push_back(cell);
+        } else {
+            floor.stops[kept] = cell;
+            floor.weights[kept] = floor.weights[i];
+            ++kept;
+        }
+    }
+    if (static_cast<int>(kept) - 1 > max_picks)
+        throw std::runtime_error("too many picks for this mode (limit " + std::to_string(max_picks) + ")");
+    floor.stops.resize(kept);
+    floor.weights.resize(kept);
     Paths paths;
     for (int origin : floor.stops) {
-        std::vector<int> distance(floor.cells.size(), -1), parent(floor.cells.size(), -1);
-        std::queue<int> pending;
-        pending.push(origin);
-        distance[origin] = 0;
-        while (!pending.empty()) {
-            int pos = pending.front();
-            pending.pop();
-            int row = pos / floor.width, col = pos % floor.width;
-            auto visit = [&](int r, int c) {
-                if (r < 0 || r >= floor.height || c < 0 || c >= floor.width) return;
-                int next = r * floor.width + c;
-                if (floor.cells[next] == '#' || distance[next] >= 0) return;
-                parent[next] = pos;
-                distance[next] = distance[pos] + 1;
-                pending.push(next);
-            };
-            visit(row - 1, col);
-            visit(row, col - 1);
-            visit(row, col + 1);
-            visit(row + 1, col);
-        }
+        Search tree = origin == floor.stops[0] ? std::move(depot) : search_from(floor, origin);
         std::vector<int> between;
-        for (int target : floor.stops) {
-            if (distance[target] < 0)
-                throw std::runtime_error("unreachable pick at row " + std::to_string(target / floor.width + 1)
-                                         + ", column " + std::to_string(target % floor.width + 1));
-            between.push_back(distance[target]);
-        }
+        for (int target : floor.stops) between.push_back(tree.distance[target]);
         paths.distance.push_back(std::move(between));
-        paths.parent.push_back(std::move(parent));
+        paths.parent.push_back(std::move(tree.parent));
     }
     return paths;
 }
@@ -261,13 +285,27 @@ void write_route_fields(const Route& route, int width) {
     write_coords(route.walk, width);
 }
 
+int positive_arg(int& arg, int argc, char** argv, const std::string& option) {
+    if (++arg < argc) {
+        std::string value = argv[arg];
+        int result = 0;
+        auto end = value.data() + value.size();
+        auto parsed = std::from_chars(value.data(), end, result);
+        if (parsed.ec == std::errc{} && parsed.ptr == end && result > 0) return result;
+    }
+    throw std::runtime_error(option + " expects a positive integer");
+}
+
 int main(int argc, char** argv) {
     if (argc == 2 && std::string(argv[1]) == "--help") {
-        std::cout << "pick-route [--nearest] [--capacity ITEMS] [--max-load WEIGHT] [FILE|-]\n";
+        std::cout << "pick-route [--nearest] [--capacity ITEMS] [--max-load WEIGHT] "
+                     "[--close ROW COL]... [--reachable-only] [FILE|-]\n";
         return 0;
     }
     try {
         bool nearest = false;
+        bool reachable_only = false;
+        std::vector<std::pair<int, int>> closures;
         int capacity = 0;
         int max_load = 0;
         int arg = 1;
@@ -275,15 +313,16 @@ int main(int argc, char** argv) {
             std::string option = argv[arg];
             if (option == "--nearest" && !nearest) {
                 nearest = true;
+            } else if (option == "--reachable-only" && !reachable_only) {
+                reachable_only = true;
+            } else if (option == "--close") {
+                int row = positive_arg(arg, argc, argv, option);
+                int col = positive_arg(arg, argc, argv, option);
+                closures.emplace_back(row, col);
             } else if (option == "--capacity" || option == "--max-load") {
                 int& limit = option == "--capacity" ? capacity : max_load;
                 if (limit) throw std::runtime_error("duplicate " + option);
-                if (++arg >= argc) throw std::runtime_error(option + " expects a positive integer");
-                std::string value = argv[arg];
-                auto end = value.data() + value.size();
-                auto parsed = std::from_chars(value.data(), end, limit);
-                if (parsed.ec != std::errc{} || parsed.ptr != end || limit < 1)
-                    throw std::runtime_error(option + " expects a positive integer");
+                limit = positive_arg(arg, argc, argv, option);
             } else {
                 break;
             }
@@ -296,7 +335,17 @@ int main(int argc, char** argv) {
             file.open(argv[arg]);
             if (!file) throw std::runtime_error("cannot open floor file");
         }
-        Floor floor = read_floor(use_file ? static_cast<std::istream&>(file) : std::cin, nearest ? 64 : 14);
+        int max_picks = nearest ? 64 : 14;
+        Floor floor = read_floor(use_file ? static_cast<std::istream&>(file) : std::cin,
+                                 reachable_only ? 128 * 128 : max_picks);
+        for (const auto& [row, col] : closures) {
+            if (row > floor.height || col > floor.width) throw std::runtime_error("closure outside floor");
+            int cell = (row - 1) * floor.width + col - 1;
+            if (cell == floor.stops[0]) throw std::runtime_error("cannot close depot");
+            floor.cells[cell] = '#';
+        }
+        std::vector<int> unreachable;
+        Paths paths = aisle_paths(floor, reachable_only, max_picks, unreachable);
         Cart cart{capacity ? capacity : infinity, max_load ? max_load : infinity};
         for (std::size_t i = 1; i < floor.stops.size(); ++i) {
             if (floor.weights[i] > cart.max_load) {
@@ -305,7 +354,6 @@ int main(int argc, char** argv) {
                                          + ", column " + std::to_string(pos % floor.width + 1));
             }
         }
-        Paths paths = aisle_paths(floor);
         auto orders = nearest ? nearest_orders(paths.distance, floor.weights, cart)
                               : exact_orders(paths.distance, floor.weights, cart);
         Route combined{{floor.stops[0]}, {}};
@@ -318,6 +366,10 @@ int main(int argc, char** argv) {
         }
         std::cout << "{\"method\":\"" << (nearest ? "nearest" : "exact") << "\",";
         write_route_fields(combined, floor.width);
+        if (reachable_only) {
+            std::cout << ",\"complete\":" << (unreachable.empty() ? "true" : "false") << ",\"unreachable\":";
+            write_coords(unreachable, floor.width);
+        }
         if (capacity) std::cout << ",\"capacity\":" << capacity;
         if (max_load) std::cout << ",\"max_load\":" << max_load;
         if (capacity || max_load) {
