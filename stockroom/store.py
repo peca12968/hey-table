@@ -217,13 +217,15 @@ class Store:
             conn.execute("INSERT INTO reservation_releases VALUES (?,?,?,?)", (key, release_id, quantity, held_after))
             return {"reservation_id": key, "release_id": release_id, "quantity": quantity, "held_after": held_after}, True
 
+    def progress_row(self, row):
+        outstanding = row["quantity"] - row["shipped"]
+        held = self.held_units(row)
+        return self.reservation(row) | {"shipped": row["shipped"], "held": held,
+                                        "returned": outstanding - held}
+
     def progress(self, key):
         with self.current_inventory() as (conn, _):
-            row = self.find_reservation(conn, key)
-            outstanding = row["quantity"] - row["shipped"]
-            held = self.held_units(row)
-            return self.reservation(row) | {"shipped": row["shipped"], "held": held,
-                                            "returned": outstanding - held}
+            return self.progress_row(self.find_reservation(conn, key))
 
     def fulfill(self, key, shipment_id, quantity):
         with self.current_inventory() as (conn, _):
@@ -247,18 +249,35 @@ class Store:
                     "held_after": held_after}, True
 
     @staticmethod
-    def shipment_balance(conn, key, shipment_id):
-        row = conn.execute("""
+    def shipment_balances(conn, key, shipment_id=None):
+        query = """
             SELECT f.reservation_id, f.shipment_id, f.quantity AS dispatched, r.sku,
                    COALESCE((SELECT SUM(sr.quantity) FROM shipment_returns sr
                              WHERE sr.reservation_id=f.reservation_id AND sr.shipment_id=f.shipment_id), 0)
                        AS restocked
             FROM fulfillments f JOIN reservations r ON r.id=f.reservation_id
-            WHERE f.reservation_id=? AND f.shipment_id=?
-        """, (key, shipment_id)).fetchone()
-        if row is None:
+            WHERE f.reservation_id=?
+        """
+        parameters = [key]
+        if shipment_id is not None:
+            query += " AND f.shipment_id=?"
+            parameters.append(shipment_id)
+        for row in conn.execute(query + " ORDER BY f.shipment_id", parameters):
+            yield dict(row) | {"returnable": row["dispatched"] - row["restocked"]}
+
+    def shipment_balance(self, conn, key, shipment_id):
+        balance = next(self.shipment_balances(conn, key, shipment_id), None)
+        if balance is None:
             raise Missing("Unknown shipment")
-        return dict(row) | {"returnable": row["dispatched"] - row["restocked"]}
+        return balance
+
+    def packing_statement(self, key):
+        with self.current_inventory() as (conn, _):
+            progress = self.progress_row(self.find_reservation(conn, key))
+            boxes = list(self.shipment_balances(conn, key))
+            return {"reservation": progress, "boxes": boxes,
+                    "restocked": sum(box["restocked"] for box in boxes),
+                    "returnable": sum(box["returnable"] for box in boxes)}
 
     def shipment(self, key, shipment_id):
         with closing(self.connect()) as conn:

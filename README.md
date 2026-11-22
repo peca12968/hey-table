@@ -23,10 +23,13 @@ python -m uvicorn stockroom.api:app
 | GET /reservations/{key} | 查詢原始數量、已出貨數量、尚在保留數量與已歸還數量 |
 | POST /reservations/{key}/fulfillments/{box}/returns | 以 Idempotency-Key 當作本箱的退貨單號，將驗收合格的 quantity 件商品入庫 |
 | GET /reservations/{key}/fulfillments/{box} | 查詢該箱實際寄出的 dispatched、已重新入庫的 restocked，以及尚可退回的 returnable |
+| GET /reservations/{key}/fulfillments | 一次查詢保留狀態、各箱出貨與退貨明細，以及全單已重新入庫和仍可退回的件數 |
 
 庫存不足、同鍵不同內容回傳 409。未知商品或保留回傳 404。輸入格式錯誤回傳 422。失敗的請求不會占用鍵。
 
 ## 為什麼能防止超賣
+
+客服收到一筆分箱出貨的退貨詢問時，可用 `python demo.py --packing` 重現整單查核。範例需要至少 10 件可用庫存。共保留 10 件，兩箱分別寄出 2 件與 3 件，其中 1 件驗收入庫，其餘未寄的 5 件釋放保留。報表依箱號列出明細，整單的 `restocked` 為 1、`returnable` 為 4；保留層的 `returned` 為 5，表示未出貨就已釋放的數量。查詢在同一筆交易內結算到期並讀取各箱，兩個服務實例同時處理出貨與退貨時，整單與箱別數字仍對應同一個時間點。
 
 每個請求各自開啟資料庫連線。`BEGIN IMMEDIATE` 讓寫入者依序取得鎖，然後在同一筆交易完成重送檢查、條件扣庫存及建立保留。任一步驟失敗都回滾。保留即使釋放也保留原鍵，延遲送達的舊請求因此不會重新扣貨。
 

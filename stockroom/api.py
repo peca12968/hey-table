@@ -62,6 +62,13 @@ class ReturnReceipt(BaseModel):
     returnable_after: int
 
 
+class PackingStatement(BaseModel):
+    reservation: Progress
+    boxes: list[ShipmentBalance]
+    restocked: int
+    returnable: int
+
+
 class ReleaseReceipt(BaseModel):
     reservation_id: str
     release_id: str
@@ -80,7 +87,7 @@ def create_app(path: Path, *, ttl_seconds=900, clock=time.time):
         store.initialize()
         yield
 
-    app = FastAPI(title="Stockroom Reservations", version="1.4", lifespan=lifespan)
+    app = FastAPI(title="Stockroom Reservations", version="1.5", lifespan=lifespan)
 
     @app.exception_handler(Missing)
     async def missing(request, exc):
@@ -118,6 +125,10 @@ def create_app(path: Path, *, ttl_seconds=900, clock=time.time):
     @app.get("/reservations/{key}", response_model=Progress)
     def progress(key: str):
         return store.progress(key)
+
+    @app.get("/reservations/{key}/fulfillments", response_model=PackingStatement)
+    def packing_statement(key: str):
+        return store.packing_statement(key)
 
     @app.post("/reservations/{key}/fulfillments", response_model=Receipt, status_code=201,
               responses={200: {"model": Receipt, "description": "Original shipment receipt"}})

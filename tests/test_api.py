@@ -26,6 +26,61 @@ def available(client):
     return client.get("/inventory").json()[0]["available"]
 
 
+def test_packing_statement_after_expiry_and_restart(tmp_path):
+    path = tmp_path / "packing.db"
+    now = 100
+    with TestClient(create_app(path, clock=lambda: now, ttl_seconds=5)) as client:
+        base = "/reservations/order/fulfillments"
+        assert client.get(base).status_code == 404
+        reserve(client, "order", 10)
+        assert client.get(base).json()["boxes"] == []
+        reserve(client, "another", 2)
+        for collection, key, n in [(base, "B", 3), (base, "A", 2), (base + "/B/returns", "R", 1),
+                                    ("/reservations/another/fulfillments", "A", 1)]:
+            for code in (201, 200):
+                assert client.post(collection, json={"quantity": n},
+                                   headers={"Idempotency-Key": key}).status_code == code
+    now = 105
+    with TestClient(create_app(path, clock=lambda: now)) as client:
+        report = client.get(base).json()
+        assert (report["reservation"]["state"], report["reservation"]["held"],
+                report["reservation"]["returned"]) == ("expired", 0, 5)
+        assert report["reservation"]["shipped"] == 5
+        assert (report["restocked"], report["returnable"]) == (1, 4)
+        assert [b["shipment_id"] for b in report["boxes"]] == ["A", "B"]
+        assert report["boxes"] == [client.get(base + "/" + box).json() for box in ("A", "B")]
+
+
+def test_packing_statement_during_parallel_dispatch_and_return(tmp_path):
+    path = tmp_path / "parallel.db"
+    with TestClient(create_app(path)) as writer, TestClient(create_app(path)) as reader:
+        reserve(writer, "order", 16)
+        base = "/reservations/order/fulfillments"
+        start = Barrier(2)
+        def pack():
+            start.wait()
+            for i in range(8):
+                for url, key, units in [(base, str(i), 2), (f"{base}/{i}/returns", "inspect", 1)]:
+                    assert writer.post(url, headers={"Idempotency-Key": key},
+                                       json={"quantity": units}).status_code == 201
+        def check():
+            view = reader.get(base).json()
+            p = view["reservation"]
+            assert p["shipped"] == sum(b["dispatched"] for b in view["boxes"])
+            assert p["held"] + p["shipped"] == 16
+            assert p["shipped"] == view["restocked"] + view["returnable"]
+            assert view["restocked"] == sum(b["restocked"] for b in view["boxes"])
+            return view
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            work = pool.submit(pack)
+            start.wait()
+            for _ in range(20):
+                check()
+            work.result()
+        final = check()
+        assert (final["restocked"], final["returnable"], len(final["boxes"])) == (8, 8, 8)
+
+
 def test_replay_and_release(client):
     first = reserve(client, "web-1", 3)
     assert first.status_code == 201

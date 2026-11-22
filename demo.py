@@ -62,14 +62,32 @@ def demonstrate_reduction():
     assert (progress["shipped"], progress["held"], progress["returned"]) == (3, 0, 5)
 
 
+def demonstrate_packing():
+    key = uuid4().hex
+    order = f"/reservations/{key}"
+    boxes = order + "/fulfillments"
+    call("/reservations", "POST", {"quantity": 10, "sku": "KIT-01"}, {"Idempotency-Key": key})
+    for box, units in (("B", 3), ("A", 2)):
+        call(boxes, "POST", {"quantity": units}, {"Idempotency-Key": box})
+    call(boxes + "/B/returns", "POST", {"quantity": 1}, {"Idempotency-Key": "inspection"})
+    call(order, "DELETE")
+    _, view = call(boxes)
+    assert [box["shipment_id"] for box in view["boxes"]] == ["A", "B"]
+    assert (view["reservation"]["returned"], view["reservation"]["shipped"],
+            view["restocked"], view["returnable"]) == (5, 5, 1, 4)
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--fulfill", action="store_true", help="ship three units from an eight-unit reservation")
     mode.add_argument("--restock", action="store_true", help="inspect and restock two of three shipped units")
     mode.add_argument("--reduce", action="store_true", help="release two held units after a partial shipment")
+    mode.add_argument("--packing", action="store_true", help="reconcile a reservation across two boxes and a return")
     args = parser.parse_args()
-    if args.reduce:
+    if args.packing:
+        demonstrate_packing()
+    elif args.reduce:
         demonstrate_reduction()
     elif args.restock:
         demonstrate_return()
