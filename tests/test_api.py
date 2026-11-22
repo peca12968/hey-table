@@ -1,5 +1,8 @@
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from contextlib import closing
+import sqlite3
+from threading import Barrier
 
 import pytest
 from fastapi.testclient import TestClient
@@ -70,3 +73,74 @@ def test_restart_persists(tmp_path: Path):
     with TestClient(create_app(path)) as restarted:
         assert available(restarted) == 13
         assert reserve(restarted, "persistent", 7).status_code == 200
+
+
+def test_deadline_survives_restart_and_retry_does_not_extend_it(tmp_path):
+    path = tmp_path / "stock.db"
+    now = 1000
+    with TestClient(create_app(path, ttl_seconds=10, clock=lambda: now)) as client:
+        first = reserve(client, "old", 20)
+        deadline = first.json()["expires_at_ms"]
+        assert deadline == 1_010_000
+        now = 1009
+        assert reserve(client, "old", 20).json() == first.json()
+        assert available(client) == 0
+    now = 1010
+    with TestClient(create_app(path, ttl_seconds=60, clock=lambda: now)) as client:
+        assert reserve(client, "new", 20).status_code == 201
+        replay = reserve(client, "old", 20)
+        assert replay.status_code == 200
+        assert replay.json()["state"] == "expired"
+        assert replay.json()["expires_at_ms"] == deadline
+        assert available(client) == 0
+
+
+def test_cancel_before_deadline_is_final(tmp_path):
+    now = 0
+    with TestClient(create_app(tmp_path / "store.db", ttl_seconds=5, clock=lambda: now)) as client:
+        reserve(client, "early", 2)
+        now = 4
+        assert client.delete("/reservations/early").json()["state"] == "released"
+        now = 5
+        assert available(client) == 20
+        assert reserve(client, "early", 2).json()["state"] == "released"
+
+
+def test_cancellation_replay_and_new_buyer_racing_at_expiry(tmp_path):
+    now = 100
+    with TestClient(create_app(tmp_path / "store.db", ttl_seconds=1, clock=lambda: now)) as client:
+        assert reserve(client, "old", 20).status_code == 201
+        now += 1
+        start = Barrier(3)
+
+        def race(action):
+            start.wait(timeout=10)
+            return action()
+
+        with ThreadPoolExecutor(max_workers=3) as pool:
+            cancel, replay, buyer = list(pool.map(race, [
+                lambda: client.delete("/reservations/old"),
+                lambda: reserve(client, "old", 20),
+                lambda: reserve(client, "new", 19),
+            ]))
+        assert cancel.json()["state"] == replay.json()["state"] == "expired"
+        assert buyer.status_code == 201
+        assert available(client) == 1
+
+
+def test_upgrades_database_without_inventing_deadlines_for_old_holds(tmp_path):
+    path = tmp_path / "legacy.db"
+    with closing(sqlite3.connect(path)) as conn:
+        conn.executescript("""
+            CREATE TABLE products(sku TEXT PRIMARY KEY, capacity INTEGER, available INTEGER);
+            CREATE TABLE reservations(id TEXT PRIMARY KEY, sku TEXT, quantity INTEGER,
+                                      state TEXT CHECK (state IN ('held','released')));
+            INSERT INTO products VALUES ('KIT-01',20,13);
+            INSERT INTO reservations VALUES ('legacy','KIT-01',7,'held');
+        """)
+    with TestClient(create_app(path, clock=lambda: 1000)) as client:
+        assert available(client) == 13
+        old = reserve(client, "legacy", 7).json()
+        assert old["expires_at_ms"] is None and old["state"] == "held"
+        assert client.delete("/reservations/legacy").json()["state"] == "released"
+        assert available(client) == 20

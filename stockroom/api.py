@@ -1,6 +1,7 @@
 from contextlib import asynccontextmanager
 from pathlib import Path
 import os
+import time
 from typing import Annotated
 
 from fastapi import FastAPI, Header, Response
@@ -19,6 +20,7 @@ class Order(BaseModel):
 class Reservation(Order):
     id: str
     state: str
+    expires_at_ms: int | None
 
 
 class Product(BaseModel):
@@ -27,15 +29,15 @@ class Product(BaseModel):
     available: int
 
 
-def create_app(path: Path):
-    store = Store(path)
+def create_app(path: Path, *, ttl_seconds=900, clock=time.time):
+    store = Store(path, ttl_seconds=ttl_seconds, clock=clock)
 
     @asynccontextmanager
     async def lifespan(app):
         store.initialize()
         yield
 
-    app = FastAPI(title="Stockroom Reservations", version="1.0", lifespan=lifespan)
+    app = FastAPI(title="Stockroom Reservations", version="1.1", lifespan=lifespan)
 
     @app.exception_handler(Missing)
     async def missing(request, exc):
@@ -65,4 +67,5 @@ def create_app(path: Path):
     return app
 
 
-app = create_app(Path(os.environ.get("STOCKROOM_DB", "data/stockroom.db")))
+app = create_app(Path(os.environ.get("STOCKROOM_DB", "data/stockroom.db")),
+                 ttl_seconds=int(os.environ.get("STOCKROOM_TTL_SECONDS", "900")))
