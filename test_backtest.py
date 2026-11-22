@@ -68,6 +68,27 @@ class BacktestTests(unittest.TestCase):
         self.assertEqual((before["rows"][0]["actual"], after["rows"][0]["actual"]), (21, 23))
         self.assertEqual((before["coverage"]["scored"], after["coverage"]["scored"]), (5, 6))
 
+    def test_bread_cost_scenarios_use_the_same_decision(self):
+        command = [sys.executable, ROOT / "backtest.py", ROOT / "examples/bread.csv",
+                   "--first", "2026-06-08", "--last", "2026-06-08", "--truth-as-of", "2026-06-08",
+                   "--lookback", "7", "--horizon", "1", "--details"]
+        baseline = json.loads(subprocess.check_output(command))
+        self.assertNotIn("cost_scenario", baseline)
+        self.assertEqual([model["mae_units"] for model in baseline["models"].values()], [2, 2])
+        for short, surplus, winners in [(3, 1, ["trailing_mean"]), (1, 3, ["last_week"]),
+                                       (1, 1, ["trailing_mean", "last_week"]), (0, 5, ["last_week"])]:
+            with self.subTest(short=short, surplus=surplus):
+                report = json.loads(subprocess.check_output(command + ["--unit-costs", str(short), str(surplus)]))
+                scenario = report.pop("cost_scenario")
+                self.assertEqual(report, baseline)
+                self.assertEqual(scenario["models"], {
+                    "last_week": {"short_units": 2, "surplus_units": 0, "total_cost": 2 * short},
+                    "trailing_mean": {"short_units": 0, "surplus_units": 2, "total_cost": 2 * surplus}})
+                self.assertEqual(scenario["lowest_cost_models"], winners)
+        invalid = subprocess.run(command + ["--unit-costs", "3", "-1"], capture_output=True)
+        self.assertEqual(invalid.returncode, 2)
+        self.assertFalse(invalid.stdout)
+
     def test_independent_daily_snapshots(self):
         rng = random.Random(61280)
         for case in range(100):
@@ -84,7 +105,7 @@ class BacktestTests(unittest.TestCase):
             records.extend(records[:3])
             rng.shuffle(records)
             cutoff = START + 49
-            report = backtest(records, START+18, START+27, cutoff, lookback, horizon, True)
+            report = backtest(records, START+18, START+27, cutoff, lookback, horizon, True, unit_costs=(7, 2))
             expected = [independently_rebuild(records, origin, cutoff, lookback, horizon)
                         for origin in range(START+18, START+28)]
             with self.subTest(case=case):
@@ -97,6 +118,11 @@ class BacktestTests(unittest.TestCase):
                     errors = [r["predicted"][model]-r["actual"] for r in scored]
                     self.assertEqual(result["absolute_error_units"], sum(map(abs, errors)))
                     self.assertEqual(result["signed_error_units"], sum(errors))
+                    scenario = report["cost_scenario"]["models"][model]
+                    self.assertEqual(scenario["short_units"], sum(-e for e in errors if e < 0))
+                    self.assertEqual(scenario["surplus_units"], sum(e for e in errors if e > 0))
+                    expected_cost = sum(abs(e) * (7 if e < 0 else 2) for e in errors)
+                    self.assertEqual(scenario["total_cost"], expected_cost if errors else None)
 
     def test_zero_demand_and_new_sku(self):
         rows = [Revision("zero", START+i, START+i, 0) for i in range(9)]
@@ -106,8 +132,10 @@ class BacktestTests(unittest.TestCase):
         self.assertEqual(report["coverage"]["scored"], 2)
         self.assertEqual(report["models"]["last_week"]["mae_units"], 0)
         self.assertIsNone(report["models"]["last_week"]["wape"])
-        empty = backtest([], START+7, START+8, START+8, 7, 1)
+        empty = backtest([], START+7, START+8, START+8, 7, 1, unit_costs=(2, 1))
         self.assertIsNone(empty["models"]["last_week"]["mae_units"])
+        self.assertIsNone(empty["cost_scenario"]["models"]["last_week"]["total_cost"])
+        self.assertEqual(empty["cost_scenario"]["lowest_cost_models"], [])
 
     def test_audit_explains_same_day_revision_and_late_zero(self):
         history = read_history(EXAMPLE)

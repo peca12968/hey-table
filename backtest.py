@@ -59,11 +59,16 @@ def forecast(history, horizon):
     return {"trailing_mean": trailing, "last_week": weeks * sum(week) + sum(week[:extra])}
 
 
-def backtest(history, first, last, truth_as_of, lookback, horizon, details=False, audit=False):
+def backtest(history, first, last, truth_as_of, lookback, horizon, details=False, audit=False,
+             *, unit_costs=None):
     if lookback < 7 or horizon < 1 or last < first or first-lookback < 1:
         raise ValueError("require ordered origins, at least 7 training days and a positive horizon")
     if last + horizon - 1 > truth_as_of:
         raise ValueError("truth cutoff must include the last forecast day")
+    if unit_costs is not None:
+        short_cost, surplus_cost = unit_costs
+        if any(type(cost) is not int or cost < 0 for cost in (short_cost, surplus_cost)):
+            raise ValueError("unit costs must be nonnegative integers")
     by_sku = defaultdict(dict)
     for r in history:
         if r.reported > truth_as_of:
@@ -106,8 +111,10 @@ def backtest(history, first, last, truth_as_of, lookback, horizon, details=False
                 coverage["actual_units"] += actual
                 for model, total in predicted.items():
                     delta = total - actual
-                    errors[model]["signed"] += delta
-                    errors[model]["absolute"] += abs(delta)
+                    if delta < 0:
+                        errors[model]["short"] -= delta
+                    else:
+                        errors[model]["surplus"] += delta
             if details or audit:
                 row = {"sku": sku, "origin": iso(origin), "predicted": predicted, "actual": actual,
                        "missing_training": list(map(iso, missing_training)), "missing_actual": list(map(iso, missing_actual))}
@@ -119,15 +126,29 @@ def backtest(history, first, last, truth_as_of, lookback, horizon, details=False
                 rows.append(row)
 
     scores = {}
+    cost_scores = {}
     for model, totals in errors.items():
         n, actual = coverage["scored"], coverage["actual_units"]
-        scores[model] = {"absolute_error_units": totals["absolute"], "signed_error_units": totals["signed"],
-                         "mae_units": totals["absolute"] / n if n else None,
-                         "wape": totals["absolute"] / actual if actual else None}
+        short, surplus = totals["short"], totals["surplus"]
+        absolute = short + surplus
+        scores[model] = {"absolute_error_units": absolute, "signed_error_units": surplus - short,
+                         "mae_units": absolute / n if n else None,
+                         "wape": absolute / actual if actual else None}
+        if unit_costs is not None:
+            cost_scores[model] = {"short_units": short, "surplus_units": surplus,
+                                  "total_cost": short * short_cost + surplus * surplus_cost if n else None}
     result = {"first_origin": iso(first), "last_origin": iso(last), "truth_as_of": iso(truth_as_of),
               "lookback_days": lookback, "horizon_days": horizon,
               "coverage": {k: coverage[k] for k in ("origins", "forecastable", "missing_actual", "scored", "actual_units")},
               "models": scores}
+    if unit_costs is not None:
+        lowest = min(s["total_cost"] for s in cost_scores.values()) if coverage["scored"] else None
+        result["cost_scenario"] = {
+            "cost_per_short_unit": short_cost, "cost_per_surplus_unit": surplus_cost,
+            "models": cost_scores,
+            "lowest_cost_models": [model for model, s in cost_scores.items()
+                                   if lowest is not None and s["total_cost"] == lowest],
+        }
     if details or audit:
         result["rows"] = rows
     return result
@@ -143,10 +164,13 @@ def main():
     parser.add_argument("--horizon", type=int, default=2)
     parser.add_argument("--details", action="store_true")
     parser.add_argument("--audit", action="store_true", help="show the rows and training values revised by the settlement date")
+    parser.add_argument("--unit-costs", nargs=2, type=int, metavar=("SHORT", "SURPLUS"),
+                        help="compare the cost of each unit below or above observed sales, in whole cost units")
     args = parser.parse_args()
     try:
         result = backtest(read_history(args.history), day_number(args.first), day_number(args.last),
-                          day_number(args.truth_as_of), args.lookback, args.horizon, args.details, args.audit)
+                          day_number(args.truth_as_of), args.lookback, args.horizon, args.details, args.audit,
+                          unit_costs=args.unit_costs)
     except (ValueError, OSError, csv.Error, OverflowError) as error:
         parser.exit(2, f"{parser.prog}: {error}\n")
     print(json.dumps(result, indent=2))
