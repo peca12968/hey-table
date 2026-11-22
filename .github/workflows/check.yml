@@ -1,0 +1,17 @@
+name: Verify trajectory simplification
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  verify:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+      - run: python -m unittest -v
+      - run: python thin.py examples/loading-bay.json --tolerance-mm 750 --split-gap-ms 1500
