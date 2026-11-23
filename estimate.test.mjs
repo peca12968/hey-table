@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {readFileSync} from "node:fs";
 import {spawnSync} from "node:child_process";
-import {estimate} from "./estimate.mjs";
+import {estimate} from "@peca12968/pickup-window";
 
 const fixture = name => JSON.parse(readFileSync(new URL("./examples/" + name + ".json", import.meta.url)));
 const snapshot = fixture("stations"), kitchen = fixture("kitchen"), cart = fixture("cart"), progress = fixture("progress");
