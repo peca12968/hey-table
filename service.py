@@ -15,8 +15,9 @@ import manifest_pb2_grpc as rpc
 IDENTIFIER = re.compile(r"[a-zA-Z0-9_.-]{1,96}")
 
 
-def receipt(row, replayed=False):
-    return pb.Receipt(manifest_id=row[0], boxes=row[1], units=row[2], sha256=row[3], replayed=replayed)
+def receipt(row, uniform, replayed=False):
+    return pb.Receipt(manifest_id=row[0], boxes=row[1], units=row[2], sha256=row[3],
+                      replayed=replayed, uniform_box_units=uniform)
 
 
 class Intake(rpc.ManifestIntakeServicer):
@@ -42,7 +43,9 @@ class Intake(rpc.ManifestIntakeServicer):
             row = db.execute("SELECT id,boxes,units,sha256 FROM manifests WHERE id=?", (key.manifest_id,)).fetchone()
             if row is None:
                 context.abort(grpc.StatusCode.NOT_FOUND, "manifest not published")
-            return receipt(row)
+            uniform, = db.execute("SELECT MIN(units) = MAX(units) FROM boxes WHERE manifest_id=?",
+                                  (key.manifest_id,)).fetchone()
+            return receipt(row, None if uniform is None else bool(uniform))
 
     def Upload(self, parts, context):
         first = next(parts, None)
@@ -56,11 +59,16 @@ class Intake(rpc.ManifestIntakeServicer):
             # Only the connection-private temporary database is written while receiving the stream.
             db.execute("BEGIN")
             count = units = 0
+            first_units = None
+            uniform = True
             for part in parts:
                 box = part.box
                 if part.WhichOneof("value") != "box" or not IDENTIFIER.fullmatch(box.box_id) or not box.units:
                     context.abort(grpc.StatusCode.INVALID_ARGUMENT, "expected a box with ID and positive units")
                 count += 1
+                if first_units is None:
+                    first_units = box.units
+                uniform = uniform and first_units == box.units
                 units += box.units
                 if count > expected or units > 2**63-1:
                     context.abort(grpc.StatusCode.OUT_OF_RANGE, "manifest totals exceed declared or supported range")
@@ -84,12 +92,12 @@ class Intake(rpc.ManifestIntakeServicer):
                 if existing is not None:
                     if existing[3] != sha:
                         context.abort(grpc.StatusCode.ALREADY_EXISTS, "manifest ID belongs to different boxes")
-                    return receipt(existing, replayed=True)
+                    return receipt(existing, uniform, replayed=True)
                 row = (key, count, units, sha)
                 db.execute("INSERT INTO manifests VALUES (?,?,?,?)", row)
                 db.execute("INSERT INTO boxes SELECT ?,box_id,units FROM staged", (key,))
                 db.commit()
-                return receipt(row)
+                return receipt(row, uniform)
             except sqlite3.OperationalError as error:
                 if (getattr(error, "sqlite_errorcode", 0) & 255) in (sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED):
                     context.abort(grpc.StatusCode.UNAVAILABLE, "database busy; retry the same manifest")

@@ -31,4 +31,5 @@ message Receipt {
   uint64 units = 3;
   string sha256 = 4;
   bool replayed = 5;
+  optional bool uniform_box_units = 6;
 }

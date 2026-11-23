@@ -16,3 +16,13 @@ jobs:
       - run: "python -m pip install --only-binary=:all: -r requirements.txt"
       - run: python -m grpc_tools.protoc -I . --python_out=. --grpc_python_out=. manifest.proto
       - run: python -m unittest -v
+      - uses: actions/checkout@v7
+        with:
+          ref: 3ba0fc554334ed236300b66423e7c6301eb8fabd
+          path: legacy
+      - uses: actions/checkout@v7
+        with:
+          repository: peca12968/proto-relay-probe
+          ref: a757e62362a9bab547c94fad8b5609be5adb8a37
+          path: probe
+      - run: python upgrade_demo.py legacy probe/probe.py
