@@ -1,0 +1,82 @@
+{
+  "id": 1,
+  "mode": "table",
+  "table": "A03",
+  "note": "",
+  "items": [
+    {
+      "id": "oyakodon",
+      "name": "雞肉親子丼",
+      "price": 170,
+      "qty": 1
+    },
+    {
+      "id": "gyoza",
+      "name": "海苔柴魚煎餃",
+      "price": 85,
+      "qty": 2
+    },
+    {
+      "id": "sencha",
+      "name": "日式熱煎茶",
+      "price": 45,
+      "qty": 1
+    }
+  ],
+  "combo": {
+    "version": "demo-v1",
+    "quote": {
+      "currency": "TWD",
+      "subtotal": 385,
+      "discount": 40,
+      "total": 345,
+      "bundles": [
+        {
+          "id": "chicken-gyoza",
+          "main": "oyakodon",
+          "side": "gyoza",
+          "qty": 1,
+          "unitPrice": 215,
+          "unitSavings": 40,
+          "mainUnitDiscount": 27,
+          "sideUnitDiscount": 13
+        }
+      ],
+      "lines": [
+        {
+          "id": "gyoza",
+          "qty": 2,
+          "price": 85,
+          "subtotal": 170,
+          "paired": 1,
+          "discount": 13,
+          "total": 157
+        },
+        {
+          "id": "oyakodon",
+          "qty": 1,
+          "price": 170,
+          "subtotal": 170,
+          "paired": 1,
+          "discount": 27,
+          "total": 143
+        },
+        {
+          "id": "sencha",
+          "qty": 1,
+          "price": 45,
+          "subtotal": 45,
+          "paired": 0,
+          "discount": 0,
+          "total": 45
+        }
+      ]
+    }
+  },
+  "paymentMethod": "px_pay_plus",
+  "paymentEnv": "demo",
+  "paymentState": "paid",
+  "total": 345,
+  "status": "pending",
+  "created": 1795000000000
+}
