@@ -1,0 +1,28 @@
+name: Check inventory model and replay
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  replay:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/checkout@v4
+        with:
+          repository: peca12968/stockroom-reservations
+          ref: 34165f1adceb2baceaa53997b7a79a86656e959b
+          path: stockroom-src
+          persist-credentials: false
+      - run: python -m pip install -r stockroom-src/requirements-dev.txt
+      - run: python -m unittest -v
+        env:
+          STOCKROOM_SOURCE: stockroom-src
+      - run: python check.py --seed 1 --runs 24 --steps 48
+        env:
+          STOCKROOM_SOURCE: stockroom-src
