@@ -1,0 +1,25 @@
+name: Check add-on recommendations against held-out orders
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  recommendations:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7
+        with:
+          repository: peca12968/hey-table
+          ref: d31c710310f22cbdbee64ae8fd05fb58974fa55e
+          path: hey-table
+          sparse-checkout: drizzle
+          persist-credentials: false
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+      - run: node --test pairs.test.mjs
+        env:
+          HEY_TABLE_MIGRATIONS: hey-table/drizzle
