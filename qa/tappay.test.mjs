@@ -4,6 +4,7 @@ import {DatabaseSync} from "node:sqlite";
 import {readFileSync} from "node:fs";
 import {api} from "../server/api.mjs";
 import {settings,lookup} from "../server/tappay.mjs";
+import {paymentPrime,openPaymentUrl} from "../lib/tappay-client.mjs";
 
 const env={TAPPAY_MODE:"sandbox",TAPPAY_APP_ID:"123",TAPPAY_APP_KEY:"test-public",TAPPAY_PARTNER_KEY:"test-only",
   TAPPAY_SITE_ORIGIN:"https://order.example",TAPPAY_NOTIFY_URL:"https://notify.example/api/payments/notify"};
@@ -16,6 +17,30 @@ test("enable only configured methods and expose only SDK keys",()=>{
   assert.deepEqual(settings({...env,TAPPAY_MERCHANT_PX_PAY_PLUS:"test"}),{mode:"sandbox",methods:["cash","px_pay_plus"],appId:123,appKey:"test-public"});
   assert.deepEqual(settings({...env,TAPPAY_MODE:"invalid"}).methods,["cash"]);
   assert.deepEqual(settings({...env,TAPPAY_NOTIFY_URL:""}).methods,["cash"]);
+  assert.deepEqual(settings({...env,TAPPAY_MERCHANT_PLUS_PAY:"plus-only"}).methods,["cash","plus_pay"]);
+});
+test("SDK 5.26 wallet promises, callback providers and card fields yield their own primes",async()=>{
+  for(const [method,provider] of [["easy_wallet","easyWallet"],["pi_wallet","piWallet"],["plus_pay","plusPay"]]){
+    const sdk={[provider]:{async getPrime(...args){
+      assert.equal(args.length,0);
+      return {status:0,prime:method+"-one-use"};
+    }}};
+    assert.equal(await paymentPrime(sdk,method),method+"-one-use");
+    for(const getPrime of [async()=>{throw Error("wallet cancelled");},async()=>({status:0}),async()=>({status:1,prime:"invalid"})])
+      await assert.rejects(paymentPrime({[provider]:{getPrime}},method),/無法取得付款授權/);
+    const visits=[];
+    sdk[provider].pay=url=>visits.push(["wallet",url]);
+    const location={assign:url=>visits.push(["browser",url])};
+    const url="https://wallet.example/checkout";
+    openPaymentUrl(sdk,method,url,location);
+    openPaymentUrl(undefined,method,url,location);
+    assert.deepEqual(visits,[["wallet",url],["browser",url]]);
+  }
+  for(const [method,provider] of [["line_pay","linePay"],["px_pay_plus","pxPayPlus"],["jko_pay","jkoPay"],["card","card"]]){
+    const payload=method==="card"?{card:{prime:method}}:{prime:method};
+    const sdk={[provider]:{getPrime:callback=>callback({status:0,...payload})}};
+    assert.equal(await paymentPrime(sdk,method),method);
+  }
 });
 test("match payment, merchant, currency filter, original amount and trade before accepting a record",async()=>{
   for(const [code,state] of [[-1,"failed"],[0,"authorized"],[1,"paid"],[2,"partial"],[3,"refunded"],[4,"pending"],[5,"cancelled"]]){
@@ -56,7 +81,7 @@ test("migrate a historic price and recover accepted demo orders after a change o
   assert.equal(first.total,200);
   assert.deepEqual(await (await post("production",deal)).json(),first);
 });
-for(const method of ["line_pay","px_pay_plus","jko_pay","card"]){
+for(const method of ["line_pay","px_pay_plus","jko_pay","easy_wallet","pi_wallet","plus_pay","card"]){
   test(method+" follows sandbox charge, verified notification and out-of-order result",async t=>{
     const db=database();t.after(()=>db.sqlite.close());
     const runtime={...env,DB:db,["TAPPAY_MERCHANT_"+method.toUpperCase()]:"fixture"};
@@ -66,15 +91,21 @@ for(const method of ["line_pay","px_pay_plus","jko_pay","card"]){
         headers:{"Content-Type":"application/json","X-Ticket":token},body:JSON.stringify(body)});
       return api(req,runtime);
     }
-    const item={id:"katsudon",qty:1};
-    const ticket=await (await post("orders",{token,mode:"pickup",note:"",items:[item],paymentMethod:method})).json();
-    let reference,chargeCount=0,recordStatus=4;
+    const items=[{id:"katsudon",qty:1,price:1},{id:"sencha",qty:2,price:0}];
+    const ticket=await (await post("orders",{token,mode:"pickup",note:"",items,paymentMethod:method})).json();
+    assert.equal(ticket.total,280);
+    const gatewayMethod=method==="card"?"direct_pay":method;
+    let reference,chargeCount=0,recordStatus=4,reportedMethod=gatewayMethod;
     t.mock.method(globalThis,"fetch",async(url,init)=>{
       assert.equal(init.headers["x-api-key"],env.TAPPAY_PARTNER_KEY);
       const body=JSON.parse(init.body);assert.equal(body.partner_key,env.TAPPAY_PARTNER_KEY);
       if(url.endsWith("/pay-by-prime")){
         chargeCount++;assert.equal(body.prime,"fixture-prime");assert.equal(body.merchant_id,"fixture");
         assert.equal(body.amount,ticket.total);assert.equal(body.currency,"TWD");
+        if(method==="pi_wallet")assert.deepEqual(JSON.parse(body.details),[
+          {item_name:"滑蛋豬排丼",item_quantity:1,item_price:190},
+          {item_name:"日式熱煎茶",item_quantity:2,item_price:45}]);
+        if(method==="line_pay")assert.equal(body.details,"katsudonX1AndsenchaX2");
         assert.equal(body.three_domain_secure,method==="card"?true:undefined);
         reference=body.bank_transaction_id;
         assert.match(reference,/^[A-Z0-9]{19}$/);assert.equal(reference,body.order_number);
@@ -87,7 +118,7 @@ for(const method of ["line_pay","px_pay_plus","jko_pay","card"]){
       assert.deepEqual(body.filters.merchant_id,["fixture"]);assert.equal(body.filters.currency,"TWD");
       assert.equal(body.filters.bank_transaction_id,reference);
       return Response.json({status:0,trade_records:[{merchant_id:"fixture",rec_trade_id:"trade1",bank_transaction_id:reference,
-        payment_method:method==="card"?"direct_pay":method,amount:ticket.total,record_status:recordStatus}]});
+        payment_method:reportedMethod,amount:ticket.total,record_status:recordStatus}]});
     });
     const body={prime:"fixture-prime",amount:1,buyer:{name:"測試",email:"qa@example.test",phone_number:"0900000000"}};
     const a=await (await post("payments/start",body)).json();
@@ -97,6 +128,9 @@ for(const method of ["line_pay","px_pay_plus","jko_pay","card"]){
     const check=async n=>{recordStatus=n;db.sqlite.exec("UPDATE payment_attempts SET checked=0");
       await post("payments/notify",{bank_transaction_id:reference,status:0});
       return (await (await post("payments/check",{})).json()).attempt.state;};
+    reportedMethod=method==="px_pay_plus"?"plus_pay":"px_pay_plus";
+    assert.equal(await check(1),"pending");
+    reportedMethod=gatewayMethod;
     assert.equal(await check(4),"pending");assert.equal(await check(0),"authorized");
     assert.equal(await check(1),"paid");assert.equal(await check(4),"paid");assert.equal(await check(3),"refunded");
   });

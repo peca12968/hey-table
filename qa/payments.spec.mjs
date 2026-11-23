@@ -19,7 +19,7 @@ test("table checkout simulates failure, retries and restores the paid LINE Pay r
   await expect(page.getByText("已付款",{exact:true})).toBeVisible();
   expect((await request.patch("/api/kitchen/status",{headers:staff,data:{id:order.id,from:"pending",to:"preparing"}})).status()).toBe(200);
 });
-for(const method of ["px_pay_plus","jko_pay","card"]){
+for(const method of ["px_pay_plus","jko_pay","easy_wallet","pi_wallet","plus_pay","card"]){
   test(method+" checkout has one active attempt and independent kitchen/payment state",async({request})=>{
     const token=randomUUID(),headers={"X-Ticket":token};
     const post=(path,data={})=>request.post("/api/payments/"+path,{headers,data});
@@ -43,5 +43,34 @@ for(const method of ["px_pay_plus","jko_pay","card"]){
     await post("demo",{ref:next.ref,outcome:"paid"});
     expect((await prepare("cancelled")).status()).toBe(409);
     expect((await prepare("preparing")).status()).toBe(200);
+  });
+}
+
+for(const [method,label,table] of [["easy_wallet","悠遊付","A02"],["pi_wallet","Pi 拍錢包",null],["plus_pay","全盈+PAY","A06"]]){
+  test(label+" can cancel then pay the same mobile demo receipt",async({page,request})=>{
+    const externalPayments=[];
+    page.on("request",r=>{if(new URL(r.url()).hostname.endsWith("tappaysdk.com"))externalPayments.push(r.url());});
+    await page.setViewportSize({width:390,height:844});
+    await page.goto(table?"/?table="+table:"/");
+    await page.getByRole("button",{name:"加入滑蛋豬排丼",exact:true}).click();
+    await page.getByRole("button",{name:"加入日式熱煎茶",exact:true}).click();
+    await page.getByRole("button",{name:/我的餐單/}).click();
+    await page.getByRole("checkbox",{name:/套用套餐優惠/}).check();
+    await page.getByRole("combobox").selectOption({label});
+    await page.getByRole("button",{name:"確認送出訂單"}).click();
+    await page.waitForURL("**/ticket#*");
+    await expect(page.getByRole("heading",{name:label,exact:true})).toBeVisible();
+    const start=page.getByRole("button",{name:"開始模擬付款 · NT$ 200"});
+    await start.click();
+    await page.getByRole("button",{name:"模擬取消"}).click();
+    await expect(page.getByText("付款已取消",{exact:true})).toBeVisible();
+    await start.click();
+    await page.getByRole("button",{name:"模擬付款成功"}).click();
+    await page.reload();
+    await expect(page.getByText("已付款",{exact:true})).toBeVisible();
+    const headers={"X-Ticket":new URL(page.url()).hash.slice(1)};
+    const ticket=await (await request.get("/api/ticket",{headers})).json();
+    expect(ticket).toMatchObject({table,paymentEnv:"demo",paymentMethod:method,total:200,paymentState:"paid"});
+    expect(externalPayments).toEqual([]);
   });
 }

@@ -28,8 +28,14 @@ export function validBuyer(buyer) {
     typeof buyer.phone_number === "string" && /^\+?[0-9]{8,15}$/.test(buyer.phone_number);
 }
 export function charge(env,order,attempt,prime,buyer,transport=fetch) {
+  const items=JSON.parse(order.items);
+  let details=items.map(i=>i.name+"×"+i.qty).join("、").slice(0,100);
+  if(order.payment_method==="pi_wallet")
+    details=JSON.stringify(items.map(i=>({item_name:i.name,item_quantity:i.qty,item_price:i.price})));
+  if(order.payment_method==="line_pay")
+    details=items.map(i=>i.id+"X"+i.qty).join("And");
   return call(env,"payment/pay-by-prime",{prime,merchant_id:attempt.merchant,amount:order.total,currency:"TWD",
-    details:JSON.parse(order.items).map(i=>i.name+"×"+i.qty).join("、").slice(0,100),
+    details,
     order_number:attempt.reference,bank_transaction_id:attempt.reference,
     cardholder:{name:buyer.name.trim(),email:buyer.email,phone_number:buyer.phone_number},remember:false,
     ...(order.payment_method==="card"?{three_domain_secure:true}:{}),

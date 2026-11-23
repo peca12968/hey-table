@@ -3,6 +3,7 @@ import {useCallback,useEffect,useRef,useState} from "react";
 import {request} from "../shared";
 import {methods,paymentStates,environmentLabel} from "../../lib/payments.mjs";
 import {save} from "../../lib/order-storage.mjs";
+import {paymentPrime,openPaymentUrl} from "../../lib/tappay-client.mjs";
 
 let sdk;
 function loadSdk() {
@@ -16,13 +17,6 @@ function loadSdk() {
     document.head.append(script);
   });
   return sdk;
-}
-const providers={line_pay:"linePay",px_pay_plus:"pxPayPlus",jko_pay:"jkoPay",card:"card"};
-function getPrime(method) {
-  return new Promise((resolve,reject)=>window.TPDirect[providers[method]].getPrime(r=>{
-    const prime=method==="card"?r.card?.prime:r.prime;
-    if(r.status===0 && prime)resolve(prime);else reject(Error("無法取得付款授權，請確認資料後重試"));
-  }));
 }
 export default function Payment({order,token,onChange}){
   const [attempt,setAttempt]=useState(null),[busy,setBusy]=useState(false),[error,setError]=useState("");
@@ -57,15 +51,14 @@ export default function Payment({order,token,onChange}){
   },[demo,card,canStart,order.paymentEnv,order.paymentMethod]);
   function redirect(a){
     save("he-ri-payment:"+a.ref,token);
-    if(["line_pay","jko_pay"].includes(order.paymentMethod) && window.TPDirect?.redirect)window.TPDirect.redirect(a.redirect);
-    else window.location.assign(a.redirect);
+    openPaymentUrl(window.TPDirect,order.paymentMethod,a.redirect,window.location);
   }
   async function act(action,outcome){
     if(lock.current)return;
     lock.current=true;setBusy(true);setError("");
     try{
       let body={};
-      if(action==="start" && !demo)body={prime:await getPrime(order.paymentMethod),buyer};
+      if(action==="start" && !demo)body={prime:await paymentPrime(window.TPDirect,order.paymentMethod),buyer};
       if(action==="demo")body={ref:attempt.ref,outcome};
       const {attempt:a}=await send(action,body);
       receive(a);
