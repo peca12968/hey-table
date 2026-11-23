@@ -110,6 +110,25 @@ def fetch_pages(scope, partner_key):
             return
 
 
+def payment_method_totals(trades):
+    totals = {}
+    for group in trades.values():
+        for trade in group:
+            method = trade["method"]
+            row = totals.setdefault(method, {"trades": 0, "states": Counter(),
+                                             "gross_twd": 0, "refunded_twd": 0, "net_twd": 0})
+            state = trade["state"]
+            row["trades"] += 1
+            row["states"][state] += 1
+            if state in COUNTED:
+                net = trade["amount_twd"]
+                gross = trade["original_twd"] if state in ("partial", "refunded") else net
+                row["gross_twd"] += gross
+                row["refunded_twd"] += gross - net
+                row["net_twd"] += net
+    return totals
+
+
 def close_day(db, scope, start, records, repeated):
     args = (scope["merchant"], scope["environment"])
     db.row_factory = sqlite3.Row
@@ -132,7 +151,7 @@ def close_day(db, scope, start, records, repeated):
                 adjacent_collections[other["order_id"]].append(r["trade"])
     exceptions = []
     paid_orders = defaultdict(list)
-    matched = net = 0
+    matched = 0
     for ref in sorted(attempts.keys() | trades.keys()):
         local = attempts.get(ref)
         remote = sorted(trades.get(ref, []), key=lambda r: r["trade"])
@@ -144,10 +163,8 @@ def close_day(db, scope, start, records, repeated):
         if len(remote) > 1:
             reasons.append("multiple_gateway_trades")
         for r in remote:
-            if r["state"] in COUNTED:
-                net += r["amount_twd"]
-                if local and r["amount_twd"] > 0:
-                    paid_orders[local["order_id"]].append(r["trade"])
+            if local and r["state"] in COUNTED and r["amount_twd"] > 0:
+                paid_orders[local["order_id"]].append(r["trade"])
             if local:
                 method = "direct_pay" if local["payment_method"] == "card" else local["payment_method"]
                 for label, actual, expected in [
@@ -168,8 +185,10 @@ def close_day(db, scope, start, records, repeated):
         combined = sorted(ids + adjacent_collections[oid])
         if len(combined) > 1:
             multiple.append({"order_id": oid, "trade_ids": combined})
-    return {"matched_references": matched, "local_attempts": len(attempts),
-            "gateway_trades": sum(map(len, trades.values())), "gateway_net_twd": net,
+    by_method = payment_method_totals(trades)
+    return {"gateway_by_method": by_method,
+            "matched_references": matched, "local_attempts": len(attempts),
+            "gateway_trades": sum(map(len, trades.values())), "gateway_net_twd": sum(row["net_twd"] for row in by_method.values()),
             "repeated_source_rows": repeated, "exceptions": exceptions, "multiple_collections": multiple,
             "reason_counts": dict(Counter(reason for e in exceptions for reason in e["reasons"]))}
 

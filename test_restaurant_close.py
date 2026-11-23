@@ -47,6 +47,32 @@ class RestaurantCloseTest(unittest.TestCase):
         self.assertEqual(self.run_cli()[1], out)
         self.assertEqual(before, self.db.read_bytes())
 
+    def test_method_subtotals_follow_gateway_and_reconcile_to_daily_net(self):
+        result = json.loads(self.run_cli()[1])
+        self.assertEqual(result["gateway_by_method"], {
+            "line_pay": {"trades": 2, "states": {"paid": 2}, "gross_twd": 240, "refunded_twd": 0, "net_twd": 240},
+            "px_pay_plus": {"trades": 1, "states": {"partial": 1}, "gross_twd": 95, "refunded_twd": 15, "net_twd": 80},
+            "jko_pay": {"trades": 1, "states": {"paid": 1}, "gross_twd": 40, "refunded_twd": 0, "net_twd": 40},
+        })
+        self.assertEqual(sum(row["net_twd"] for row in result["gateway_by_method"].values()),
+                         result["gateway_net_twd"])
+
+    def test_full_refund_authorization_and_gateway_method_mismatch(self):
+        def change(data):
+            rows = data["pages"][0]["trade_records"]
+            rows[1].update(payment_method="direct_pay", record_status=0)
+            rows[2].update(record_status=3, amount=0)
+            # The same record can appear twice when fetched in pages.
+            data["pages"][1]["trade_records"].append(dict(rows[1]))
+        self.change(change)
+        result = json.loads(self.run_cli()[1])
+        self.assertEqual(result["gateway_by_method"]["line_pay"],
+                         {"trades": 1, "states": {"refunded": 1}, "gross_twd": 120, "refunded_twd": 120, "net_twd": 0})
+        self.assertEqual(result["gateway_by_method"]["direct_pay"],
+                         {"trades": 1, "states": {"authorized": 1}, "gross_twd": 0, "refunded_twd": 0, "net_twd": 0})
+        self.assertEqual(result["repeated_source_rows"], 1)
+        self.assertEqual(result["reason_counts"]["method_mismatch"], 1)
+
     def test_midnight_retry_flags_both_trades_without_inflating_daily_total(self):
         with contextlib.closing(sqlite3.connect(self.db)) as db, db:
             db.execute("UPDATE payment_attempts SET created=? WHERE reference='L1'", (START-1,))
