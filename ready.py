@@ -15,6 +15,7 @@ STATES = {
     "cancelled": {"cancelled"},
 }
 TERMINAL = {"completed", "cancelled"}
+PAYMENT_METHODS = ("line_pay", "px_pay_plus", "jko_pay", "easy_wallet", "pi_wallet", "plus_pay", "card", "cash")
 
 
 def integer(value, field, minimum=0):
@@ -97,7 +98,55 @@ def percentile(rows, field, percent):
     return finite[rank - 1] if 0 < rank <= len(finite) else None
 
 
-def report(snapshots, target_seconds, mode=None):
+def summarize(results):
+    counts = {kind: sum(row["outcome"] == kind for row in results)
+              for kind in ("on_time", "uncertain", "missed")}
+    return dict(observed=len(results), counts=counts,
+                onTimeCountRange=[counts["on_time"], counts["on_time"] + counts["uncertain"]],
+                percentileMs={f"p{p}": [percentile(results, field, p)
+                                         for field in ("earliestMs", "latestMs")] for p in (50, 90)})
+
+
+def payment_breakdown(documents, orders, results, mode):
+    receipts = {}
+    for document in documents:
+        # /api/ticket returns one object. The staff's /api/kitchen returns a list.
+        rows = document if isinstance(document, list) else [document]
+        for row in rows:
+            if not isinstance(row, dict):
+                raise ValueError("expected a restaurant receipt or receipt list")
+            key = integer(row.get("id"), "receipt ID", 1)
+            created = integer(row.get("created"), "receipt creation time")
+            service = row.get("mode")
+            method, environment = row.get("paymentMethod"), row.get("paymentEnv")
+            if service not in ("table", "pickup") or method not in PAYMENT_METHODS:
+                raise ValueError(f"invalid service or payment method on receipt {key}")
+            environments = ("cash",) if method == "cash" else ("demo", "sandbox", "production")
+            if environment not in environments:
+                raise ValueError(f"invalid payment environment on receipt {key}")
+            identity = (created, service, environment, method)
+            if receipts.setdefault(key, identity) != identity:
+                raise ValueError(f"conflicting copies of receipt {key}")
+            if key in orders and (orders[key].created, orders[key].mode) != (created, service):
+                raise ValueError(f"receipt {key} disagrees with the kitchen order")
+
+    groups = {}
+    matched = 0
+    for order in results:
+        identity = receipts.get(order["id"])
+        environment, method = identity[2:] if identity else (None, None)
+        if identity:
+            matched += 1
+        order.update(paymentEnv=environment, paymentMethod=method)
+        groups.setdefault((environment, method), []).append(order)
+    receipt_only = sum(key not in orders and (mode is None or service == mode)
+                       for key, (_, service, _, _) in receipts.items())
+    return dict(matched=matched, missing=len(results)-matched, receiptOnly=receipt_only,
+                groups=[dict(environment=env, method=method, **summarize(groups[env, method]))
+                        for env, method in sorted(groups, key=lambda pair: (pair[0] or "", pair[1] or ""))])
+
+
+def report(snapshots, target_seconds, mode=None, receipts=None):
     threshold = integer(target_seconds, "target seconds") * 1000
     if mode not in (None, "table", "pickup"):
         raise ValueError("unknown service mode")
@@ -127,13 +176,10 @@ def report(snapshots, target_seconds, mode=None):
         raise ValueError("provide at least one snapshot")
     results = [order.result(key, threshold) for key, order in sorted(orders.items())
                if mode is None or order.mode == mode]
-    counts = {kind: sum(row["outcome"] == kind for row in results)
-              for kind in ("on_time", "uncertain", "missed")}
-    return dict(targetSeconds=target_seconds, observed=len(results), counts=counts,
-                onTimeCountRange=[counts["on_time"], counts["on_time"] + counts["uncertain"]],
-                percentileMs={f"p{p}": [percentile(results, field, p)
-                                         for field in ("earliestMs", "latestMs")] for p in (50, 90)},
-                orders=results)
+    summary = dict(targetSeconds=target_seconds, **summarize(results), orders=results)
+    if receipts is not None:
+        summary["paymentBreakdown"] = payment_breakdown(receipts, orders, results, mode)
+    return summary
 
 
 def main():
@@ -141,10 +187,12 @@ def main():
     parser.add_argument("snapshot", type=Path, nargs="+", help="station exports, oldest first")
     parser.add_argument("--target-seconds", type=int, required=True)
     parser.add_argument("--mode", choices=("table", "pickup"))
+    parser.add_argument("--receipts", type=Path, action="append", help="receipt or staff receipt list (repeatable)")
     args = parser.parse_args()
     try:
         snapshots = (json.loads(path.read_text(encoding="utf-8-sig")) for path in args.snapshot)
-        data = report(snapshots, args.target_seconds, args.mode)
+        receipts = (json.loads(path.read_text(encoding="utf-8-sig")) for path in args.receipts) if args.receipts else None
+        data = report(snapshots, args.target_seconds, args.mode, receipts)
     except (OSError, ValueError) as exc:
         parser.exit(2, f"ready-range: {exc}\n")
     json.dump(data, sys.stdout, ensure_ascii=True, indent=2)

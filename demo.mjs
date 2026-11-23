@@ -1,4 +1,4 @@
-// Run the restaurant locally. Only the station's actual exported JSON reaches the CLI.
+// Exercise the CLI with local restaurant API responses from the same temporary D1.
 import assert from "node:assert/strict";
 import {execFileSync} from "node:child_process";
 import {randomUUID} from "node:crypto";
@@ -34,7 +34,7 @@ try {
   async function call(route, {method = "GET", body, token, expected = 200} = {}) {
     const headers = {"Content-Type": "application/json"};
     if (token) headers["X-Ticket"] = token;
-    if (route.startsWith("kitchen/")) headers.Authorization = "Bearer " + staff;
+    if (route === "kitchen" || route.startsWith("kitchen/")) headers.Authorization = "Bearer " + staff;
     const result = await app.dispatchFetch("http://restaurant.test/api/" + route, {
       method, headers, body: body && JSON.stringify(body)
     });
@@ -79,13 +79,28 @@ try {
   }
   await capture();
   const cli = fileURLToPath(new URL("./ready.py", import.meta.url));
-  const output = execFileSync(process.env.PYTHON || "python", [cli, "--target-seconds", "3600", ...captures],
+  const staffReceipts = join(dir, "kitchen.json");
+  const ticketReceipt = join(dir, "ticket.json");
+  await writeFile(staffReceipts, JSON.stringify(await call("kitchen")));
+  await writeFile(ticketReceipt, JSON.stringify(await call("ticket", {token:tickets[0].token})));
+  const output = execFileSync(process.env.PYTHON || "python",
+    [cli, "--target-seconds", "3600", ...captures, "--receipts", staffReceipts, "--receipts", ticketReceipt],
     {encoding: "utf8"});
   assert.ok(!output.includes("private-sentinel"));
   const report = JSON.parse(output);
   assert.deepEqual(report.counts, {on_time:6, missed:1, uncertain:1});
   assert.deepEqual(report.onTimeCountRange, [6,7]);
-  console.log(JSON.stringify({methods, observed:report.observed, counts:report.counts}));
+  const {matched, missing, receiptOnly, groups} = report.paymentBreakdown;
+  assert.deepEqual([matched, missing, receiptOnly, groups.length], [8, 0, 0, 8]);
+  for (const {paymentMethod, id} of tickets) {
+    const group = groups.find(g => g.method === paymentMethod);
+    const outcome = paymentMethod === "cash" ? "missed" : paymentMethod === "card" ? "uncertain" : "on_time";
+    assert.equal(group.environment, paymentMethod === "cash" ? "cash" : "demo");
+    assert.equal(group.observed, 1);
+    assert.equal(group.counts[outcome], 1);
+    assert.equal(report.orders.find(r => r.id === id).paymentMethod, paymentMethod);
+  }
+  console.log(JSON.stringify({methods, observed:report.observed, counts:report.counts, matched}));
 } finally {
   await app.dispose();
   await rm(dir, {recursive:true, force:true});
