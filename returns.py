@@ -2,6 +2,7 @@
 import argparse
 from collections import Counter
 from contextlib import contextmanager
+from datetime import datetime, timezone
 import json
 from pathlib import Path
 import sqlite3
@@ -24,6 +25,10 @@ def connect(path):
         CREATE TABLE IF NOT EXISTS entries (
             receipt INTEGER NOT NULL REFERENCES receipts(id), request TEXT NOT NULL,
             selection TEXT NOT NULL, result TEXT NOT NULL, PRIMARY KEY(receipt, request)
+        );
+        CREATE TABLE IF NOT EXISTS voids (
+            receipt INTEGER NOT NULL, request TEXT NOT NULL, result TEXT NOT NULL,
+            PRIMARY KEY(receipt, request), FOREIGN KEY(receipt,request) REFERENCES entries(receipt,request)
         );
     """)
     return db
@@ -57,6 +62,62 @@ def history(db, rid):
         "SELECT result FROM entries WHERE receipt=? ORDER BY rowid", (rid,))]
 
 
+def active_amounts(db, rid):
+    used = Counter()
+    total = 0
+    for (saved,) in db.execute("""SELECT e.result FROM entries e LEFT JOIN voids v USING(receipt,request)
+                                  WHERE e.receipt=? AND v.request IS NULL""", (rid,)):
+        entry = json.loads(saved)
+        total += entry["amount"]
+        for line in entry["lines"]:
+            used[line["dish"], line["bundle"], line["unit"]] += line["qty"]
+    return used, total
+
+
+def void(db, rid, request, reason):
+    integer(rid, 1)
+    if not isinstance(reason, str) or not reason.strip():
+        raise ValueError("Enter a correction reason")
+    reason = reason.strip()
+    with transaction(db, True):
+        row = db.execute("""SELECT e.result,r.total,v.result FROM entries e JOIN receipts r ON r.id=e.receipt
+                            LEFT JOIN voids v USING(receipt,request) WHERE e.receipt=? AND e.request=?""",
+                         (rid, request)).fetchone()
+        if not row:
+            raise ValueError("Unknown return entry on this receipt")
+        if row[2] is not None:
+            saved = json.loads(row[2])
+            if saved["reason"] != reason:
+                raise ValueError("Entry already voided with another reason")
+            return saved
+        entry = json.loads(row[0])
+        _, recorded = active_amounts(db, rid)
+        result = {"receipt": rid, "request": request, "reason": reason, "restoredAmount": entry["amount"],
+                  "remainingValueAfterVoid": row[1] - recorded + entry["amount"],
+                  "voidedAt": datetime.now(timezone.utc).isoformat()}
+        db.execute("INSERT INTO voids VALUES (?,?,?)", (rid, request, encode(result)))
+        return result
+
+
+def statement(db, rid):
+    integer(rid, 1)
+    with transaction(db, False):
+        row = db.execute("SELECT total FROM receipts WHERE id=?", (rid,)).fetchone()
+        if not row:
+            raise ValueError("Unknown receipt")
+        entries = []
+        active = 0
+        for original, correction in db.execute("""SELECT e.result,v.result FROM entries e
+                LEFT JOIN voids v USING(receipt,request) WHERE e.receipt=? ORDER BY e.rowid""", (rid,)):
+            entry = json.loads(original)
+            if correction is None:
+                active += entry["amount"]
+            entries.append({"entry": entry, "status": "active" if correction is None else "voided",
+                            "void": None if correction is None else json.loads(correction)})
+        return {"receipt": rid, "total": row[0], "recordedAmount": active, "remainingValue": row[0]-active,
+                "entries": entries}
+
+
 def quote(db, rid, selection, *, request=None, expected=None):
     integer(rid, 1)
     recording = request is not None
@@ -76,12 +137,8 @@ def quote(db, rid, selection, *, request=None, expected=None):
                 if old[0] != encode(selection) or result["amount"] != expected:
                     raise ValueError("Request ID already used for another selection or price")
                 return result
-        used = Counter()
-        balance = row[1]
-        for prior in history(db, rid):
-            balance -= prior["amount"]
-            for line in prior["lines"]:
-                used[line["dish"]] += line["qty"]
+        used, recorded = active_amounts(db, rid)
+        balance = row[1] - recorded
         lines = allocate(json.loads(row[0]), used, selection)
         amount = sum(line["amount"] for line in lines)
         result = {"receipt": rid, "lines": lines, "amount": amount, "remainingValue": balance - amount}
@@ -98,19 +155,26 @@ def main():
     parser.add_argument("database")
     commands = parser.add_subparsers(dest="command", required=True)
     commands.add_parser("import").add_argument("ticket", type=Path)
-    for name in ("preview", "record", "history"):
+    for name in ("preview", "record", "history", "statement", "void"):
         sub = commands.add_parser(name)
         sub.add_argument("receipt", type=int)
-        if name != "history":
+        if name in ("preview", "record"):
             sub.add_argument("items", nargs="+", metavar="DISH=QTY")
         if name == "record":
             sub.add_argument("--request", required=True)
             sub.add_argument("--expected", required=True, type=int)
+        if name == "void":
+            sub.add_argument("--request", required=True)
+            sub.add_argument("--reason", required=True)
     args = parser.parse_args()
     db = connect(args.database)
     try:
         if args.command == "import":
             result = register(db, json.loads(args.ticket.read_text(encoding="utf-8")))
+        elif args.command == "void":
+            result = void(db, args.receipt, args.request, args.reason)
+        elif args.command == "statement":
+            result = statement(db, args.receipt)
         elif args.command == "history":
             if not db.execute("SELECT 1 FROM receipts WHERE id=?", (args.receipt,)).fetchone():
                 raise ValueError("Unknown receipt")

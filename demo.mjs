@@ -55,6 +55,15 @@ try {
   const rest=cli("record",id,"oyakodon=1","sencha=1","--expected","188","--request","rest");
   assert.equal(rest.remainingValue,0);
   assert.deepEqual(cli("history",id),[first,second,rest]);
+  const correction=cli("void",id,"--request","portion-1","--reason","wrong portion");
+  assert.deepEqual([correction.restoredAmount,correction.remainingValueAfterVoid],[85,85]);
+  assert.deepEqual(cli("void",id,"--request","portion-1","--reason","wrong portion"),correction);
+  assert.deepEqual(cli("record",id,"gyoza=1","--expected","85","--request","portion-1"),first);
+  const restored=cli("preview",id,"gyoza=1");
+  assert.deepEqual([restored.amount,restored.lines[0].bundle],[85,null]);
+  const corrected=cli("statement",id);
+  assert.deepEqual([corrected.recordedAmount,corrected.remainingValue],[260,85]);
+  assert.deepEqual(corrected.entries.map(e=>e.status),["voided","active","active"]);
   assert.deepEqual(await call("ticket"),ticket);
   const next=randomUUID();
   await call("orders",{token:next,mode:"pickup",note:"",paymentMethod:"line_pay",
@@ -71,10 +80,16 @@ try {
   }
   const sides=cli("preview",String(pickup.id),"sencha=1","gyoza=1");
   assert.deepEqual([sides.amount,sides.remainingValue],[109,0]);
+  const pickupId=String(pickup.id);
+  const middle=cli("void",pickupId,"--request","pork-1","--reason","wrong serving");
+  const porkAgain=cli("preview",pickupId,"katsudon=1");
+  assert.deepEqual([middle.restoredAmount,porkAgain.amount,porkAgain.lines[0].bundle],[162,162,"pork-tea"]);
   assert.deepEqual(await call("ticket",undefined,next),pickup);
   console.log(JSON.stringify({method:ticket.paymentMethod,receiptTotal:ticket.total,
     returnAmounts:[first.amount,second.amount,rest.amount],remaining:rest.remainingValue,paymentState:ticket.paymentState,
-    pickup:{method:pickup.paymentMethod,total:pickup.total,porkPrices,remainingSides:sides.amount}}));
+    correction:{restored:restored.amount,recorded:corrected.recordedAmount,remaining:corrected.remainingValue},
+    pickup:{method:pickup.paymentMethod,total:pickup.total,porkPrices,remainingSides:sides.amount,
+      restoredBundle:porkAgain.lines[0].bundle,restoredAmount:porkAgain.amount}}));
 } finally {
   await app.dispose();
   await rm(temp,{recursive:true,force:true});

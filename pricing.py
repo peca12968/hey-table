@@ -90,9 +90,11 @@ def allocate(lots, used, selection):
         needed = integer(quantity, 1)
         skipped = used[dish]
         for lot in lots.get(dish, []):
-            already_used = min(skipped, lot["qty"])
+            # Exact lot usage can leave holes when a prior return is voided.
+            free = lot["qty"] - used.get((dish, lot["bundle"], lot["unit"]), 0)
+            already_used = min(skipped, free)
             skipped -= already_used
-            take = min(needed, lot["qty"] - already_used)
+            take = min(needed, free - already_used)
             if take:
                 lines.append({"dish": dish, **lot, "qty": take, "amount": take * lot["unit"]})
                 needed -= take
