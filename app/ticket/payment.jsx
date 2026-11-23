@@ -21,7 +21,8 @@ function loadSdk() {
 export default function Payment({order,token,onChange}){
   const [attempt,setAttempt]=useState(null),[busy,setBusy]=useState(false),[error,setError]=useState("");
   const [ready,setReady]=useState(false),[buyer,setBuyer]=useState({name:"",phone_number:"",email:""});
-  const lock=useRef(false),current=useRef(order.paymentState);current.current=order.paymentState;
+  const lock=useRef(false),actionVersion=useRef(0),current=useRef(order.paymentState);current.current=order.paymentState;
+  const [checkError,setCheckError]=useState("");
   const demo=order.paymentEnv==="demo",card=order.paymentMethod==="card";
   const state=attempt?.state??order.paymentState;
   const canStart=["unpaid","failed","cancelled"].includes(state) && order.status==="pending";
@@ -29,10 +30,32 @@ export default function Payment({order,token,onChange}){
     headers:{"Content-Type":"application/json","X-Ticket":token},body:JSON.stringify(body)}),[token]);
   const receive=useCallback(a=>{setAttempt(a);if(a && a.state!==current.current)onChange();},[onChange]);
   useEffect(()=>{
-    let live=true;
-    const refresh=()=>send("check").then(v=>{if(live && !lock.current)receive(v.attempt);}).catch(e=>{if(live)setError(e.message);});
-    refresh();const timer=setInterval(()=>{if(["pending","authorized"].includes(current.current))refresh();},30000);
-    return ()=>{live=false;clearInterval(timer);};
+    let live=true,checking=false;
+    async function refresh(){
+      if(checking || lock.current || document.hidden)return;
+      const version=actionVersion.current;
+      checking=true;
+      try{
+        const {attempt:updated}=await send("check");
+        if(live && version===actionVersion.current){
+          setCheckError("");
+          if(updated && ["pending","authorized","paid","partial","refunded"].includes(updated.state))setError("");
+          receive(updated);
+        }
+      }catch(e){
+        if(live && version===actionVersion.current)setCheckError(e.message);
+      }finally{checking=false;}
+    }
+    refresh();
+    const timer=setInterval(()=>{if(["pending","authorized"].includes(current.current))refresh();},30000);
+    document.addEventListener("visibilitychange",refresh);
+    window.addEventListener("online",refresh);
+    return ()=>{
+      live=false;
+      clearInterval(timer);
+      document.removeEventListener("visibilitychange",refresh);
+      window.removeEventListener("online",refresh);
+    };
   },[send,receive]);
   useEffect(()=>{
     if(demo || !canStart)return;
@@ -55,7 +78,7 @@ export default function Payment({order,token,onChange}){
   }
   async function act(action,outcome){
     if(lock.current)return;
-    lock.current=true;setBusy(true);setError("");
+    lock.current=true;actionVersion.current++;setBusy(true);setError("");setCheckError("");
     try{
       let body={};
       if(action==="start" && !demo)body={prime:await paymentPrime(window.TPDirect,order.paymentMethod),buyer};
@@ -77,5 +100,5 @@ export default function Payment({order,token,onChange}){
     {state==="pending"&&attempt&&demo&&<div className="actions">{[["paid","模擬付款成功"],["failed","模擬付款失敗"],["cancelled","模擬取消"]].map(([s,label])=><button className="outline" key={s} disabled={busy} onClick={()=>act("demo",s)}>{label}</button>)}</div>}
     {!demo&&attempt?.redirect&&<button className="primary" disabled={busy} onClick={()=>redirect(attempt)}>繼續原付款</button>}
     {!demo&&attempt&&<button className="outline" disabled={busy} onClick={()=>act("check")}>向金流查詢狀態</button>}
-    {error&&<p role="alert">{error}</p>}</section>;
+    {(error||checkError)&&<p role="alert">{error||checkError}</p>}</section>;
 }

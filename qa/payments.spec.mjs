@@ -1,6 +1,27 @@
 import {test,expect} from "@playwright/test";
 import {randomUUID} from "node:crypto";
 const staff={Authorization:"Bearer local-test-kitchen"};
+for(const [method,resume] of [["line_pay","online"],["px_pay_plus","visibilitychange"]]){
+  test(method+" restores an interrupted receipt on "+resume,async({page,request})=>{
+    const token=randomUUID(),headers={"X-Ticket":token};
+    const order=await request.post("/api/orders",{data:{token,mode:"pickup",note:"",items:[{id:"oyakodon",qty:1}],paymentMethod:method}});
+    expect(order.ok()).toBe(true);
+    const started=await request.post("/api/payments/start",{headers,data:{}});
+    const {attempt}=await started.json();
+    let starts=0;
+    page.on("request",r=>{if(new URL(r.url()).pathname==="/api/payments/start")starts++;});
+    await page.goto("/ticket#"+token);
+    await expect(page.getByRole("button",{name:"模擬付款成功"})).toBeVisible();
+    const paid=await request.post("/api/payments/demo",{headers,data:{ref:attempt.ref,outcome:"paid"}});
+    expect(paid.ok()).toBe(true);
+    const checked=page.waitForResponse(r=>new URL(r.url()).pathname==="/api/payments/check");
+    await page.evaluate(type=>(type==="online"?window:document).dispatchEvent(new Event(type)),resume);
+    const restored=await (await checked).json();
+    expect(restored.attempt).toMatchObject({ref:attempt.ref,state:"paid"});
+    await expect(page.getByText("已付款",{exact:true})).toBeVisible();
+    expect(starts).toBe(0);
+  });
+}
 test("table checkout simulates failure, retries and restores the paid LINE Pay receipt",async({page,request})=>{
   await page.goto("/?table=A04");
   await page.getByRole("button",{name:"加入雞肉親子丼",exact:true}).click();

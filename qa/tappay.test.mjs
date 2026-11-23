@@ -81,6 +81,47 @@ test("migrate a historic price and recover accepted demo orders after a change o
   assert.equal(first.total,200);
   assert.deepEqual(await (await post("production",deal)).json(),first);
 });
+for(const method of ["line_pay","px_pay_plus"]){
+  test(method+" resolves a lost charge reply with the original bank reference",async t=>{
+    const db=database();
+    t.after(()=>db.sqlite.close());
+    const runtime={...env,DB:db,["TAPPAY_MERCHANT_"+method.toUpperCase()]:"fixture"};
+    const token=crypto.randomUUID();
+    async function post(path,body){
+      const response=await api(new Request("https://order.example/api/"+path,{method:"POST",
+        headers:{"Content-Type":"application/json","X-Ticket":token},body:JSON.stringify(body)}),runtime);
+      assert.equal(response.status,200);
+      return response.json();
+    }
+    const order=await post("orders",{token,mode:"pickup",note:"",items:[{id:"oyakodon",qty:1}],paymentMethod:method});
+    const charges=[],queries=[];
+    t.mock.method(globalThis,"fetch",async(url,init)=>{
+      const body=JSON.parse(init.body);
+      if(url.endsWith("/pay-by-prime")){
+        charges.push(body);
+        throw new TypeError("connection lost after gateway acceptance");
+      }
+      queries.push(body.filters);
+      return Response.json({status:0,trade_records:queries.length===1?[]:[{
+        rec_trade_id:"recovered-trade",merchant_id:"fixture",payment_method:method,currency:"TWD",
+        bank_transaction_id:charges[0].bank_transaction_id,original_amount:order.total,record_status:1
+      }]});
+    });
+    const body={prime:"fixture-prime",buyer:{name:"測試",email:"qa@example.test",phone_number:"0900000000"}};
+    const {attempt}=await post("payments/start",body);
+    assert.deepEqual(attempt,{ref:charges[0].bank_transaction_id,state:"pending",redirect:null});
+    assert.deepEqual((await post("payments/check",{})).attempt,attempt);
+    const replays=await Promise.all(Array.from({length:8},()=>post("payments/start",body)));
+    assert.ok(replays.every(replay=>replay.attempt.ref===attempt.ref));
+    db.sqlite.exec("UPDATE payment_attempts SET checked=0");
+    const recovered=(await post("payments/check",{})).attempt;
+    assert.deepEqual(recovered,{...attempt,state:"paid"});
+    assert.equal(queries.length,2);
+    assert.ok(queries.every(filters=>filters.bank_transaction_id===attempt.ref));
+    assert.equal(charges.length,1);
+    assert.equal(db.sqlite.prepare("SELECT count(*) AS n FROM payment_attempts").get().n,1);
+  });
+}
 for(const method of ["line_pay","px_pay_plus","jko_pay","easy_wallet","pi_wallet","plus_pay","card"]){
   test(method+" follows sandbox charge, verified notification and out-of-order result",async t=>{
     const db=database();t.after(()=>db.sqlite.close());
