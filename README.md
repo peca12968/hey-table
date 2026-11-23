@@ -47,6 +47,32 @@ python returns.py demo.db preview 1 gyoza=1
 
 這項更正只影響本機退餐試算帳。整合測試使用全支付與 LINE Pay 示範付款，另外讀取點餐平台原收據核對付款狀態。若已透過金流商辦理退款，實際款項須從商家金流紀錄查核。[更正與並行測試](test_voids.py)
 
+## 同桌分帳後，每個人累計可退多少？
+
+小安與小岑原先分別負擔 222、123 元，其中兩份煎餃折後 157 元，兩人各負擔 79、78 元。店員用原始分帳明細核對退餐，先退單點的 85 元，再退套餐的 72 元。
+
+| 煎餃退餐進度 | 小安累計可退 | 小岑累計可退 | 合計 |
+| --- | ---: | ---: | ---: |
+| 第一份 | 43 | 42 | 85 |
+| 兩份都退 | 79 | 78 | 157 |
+| 撤銷第一筆，只保留套餐份 | 36 | 36 | 72 |
+
+用一份新的本機試算帳執行下列指令。原始分帳檔取自 [Table Shares](https://github.com/peca12968/table-shares/tree/91ff344a99838d91906d90328ac31f2533da1407)，示範檔已隨附。
+
+```sh
+python returns.py diners.db import examples/ticket.json
+python returns.py diners.db bind-split 1 examples/paid-split.json
+python returns.py diners.db record 1 gyoza=1 --request one --expected 85
+python returns.py diners.db credits 1
+python returns.py diners.db record 1 gyoza=1 --request two --expected 72
+python returns.py diners.db void 1 --request one --reason "第一份誤登"
+python returns.py diners.db credits 1
+```
+
+分帳檔本身沒有餐單編號，店員在 `bind-split` 選定對應收據。程式核對每道菜的折後金額、各人整元小計與餐單合計，再保存原始逐菜實付分配。重複交付相同分配會回傳最新試算，已有分配的餐單會拒絕不同明細。`credits` 以同一份 SQLite 快照讀取有效退餐，列出逐菜與逐人累計金額。這是同桌之間的離線分攤試算，實際金流退款需由店家另行辦理。
+
+退餐額按該菜的原實付整元比例分配，採最高平均數法。每一元分給「原實付 ÷（已分配元數 + 1）」最高者，同分依人名的 Unicode 順序。實作先分配比例下界，再以精確分數處理餘數。累計退餐額增加時，每人的金額都只會持平或增加。整道菜全退時，各人恰好取回原分攤額。此分配規則是作品的示範約定。[分配實作](diner_credit.py) · [625 組分攤測試](test_diner_credit.py) · [最高平均數法說明](https://www.europarl.europa.eu/thinktank/en/document/EPRS_BRI%282024%29762352)
+
 ## 重跑驗證
 
 ```sh

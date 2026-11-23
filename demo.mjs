@@ -44,12 +44,14 @@ try {
   await writeFile(path,JSON.stringify(ticket));
   function cli(...args) {
     return JSON.parse(execFileSync(process.env.PYTHON || "python",[
-      fileURLToPath(new URL("./returns.py",import.meta.url)),join(temp,"local.db"),...args],{encoding:"utf8"}));
+      "-X","utf8",fileURLToPath(new URL("./returns.py",import.meta.url)),join(temp,"local.db"),...args],{encoding:"utf8"}));
   }
   const id=String(ticket.id);
   assert.equal(cli("import",path).total,345);
+  assert.equal(cli("bind-split",id,fileURLToPath(new URL("./examples/paid-split.json",import.meta.url))).totalCredit,0);
   assert.equal(cli("preview",id,"gyoza=1").amount,85);
   const first=cli("record",id,"gyoza=1","--expected","85","--request","portion-1");
+  assert.deepEqual(cli("credits",id).dishes.gyoza.credit,{"小安":43,"小岑":42});
   assert.deepEqual(cli("record",id,"gyoza=1","--expected","85","--request","portion-1"),first);
   const second=cli("record",id,"gyoza=1","--expected","72","--request","portion-2");
   const rest=cli("record",id,"oyakodon=1","sencha=1","--expected","188","--request","rest");
@@ -64,6 +66,8 @@ try {
   const corrected=cli("statement",id);
   assert.deepEqual([corrected.recordedAmount,corrected.remainingValue],[260,85]);
   assert.deepEqual(corrected.entries.map(e=>e.status),["voided","active","active"]);
+  const diners=cli("credits",id).diners;
+  assert.deepEqual([diners["小安"].credit,diners["小岑"].credit],[179,81]);
   assert.deepEqual(await call("ticket"),ticket);
   const next=randomUUID();
   await call("orders",{token:next,mode:"pickup",note:"",paymentMethod:"line_pay",
@@ -87,7 +91,7 @@ try {
   assert.deepEqual(await call("ticket",undefined,next),pickup);
   console.log(JSON.stringify({method:ticket.paymentMethod,receiptTotal:ticket.total,
     returnAmounts:[first.amount,second.amount,rest.amount],remaining:rest.remainingValue,paymentState:ticket.paymentState,
-    correction:{restored:restored.amount,recorded:corrected.recordedAmount,remaining:corrected.remainingValue},
+    correction:{restored:restored.amount,recorded:corrected.recordedAmount,remaining:corrected.remainingValue,diners},
     pickup:{method:pickup.paymentMethod,total:pickup.total,porkPrices,remainingSides:sides.amount,
       restoredBundle:porkAgain.lines[0].bundle,restoredAmount:porkAgain.amount}}));
 } finally {

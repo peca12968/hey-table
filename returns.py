@@ -9,10 +9,20 @@ import sqlite3
 import sys
 
 from pricing import allocate, integer, price_lots
+from diner_credit import credit_report, verify_split
 
 
 def encode(value):
     return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+
+
+def unique_fields(pairs):
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError(f"Duplicate split field: {key}")
+        result[key] = value
+    return result
 
 
 def connect(path):
@@ -29,6 +39,9 @@ def connect(path):
         CREATE TABLE IF NOT EXISTS voids (
             receipt INTEGER NOT NULL, request TEXT NOT NULL, result TEXT NOT NULL,
             PRIMARY KEY(receipt, request), FOREIGN KEY(receipt,request) REFERENCES entries(receipt,request)
+        );
+        CREATE TABLE IF NOT EXISTS paid_splits (
+            receipt INTEGER PRIMARY KEY REFERENCES receipts(id), lines TEXT NOT NULL
         );
     """)
     return db
@@ -118,6 +131,28 @@ def statement(db, rid):
                 "entries": entries}
 
 
+def diner_credits(db, rid, split=None):
+    integer(rid, 1)
+    with transaction(db, split is not None):
+        row = db.execute("SELECT total,lots FROM receipts WHERE id=?", (rid,)).fetchone()
+        if row is None:
+            raise ValueError("Unknown receipt")
+        saved = db.execute("SELECT lines FROM paid_splits WHERE receipt=?", (rid,)).fetchone()
+        if split is not None:
+            lines = verify_split(split, json.loads(row[1]), row[0])
+            encoded = encode(lines)
+            if saved and saved[0] != encoded:
+                raise ValueError("Receipt already has a different paid split")
+            if not saved:
+                db.execute("INSERT INTO paid_splits VALUES (?,?)", (rid, encoded))
+        elif saved:
+            lines = json.loads(saved[0])
+        else:
+            raise ValueError("Bind the original paid split first")
+        used, _ = active_amounts(db, rid)
+        return credit_report(rid, lines, used)
+
+
 def quote(db, rid, selection, *, request=None, expected=None):
     integer(rid, 1)
     recording = request is not None
@@ -155,9 +190,11 @@ def main():
     parser.add_argument("database")
     commands = parser.add_subparsers(dest="command", required=True)
     commands.add_parser("import").add_argument("ticket", type=Path)
-    for name in ("preview", "record", "history", "statement", "void"):
+    for name in ("preview", "record", "history", "statement", "void", "bind-split", "credits"):
         sub = commands.add_parser(name)
         sub.add_argument("receipt", type=int)
+        if name == "bind-split":
+            sub.add_argument("split", type=Path)
         if name in ("preview", "record"):
             sub.add_argument("items", nargs="+", metavar="DISH=QTY")
         if name == "record":
@@ -171,6 +208,13 @@ def main():
     try:
         if args.command == "import":
             result = register(db, json.loads(args.ticket.read_text(encoding="utf-8")))
+        elif args.command == "bind-split":
+            document = json.loads(args.split.read_text(encoding="utf-8-sig"), object_pairs_hook=unique_fields)
+            if not isinstance(document, dict):
+                raise ValueError("Expected an original split document")
+            result = diner_credits(db, args.receipt, document)
+        elif args.command == "credits":
+            result = diner_credits(db, args.receipt)
         elif args.command == "void":
             result = void(db, args.receipt, args.request, args.reason)
         elif args.command == "statement":
