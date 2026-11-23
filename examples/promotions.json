@@ -1,0 +1,5 @@
+[
+  {"id":"pork-gyoza","main":"katsudon","side":"gyoza","price":230},
+  {"id":"pork-tea","main":"katsudon","side":"sencha","price":200},
+  {"id":"chicken-gyoza","main":"oyakodon","side":"gyoza","price":215}
+]

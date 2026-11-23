@@ -1,0 +1,25 @@
+name: Verify bundle pricing and restaurant receipts
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  pricing:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+      - run: node --test quote.test.mjs
+      - uses: actions/checkout@v7
+        with:
+          repository: peca12968/hey-table
+          ref: 280603cddd54b7400c07374d45c8723c9bd0a915
+          path: hey-table
+          persist-credentials: false
+      - run: npm ci --include=optional
+        working-directory: hey-table
+      - run: node restaurant-demo.mjs hey-table
