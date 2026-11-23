@@ -27,8 +27,15 @@ jobs:
           repository: peca12968/pass-rail
           ref: e52bdb1468117899cf0b5c91d871208ae5ef6264
           path: pass-rail
+      - uses: actions/checkout@v7
+        with:
+          repository: peca12968/batch-clock
+          ref: b7802ce073aca960aa5c5b81de40a1c81b9e83ba
+          path: batch-clock
+          persist-credentials: false
       - run: npx playwright test
         working-directory: qa
         env:
           PREP_PROJECT: ${{ github.workspace }}/prep-sheet
           RAIL_PROJECT: ${{ github.workspace }}/pass-rail
+          BATCH_CLOCK_PROJECT: ${{ github.workspace }}/batch-clock

@@ -8,13 +8,19 @@
 
 ## 用兩台裝置試點一單
 
-自取與掃碼內用的購物車會在餐點或份數改變後自動顯示預估出餐時間，亦可按「重新試算」讀取最新廚房狀態。試算假設目前的餐單接在製作中餐單之後，把各站尚在製作的餐點按完整批次計算。使用示範工時，尚未納入鍋中進度與店家接單前的等候時間。
+自取與掃碼內用的購物車會在餐點或份數改變後自動顯示預估出餐時間，亦可按「重新試算」讀取最新廚房狀態。試算假設目前的餐單接在製作中餐單之後，把各站尚在製作的餐點按完整批次計算。初始工時採示範值，店員可匯入校準結果。估算尚未納入鍋中進度與店家接單前的等候時間。
 
 一個可重跑的案例是熱台正在做三碗親子丼及兩份唐揚雞，飲品台正在做兩杯煎茶。此時加點一碗親子丼約需 11–14 分鐘；第一張單出餐後重新試算，降為 4–5 分鐘。購物車只收到試算時間及秒數區間。試算不建立餐單或付款，廚房備註及其他餐單資料留在後端。[Pickup Window 排程](https://github.com/peca12968/pickup-window) · [瀏覽器與 D1 測試](qa/cart-quote.spec.mjs)
 
 1. 在 `/tables` 列印 A01 到 A08 桌牌。掃描 A03 後，菜單與收據顯示「A03 桌內用」。從首頁開啟則預設線上自取。託管預覽與桌牌連結都需有網站存取權。
 2. 加入滑蛋豬排丼 NT$190，可增減數量、加備註，再確認送單。保留收據連結即可查這張餐單；同一裝置也能從「查詢餐單」找回最近一單。
 3. 店主在 `/kitchen` 接單，依序切換製作中、可取餐、已完成。待接單時也能取消。收據每五秒更新一次，可手動更新。後台可暫停售餐，再恢復供應。
+
+## 把量測到的工時套用到購物車
+
+在店家接單台開啟「管理出餐工時」，下載目前設定。將這份檔案交給 Batch Clock 的 `calibrate --format kitchen`，再把產出的 JSON 匯回接單台。頁面會列出有變動的餐點及新舊秒數。按「套用工時」後，下一次購物車試算就會使用新設定。可預覽並套用上一版，亦可還原示範工時。[Batch Clock 使用說明](https://github.com/peca12968/batch-clock)
+
+每次套用均比對店員開啟時的版本。若另一人已先儲存，請載入最新工時再選檔比較。匯入檔保留現有菜單、分站、工作位數與批量，只能調整每批最短和最長秒數。整合測試用瀏覽器下載設定，再用真正的 Batch Clock CLI 校準合成煎茶資料。飲品台空閒時，三杯煎茶的預估由 120–180 秒變為 96–170 秒，還原後回到原區間。[店員與購物車整合測試](qa/batch-clock.spec.mjs)
 
 ## 試一次線上付款
 
@@ -70,12 +76,15 @@ npm run build
 node --import ./scripts/sites-env.mjs ./node_modules/wrangler/bin/wrangler.js d1 execute DB --local --config dist/server/wrangler.json --persist-to .wrangler/state --file drizzle/0000_fresh_white_tiger.sql
 node --import ./scripts/sites-env.mjs ./node_modules/wrangler/bin/wrangler.js d1 execute DB --local --config dist/server/wrangler.json --persist-to .wrangler/state --file drizzle/0001_online_payments.sql
 node --import ./scripts/sites-env.mjs ./node_modules/wrangler/bin/wrangler.js d1 execute DB --local --config dist/server/wrangler.json --persist-to .wrangler/state --file drizzle/0002_kitchen_queue_index.sql
+node --import ./scripts/sites-env.mjs ./node_modules/wrangler/bin/wrangler.js d1 execute DB --local --config dist/server/wrangler.json --persist-to .wrangler/state --file drizzle/0003_kitchen_timing_revisions.sql
 npm start
 ```
 
 要在自己的機器測店員流程，可用 `npm start -- --var STAFF_KEY:local-demo-only` 啟動，並在店家後台的「使用自架店員金鑰」輸入相同值。這個範例值僅用於本機演練。
 
 ## 端對端驗證
+
+工時校準案例使用 Python 3.11 以上。將 Batch Clock 放在相鄰的 `../batch-clock`，或用 `BATCH_CLOCK_PROJECT` 指定其目錄。CI 鎖定同一個已驗證版本。
 
 ```sh
 node --test qa/tappay.test.mjs

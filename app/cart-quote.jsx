@@ -29,6 +29,6 @@ export default function CartQuote({body}) {
     <div className="quoteHead"><span><Clock3 size={16} aria-hidden="true"/> 預估出餐</span>
       <button type="button" onClick={refresh} disabled={!quote&&!error}>重新試算</button></div>
     <div role="status">{quote ? <><strong>約 {minutes(quote.seconds)}</strong>
-      <small>{localTime.format(quote.capturedAt)} 依製作中餐單與示範工時估算</small></> : error || "正在試算…"}</div>
+      <small>{localTime.format(quote.capturedAt)} 依製作中餐單與{quote.timingSource==="store"?"店家設定工時":"示範工時"}估算</small></> : error || "正在試算…"}</div>
   </section>;
 }

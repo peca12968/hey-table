@@ -22,3 +22,9 @@
 .quoteHead button:disabled{opacity:.55;cursor:default}
 .cartQuote strong,.cartQuote small{display:block}
 .cartQuote strong{font-size:1.125rem}.cartQuote small{margin-top:.2rem;color:#655c4e;font-size:.8125rem}
+.timing{margin-block:1rem}
+.timingForm{display:grid;gap:.8rem;margin-top:1rem}
+.timingForm p{margin:0}.timingForm label{display:grid;gap:.4rem}
+.timingForm input{max-width:100%;font:inherit}.timingForm table{border-collapse:collapse;width:100%;text-align:left}
+.timingForm caption{text-align:left;font-weight:700;margin-bottom:.35rem}
+.timingForm th,.timingForm td{padding:.45rem;border-bottom:1px solid #ded8cf}

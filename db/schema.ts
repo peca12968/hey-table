@@ -27,3 +27,7 @@ export const paymentAttempts = sqliteTable("payment_attempts", {
 export const unavailable = sqliteTable("unavailable", {
   dish: text("dish").primaryKey(),
 });
+export const kitchenTiming = sqliteTable("kitchen_timing", {
+  revision: integer("revision").primaryKey(),
+  config: text("config").notNull(),
+});

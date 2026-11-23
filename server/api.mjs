@@ -9,7 +9,9 @@ import {latestState,payableForKitchen,paymentApi,checkKitchenPayment} from "./pa
 import {settings} from "./tappay.mjs";
 import {methods} from "../lib/payments.mjs";
 import {estimate} from "@peca12968/pickup-window";
-import kitchen from "@peca12968/pickup-window/demo-kitchen.json" with {type:"json"};
+import {activeKitchen,demoKitchen,importTiming,timingChanges} from "../lib/kitchen-timing.mjs";
+const timingRows = "SELECT revision,config FROM kitchen_timing ORDER BY revision DESC";
+const fromTimingRow = row => ({revision:row?.revision??0, kitchen:activeKitchen(row ? JSON.parse(row.config) : null)});
 const selectOrders = "SELECT orders.*, "+latestState+" AS payment_state FROM orders";
 function receipt(row) {
   return {id:row.id, mode:row.mode, table:row.table_no, note:row.note, items:JSON.parse(row.items),
@@ -53,7 +55,12 @@ export async function api(request, env) {
     const signedIn = env.STAFF_EMAIL && request.headers.get("oai-authenticated-user-id") && email &&
       env.STAFF_EMAIL.toLowerCase() === email.toLowerCase();
     const keyed = env.STAFF_KEY && request.headers.get("Authorization") === "Bearer " + env.STAFF_KEY;
-    if (!signedIn && !keyed) return fail("請以店主管理帳號登入",403);
+    if (!signedIn && !keyed) {
+      // Finish small, length-delimited writes before returning on a reused HTTP connection.
+      const length=request.headers.get("Content-Length");
+      if(request.body && length && /^\d+$/.test(length) && Number(length)<=8192)await request.arrayBuffer();
+      return fail("請以店主管理帳號登入",403);
+    }
   }
   if (!["GET","HEAD"].includes(method) && request.headers.get("Origin") && request.headers.get("Origin") !== url.origin)
     return fail("請從本站提交",403);
@@ -64,6 +71,24 @@ export async function api(request, env) {
     if (!input || typeof input !== "object") return fail("資料格式錯誤");
   }
   if(path==="/api/kitchen/payment" && method==="PATCH")return checkKitchenPayment(env,input.id);
+  if(path==="/api/kitchen/timing" && method==="GET"){
+    const {results}=await db.prepare(timingRows+" LIMIT 2").all();
+    return json({current:fromTimingRow(results[0]),previous:results.length ? fromTimingRow(results[1]) : null});
+  }
+  if(path==="/api/kitchen/timing" && method==="PATCH"){
+    if(!Number.isSafeInteger(input.revision)||input.revision<0||input.revision>=Number.MAX_SAFE_INTEGER)return fail("版本編號無效");
+    let kitchen;
+    try{kitchen=importTiming(input.kitchen);}catch(e){return fail(e.message);}
+    const current=fromTimingRow(await db.prepare(timingRows+" LIMIT 1").first());
+    if(current.revision!==input.revision)return fail("工時已由其他店員更新，請重新載入並比較。",409);
+    if(!timingChanges(current.kitchen,kitchen).length)return json(current);
+    const revision=input.revision+1;
+    const result=await db.prepare(`INSERT INTO kitchen_timing(revision,config) SELECT ?,?
+      WHERE COALESCE((SELECT MAX(revision) FROM kitchen_timing),0)=?`)
+      .bind(revision,JSON.stringify(kitchen),input.revision).run();
+    if(!result.meta.changes)return fail("工時已由其他店員更新，請重新載入並比較。",409);
+    return json({revision,kitchen});
+  }
   if(path.startsWith("/api/payments/") && method==="POST")return paymentApi(path,request,env,input);
   if (path === "/api/menu" && method === "GET") {
     const {results} = await db.prepare("SELECT dish FROM unavailable").all();
@@ -72,17 +97,19 @@ export async function api(request, env) {
   if (path === "/api/quote" && method === "POST") {
     const items = menuItems(input.items);
     if (!items) return fail("請確認餐點與數量");
-    const [stock, queue] = await db.batch([
+    const [stock, queue, timing] = await db.batch([
       db.prepare("SELECT dish FROM unavailable"),
-      db.prepare("SELECT id,created,items,status FROM orders WHERE status='preparing' ORDER BY id DESC")
+      db.prepare("SELECT id,created,items,status FROM orders WHERE status='preparing' ORDER BY id DESC"),
+      db.prepare(timingRows+" LIMIT 1")
     ]);
     if (stock.results.some(row => items.some(item => item.id === row.dish)))
       return fail("餐單中有已售完餐點，請調整數量後再試算",409);
     const capturedAt = Date.now();
     const orders = queue.results.map(row => ({...row,items:JSON.parse(row.items)}));
     const snapshot = {format:"hey-table.station-orders.v1", capturedAt, throughId:orders[0]?.id ?? 0, orders};
+    const {kitchen}=fromTimingRow(timing.results[0]);
     const {quote} = estimate(snapshot, kitchen, {cart:{items}});
-    return json({capturedAt, seconds:quote.seconds});
+    return json({capturedAt, seconds:quote.seconds,...(timingChanges(demoKitchen,kitchen).length?{timingSource:"store"}:{})});
   }
   if (path === "/api/orders" && method === "POST") {
     const order = prepare(input);
