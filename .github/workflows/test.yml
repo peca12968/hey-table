@@ -17,7 +17,7 @@ jobs:
       - uses: actions/checkout@v7
         with:
           repository: peca12968/hey-table
-          ref: 33c3d0e15326f442363d9f5f52cbab612fc44d0d
+          ref: e68aefb12e246058622861e04c7a1a0fa4495efc
           path: hey-table
       - uses: actions/setup-node@v6
         with:

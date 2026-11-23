@@ -67,7 +67,39 @@ def catalog(book):
     return components, order, revisions
 
 
-def plan(orders, book, stock, include_preparing=False):
+def dish_demand(receipt, book, revisions):
+    order_id = receipt["id"]
+    at = integer(receipt["created"], 0, "order creation timestamp")
+    if not isinstance(receipt["items"], list) or not receipt["items"]:
+        raise ValueError(f"Order {order_id} has no item list")
+    demand, portions = Counter(), Counter()
+    for line in receipt["items"]:
+        mapping(line, "item")
+        dish, qty = line["id"], integer(line["qty"], 1, "portions")
+        position = bisect_right(revisions.get(dish, []), at) - 1
+        if position < 0:
+            raise ValueError(f"No recipe for {dish} at {at} (order {order_id})")
+        recipe = book["dishes"][dish][position]
+        portions[dish, recipe["from_ms"]] += qty
+        for part, amount in recipe["uses"].items():
+            demand[part] += amount * qty
+    return demand, portions
+
+
+def order_identity(receipt):
+    """Compare immutable kitchen fields across exports, ignoring customer detail and status."""
+    at = integer(receipt["created"], 0, "order creation timestamp")
+    if not isinstance(receipt["items"], list) or not receipt["items"]:
+        raise ValueError("Order needs at least one item")
+    pairs = []
+    for line in receipt["items"]:
+        if not isinstance(line["id"], str):
+            raise ValueError("Invalid dish ID")
+        pairs.append([line["id"], integer(line["qty"], 1, "portions")])
+    return {"created": at, "items": sorted(pairs)}
+
+
+def plan(orders, book, stock, include_preparing=False, issued=None):
     components, order, revisions = catalog(book)
     quantities(stock, components, 0, "stock")
     demand, portions = Counter(), Counter()
@@ -83,20 +115,14 @@ def plan(orders, book, stock, include_preparing=False):
             raise ValueError(f"Unknown order status {status}")
         if status != "pending" and not (include_preparing and status == "preparing"):
             continue
-        at = integer(receipt["created"], 0, "order creation timestamp")
+        if issued and order_id in issued:
+            if issued[order_id] != order_identity(receipt):
+                raise ValueError(f"Order {order_id} differs from its issue receipt")
+            continue
+        ingredients, servings = dish_demand(receipt, book, revisions)
         selected.append(order_id)
-        if not isinstance(receipt["items"], list) or not receipt["items"]:
-            raise ValueError(f"Order {order_id} has no item list")
-        for line in receipt["items"]:
-            mapping(line, "item")
-            dish, qty = line["id"], integer(line["qty"], 1, "portions")
-            position = bisect_right(revisions.get(dish, []), at) - 1
-            if position < 0:
-                raise ValueError(f"No recipe for {dish} at {at} (order {order_id})")
-            recipe = book["dishes"][dish][position]
-            portions[dish, recipe["from_ms"]] += qty
-            for part, amount in recipe["uses"].items():
-                demand[part] += amount * qty
+        demand.update(ingredients)
+        portions.update(servings)
     lines = []
     for key in order:
         if not demand[key]:
@@ -130,14 +156,22 @@ if __name__ == "__main__":
     source.add_argument("--orders", type=Path, help="JSON array returned by the kitchen API")
     source.add_argument("--database", type=Path, help="Read-only SQLite order database")
     parser.add_argument("--recipes", type=Path, required=True)
-    parser.add_argument("--stock", type=Path, required=True)
+    inventory = parser.add_mutually_exclusive_group(required=True)
+    inventory.add_argument("--stock", type=Path)
+    inventory.add_argument("--ledger", type=Path, help="Read balances and skip previously issued orders")
     parser.add_argument("--include-preparing", action="store_true")
     args = parser.parse_args()
     def read(path):
         return json.loads(path.read_text(encoding="utf-8"))
     try:
         orders = read(args.orders) if args.orders else snapshot(args.database)
-        result = plan(orders, read(args.recipes), read(args.stock), args.include_preparing)
+        book = read(args.recipes)
+        if args.ledger:
+            from ledger import inventory_snapshot
+            stock, issued = inventory_snapshot(args.ledger, book)
+        else:
+            stock, issued = read(args.stock), {}
+        result = plan(orders, book, stock, args.include_preparing, issued)
         print(json.dumps(result, ensure_ascii=False, indent=2))
     except (OSError, sqlite3.Error, TypeError, ValueError, KeyError) as error:
         parser.exit(2, f"{error}\n")

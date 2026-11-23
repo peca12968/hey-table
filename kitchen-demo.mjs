@@ -69,8 +69,27 @@ try {
   const after=second.lines.find(line=>line.component==="rice");
   assert.deepEqual(second.included_orders,[older.id]);
   assert.deepEqual([after.needed,after.batches,after.remaining],[360,1,260]);
+  const current=await request("/api/kitchen/prep");
+  await writeFile(orders,JSON.stringify(current.orders));
+  const delivery=join(root,"examples/delivery.json"),ledger=join(dir,"inventory.db");
+  function python(script,...args){
+    return JSON.parse(execFileSync(process.env.PYTHON||"python",[join(root,script),...args],
+      {env:{...process.env,PYTHONUTF8:"1"}}));
+  }
+  const post=(...args)=>python("ledger.py","--db",ledger,"--recipes",recipes,...args);
+  post("init");
+  post("receive","opening",delivery);
+  const cooked=post("make","pot-1","rice","1");
+  assert.equal(cooked.movements.rice.balance,400);
+  const issued=post("issue",orders,String(older.id));
+  assert.deepEqual(post("issue",orders,String(older.id)),issued);
+  assert.deepEqual(issued.movements.rice,{unit:"g",delta:-360,balance:40});
+  const outstanding=python("prep.py","--orders",orders,"--recipes",recipes,"--ledger",ledger);
+  assert.deepEqual(outstanding.included_orders,[]);
+  assert.equal(post("history").length,3);
   console.log(JSON.stringify({receipts:6,selected:first.included_orders.length,riceGrams:rice.needed,
-    riceBatches:rice.batches,afterCancellation:{riceGrams:after.needed,riceBatches:after.batches}},null,2));
+    riceBatches:rice.batches,afterCancellation:{riceGrams:after.needed,riceBatches:after.batches},
+    ledger:{cookedGrams:400,issuedGrams:360,remainingGrams:40,receipts:3}},null,2));
 } finally {
   await app.dispose();
   await rm(dir,{recursive:true,force:true});

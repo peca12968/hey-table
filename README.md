@@ -27,15 +27,32 @@ python -m unittest -v
 - 菜單版本的 `from_ms` 是含起點的 Unix 毫秒，依訂單建立時間選取。每種備料 ID 有固定的單位與批次配方。若半成品本身的配方或單位改變，建立新的材料 ID，讓對應版本的菜單指向它。
 - 庫存以同單位的非負整數輸入；未列出的材料視為零。每種原料的 `pack` 是一個採購單位含量，半成品的 `yield` 與 `inputs` 描述一批可用成品與投入原料。循環相依、未知餐點、重複訂單編號與無適用食譜都會使計算失敗。
 
+## 實際入庫、煮飯與領料
+
+每個廚房可建立獨立的 SQLite 庫存帳。以下從空帳開始，驗收入庫 180 g 生米、240 ml 水與配菜，再將一鍋煮好的飯入帳。第一張訂單使用舊版食譜，兩碗共領 360 g 白飯。再次送出同一張領料單會取得原收據，鍋中仍有 40 g。
+
+```sh
+python ledger.py --db kitchen.db init
+python ledger.py --db kitchen.db --recipes examples/recipes.json receive delivery-001 examples/delivery.json
+python ledger.py --db kitchen.db --recipes examples/recipes.json make pot-001 rice 1
+python ledger.py --db kitchen.db --recipes examples/recipes.json issue examples/orders.json 1
+python ledger.py --db kitchen.db history
+python prep.py --orders examples/orders.json --recipes examples/recipes.json --ledger kitchen.db
+```
+
+最後一行會用現有餘額為第二張待接訂單重算，跳過已領料的第一張。每次入庫或製作都使用可辨識的單號，訂單領料則使用點餐編號。每張收據保留當時的異動、單位和結餘。任何一項原料不足時，整張異動回滾，補足後可用同一單號重試。
+
+在實際操作時，先到禾日食堂「店家接單台 → 查看備料單 → 重新擷取」，下載 JSON，以該檔案取代範例訂單。帳本按匯出當下的狀態領料，之後的取消或交餐不會自動更新本機庫存。不同店舖或重設過編號的訂單資料庫應分帳記錄。
+
 ## 與點餐服務一起驗證
 
 下列演練在本機 Miniflare 與 D1 執行指定版本的點餐 API。建立自取單與 A03 桌單，驗證重送去重，再製造製作中、已出餐、已完成與已取消的單。從廚房 API 取出六筆，計算其中兩張待接單；取消 A03 桌單後再查一次。全程使用合成資料。
 
 ```sh
 git clone https://github.com/peca12968/hey-table.git ../hey-table
-git -C ../hey-table checkout 33c3d0e15326f442363d9f5f52cbab612fc44d0d
+git -C ../hey-table checkout e68aefb12e246058622861e04c7a1a0fa4495efc
 npm ci --prefix ../hey-table --include=optional
 node kitchen-demo.mjs ../hey-table
 ```
 
-測試另針對 120 組庫存與相依配方，枚舉所有可能達到最低需求的批數範圍，獨立核對每項原料及半成品的最少批數。這些數字是履歷展示用的示範配方與產量。專案以 AI 輔助開發。[演算法與資料驗證](prep.py) · [獨立測試](test_prep.py) · [跨專案演練](kitchen-demo.mjs)
+同一演練也會讀取備料頁所用的訂單匯出 API，在本機帳本實際入庫、煮飯、領料，核對三張收據與剩餘的 40 g 白飯。另一組測試讓八個獨立 SQLite 連線競領最後一份煎茶，只有一張單成功。程式另針對 120 組庫存與相依配方，枚舉可行的批數範圍，獨立核對每項原料及半成品的最少批數。這些數字來自示範配方與合成訂單。專案以 AI 輔助開發。[批數演算法](prep.py) · [領料競爭測試](test_ledger.py) · [跨專案演練](kitchen-demo.mjs)
