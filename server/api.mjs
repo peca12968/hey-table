@@ -1,3 +1,4 @@
+import {addOnFor} from "./add-ons.mjs";
 import qrcode from "qrcode-generator";
 import {dishes, tables, transitions} from "../lib/menu.mjs";
 
@@ -93,6 +94,11 @@ export async function api(request, env) {
   if (path === "/api/menu" && method === "GET") {
     const {results} = await db.prepare("SELECT dish FROM unavailable").all();
     return json({payments:settings(env),unavailable:results.map(r=>r.dish)});
+  }
+  if (path === "/api/add-on" && method === "POST") {
+    const items = menuItems(input.items);
+    if (!items) return fail("請確認餐點與數量");
+    return json({suggestion: await addOnFor(db, items)});
   }
   if (path === "/api/quote" && method === "POST") {
     const items = menuItems(input.items);

@@ -4,6 +4,7 @@ import {Plus,Minus,ShoppingBag,X,Utensils,Check} from "lucide-react";
 import {dishes,tables} from "../lib/menu.mjs";
 import {Header,Footer,Mode,request} from "./shared";
 import {cartKey,openReceipt,read,save} from "../lib/order-storage.mjs";
+import CartAddOn from "./cart-add-on";
 import CartQuote from "./cart-quote";
 
 import {methods,environmentLabel} from "../lib/payments.mjs";
@@ -75,6 +76,8 @@ export default function Menu(){
     <aside className={"cart "+(panel?"opened":"")} aria-label="我的餐單"><div className="cartHead"><h2><ShoppingBag size={21}/> 我的餐單</h2><span>{count} 件</span><button className="mobileClose" aria-label="關閉" onClick={()=>setPanel(false)}><X size={19}/></button></div>
     <div className="cartMode"><Mode table={table}/><span>{methods[method]}</span></div>
     {!count?<div className="empty"><Utensils size={30}/><strong>餐單還是空的</strong><p>從菜單加入想吃的餐點</p></div>:<ul className="orderLines">{lines.map(d=><li key={d.id}><div><b>{d.name}{sold.includes(d.id)?"（售完）":""}</b><small>NT$ {d.price*cart[d.id]}</small></div><div className="stepper"><button disabled={!!draft||busy} aria-label={"減少"+d.name} onClick={()=>change(d.id,-1)}><Minus size={14}/></button><span>{cart[d.id]}</span><button disabled={!!draft||busy||sold.includes(d.id)||cart[d.id]>=20} aria-label={"增加"+d.name} onClick={()=>change(d.id,1)}><Plus size={14}/></button></div></li>)}</ul>}
+    {loaded&&!invalid&&!blocked&&!draft&&!busy&&lines.some(d=>d.group==="丼飯")&&
+      <CartAddOn key={quoteBody+JSON.stringify(sold)} body={quoteBody} sold={sold} onAdd={id=>change(id,1)}/>}
     {count>0&&<label className="note">訂單備註 <small>選填</small><textarea placeholder="例如：餐具數量" value={note} maxLength={160} disabled={!!draft||busy} onChange={e=>setNote(e.target.value)}/></label>}
     {count>0&&<label className="payChoice">付款方式<select value={method} disabled={!!draft||busy} onChange={e=>setMethod(e.target.value)}>
       {payments.methods.map(m=><option key={m} value={m}>{methods[m]}</option>)}</select>
