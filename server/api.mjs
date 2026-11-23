@@ -77,6 +77,14 @@ export async function api(request, env) {
     const row = await db.prepare("SELECT * FROM orders WHERE token=?").bind(token).first();
     return row ? json(receipt(row)) : fail("找不到訂單",404);
   }
+  if (path === "/api/kitchen/prep" && method === "GET") {
+    const {results} = await db.prepare(`SELECT id, created, status, items FROM orders
+      WHERE status IN ('pending','preparing') ORDER BY id`).all();
+    const orders = results.map(row => ({
+      ...row, items: JSON.parse(row.items).map(({id, qty}) => ({id, qty}))
+    }));
+    return json({capturedAt: Date.now(), orders});
+  }
   if (path === "/api/kitchen" && method === "GET") {
     const {results} = await db.prepare(`SELECT * FROM orders WHERE status NOT IN ('completed','cancelled')
         OR id IN (SELECT id FROM orders WHERE status IN ('completed','cancelled') ORDER BY id DESC LIMIT 20)

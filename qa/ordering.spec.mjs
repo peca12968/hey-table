@@ -1,5 +1,8 @@
 import {test,expect} from "@playwright/test";
 import {randomUUID} from "node:crypto";
+import {execFileSync} from "node:child_process";
+import {readFile} from "node:fs/promises";
+import {join} from "node:path";
 import jsQR from "jsqr";
 import {PNG} from "pngjs";
 
@@ -57,4 +60,53 @@ test("pickup, retries, price authority, sold-out race and stale state transition
   const race=await Promise.all([1,2].map(()=>request.patch("/api/kitchen/status",{headers:admin,data:change})));
   expect(race.map(r=>r.status()).sort()).toEqual([200,409]);
   expect((await request.post("/api/orders",{data:{...data,mode:"table",table:"Z99",token:randomUUID()}})).status()).toBe(400);
+});
+
+test("printable kitchen snapshot exports the displayed orders to Prep Sheet",async({page,request})=>{
+  const headers={Authorization:"Bearer local-test-kitchen"};
+  expect((await request.get("/api/kitchen/prep")).status()).toBe(403);
+  async function create(qty){
+    const res=await request.post("/api/orders",{data:{mode:"table",table:"A03",token:randomUUID(),
+      note:"這個備註只給接單台",items:[{id:"edamame",qty}]}});
+    expect(res.ok()).toBeTruthy();
+    return (await res.json()).id;
+  }
+  async function change(id,from,to){
+    expect((await request.patch("/api/kitchen/status",{headers,data:{id,from,to}})).ok()).toBeTruthy();
+  }
+  const pending=await create(4), preparing=await create(2), cancelled=await create(8), ready=await create(5);
+  await change(preparing,"pending","preparing");
+  await change(cancelled,"pending","cancelled");
+  await change(ready,"pending","preparing");
+  await change(ready,"preparing","ready");
+  await page.addInitScript(()=>sessionStorage.setItem("he-ri-staff","local-test-kitchen"));
+  await page.goto("/kitchen");
+  await page.getByRole("link",{name:"查看備料單"}).click();
+  const row=page.getByRole("row",{name:/鹽味毛豆/});
+  await expect(row.getByRole("cell")).toHaveText(["4","2"]);
+  await change(pending,"pending","cancelled");
+  await page.emulateMedia({media:"print"});
+  await expect(page.getByRole("heading",{name:"廚房備料單"})).toBeVisible();
+  await expect(page.getByRole("button",{name:"列印備料單"})).toBeHidden();
+  await page.emulateMedia({media:"screen"});
+  const downloaded=page.waitForEvent("download");
+  await page.getByRole("button",{name:"下載訂單 JSON"}).click();
+  const path=await (await downloaded).path();
+  const data=JSON.parse(await readFile(path,"utf8"));
+  expect(data.map(order=>order.id)).toEqual(expect.arrayContaining([pending,preparing]));
+  expect(data.some(order=>[cancelled,ready].includes(order.id))).toBe(false);
+  for(const order of data){
+    expect(Object.keys(order).sort()).toEqual(["created","id","items","status"]);
+    for(const line of order.items) expect(Object.keys(line).sort()).toEqual(["id","qty"]);
+  }
+  if(process.env.PREP_PROJECT){
+    const root=process.env.PREP_PROJECT;
+    const plan=JSON.parse(execFileSync("python",[join(root,"prep.py"),"--orders",path,
+      "--recipes",join(root,"examples","recipes.json"),"--stock",join(root,"examples","stock.json")],
+      {encoding:"utf8",env:{...process.env,PYTHONUTF8:"1"}}));
+    expect(plan.included_orders).toEqual(data.filter(order=>order.status==="pending").map(order=>order.id));
+    expect(plan.portions.find(line=>line.dish==="edamame").quantity).toBe(4);
+  }
+  await page.getByRole("button",{name:"重新擷取"}).click();
+  await expect(row.getByRole("cell")).toHaveText(["0","2"]);
 });

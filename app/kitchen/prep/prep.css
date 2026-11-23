@@ -1,0 +1,8 @@
+.prep {max-width: 56rem}
+.prep h1 {margin-bottom: .3em}
+.prep table {width: 100%; border-collapse: collapse; margin: 1.5rem 0; background: #fff}
+.prep caption {text-align: left; font-weight: 700; padding: .65rem 0}
+.prep th, .prep td {text-align: right; padding: .8rem; border-bottom: 1px solid #d8d2c7}
+.prep th:first-child {text-align: left}
+.prep thead {background: #f2efe8}
+@media print {.prep .prepControl {display: none}.prep tr {break-inside: avoid}}

@@ -16,5 +16,12 @@ jobs:
       - run: npm ci --prefix qa
       - run: npx playwright install --with-deps chromium
         working-directory: qa
+      - uses: actions/checkout@v7
+        with:
+          repository: peca12968/prep-sheet
+          ref: f31533e5b5fe9cef010c479771d4124d308eebac
+          path: prep-sheet
       - run: npx playwright test
         working-directory: qa
+        env:
+          PREP_PROJECT: ${{ github.workspace }}/prep-sheet
