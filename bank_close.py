@@ -11,7 +11,14 @@ import sys
 
 NOTICE = ("account", "payout_id", "merchant", "line_id", "method", "kind", "amount_twd")
 BANK = ("account", "entry_id", "payout_id", "posted_on", "amount_twd")
+ALLOCATION = (*BANK, "statement_amount_twd", "evidence_ref")
 SIGNS = {"collection": 1, "refund": -1, "fee": -1, "fee_return": 1}
+
+
+def signed_twd(value):
+    if not re.fullmatch(r"-?[1-9][0-9]{0,11}", value):
+        raise ValueError("expected a nonzero whole TWD amount of up to 12 digits")
+    return int(value)
 
 
 def read_feed(path, fields, identity):
@@ -28,10 +35,9 @@ def read_feed(path, fields, identity):
                 for key in fields:
                     if not row[key] and not (fields == BANK and key == "payout_id"):
                         raise ValueError(f"missing {key}")
-                amount = row["amount_twd"]
-                if not re.fullmatch(r"-?[1-9][0-9]{0,11}", amount):
-                    raise ValueError("expected a nonzero whole TWD amount of up to 12 digits")
-                row["amount_twd"] = int(amount)
+                row["amount_twd"] = signed_twd(row["amount_twd"])
+                if fields == ALLOCATION:
+                    row["statement_amount_twd"] = signed_twd(row["statement_amount_twd"])
                 if fields == NOTICE:
                     if row["kind"] not in SIGNS or row["amount_twd"] < 0:
                         raise ValueError("unknown line kind or negative payout notice amount")
@@ -50,10 +56,42 @@ def read_feed(path, fields, identity):
     return [entries[k] for k in sorted(entries)], repeats
 
 
-def reconcile(notices, statement):
+def apply_allocations(movements, allocations):
+    by_entry = defaultdict(list)
+    for row in allocations:
+        by_entry[row["account"], row["entry_id"]].append(row)
+    booked, audit = [], []
+    for entry in movements:
+        key = entry["account"], entry["entry_id"]
+        parts = by_entry.pop(key, [])
+        if not parts:
+            booked.append(entry)
+            continue
+        if entry["payout_id"]:
+            raise ValueError(f"bank entry already has a payout reference: {key}")
+        for part in parts:
+            if part["posted_on"] != entry["posted_on"] or part["statement_amount_twd"] != entry["amount_twd"]:
+                raise ValueError(f"allocation date or original amount differs from statement: {key}")
+        if sum(part["amount_twd"] for part in parts) != entry["amount_twd"]:
+            raise ValueError(f"allocations must sum to the signed bank entry: {key}")
+        booked.extend(parts)
+        audit.append({"statement_entry": entry, "allocations": parts})
+    if by_entry:
+        raise ValueError(f"allocation refers to missing bank entry: {next(iter(by_entry))}")
+    return booked, audit
+
+
+def reconcile(notices, statement, allocations=None):
     advice, repeated_advice = read_feed(notices, NOTICE, ("merchant", "line_id"))
     movements, repeated_bank = read_feed(statement, BANK, ("account", "entry_id"))
-    return reconcile_rows(advice, movements, repeated_advice, repeated_bank)
+    if allocations is None:
+        return reconcile_rows(advice, movements, repeated_advice, repeated_bank)
+    portions, repeated = read_feed(allocations, ALLOCATION, ("account", "entry_id", "payout_id"))
+    booked, audit = apply_allocations(movements, portions)
+    report = reconcile_rows(advice, booked, repeated_advice, repeated_bank)
+    report["documented_allocations"] = audit
+    report["duplicates_ignored"]["allocations"] = repeated
+    return report
 
 
 def reconcile_rows(advice, movements, repeated_advice, repeated_bank):
@@ -106,10 +144,11 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("notices", type=Path)
     parser.add_argument("statement", type=Path)
+    parser.add_argument("--allocations", type=Path, help="documented portions of bank entries by payout batch")
     parser.add_argument("--strict", action="store_true", help="exit 3 when a batch or bank entry needs review")
     args = parser.parse_args(argv)
     try:
-        report = reconcile(args.notices, args.statement)
+        report = reconcile(args.notices, args.statement, args.allocations)
     except (OSError, ValueError, csv.Error) as error:
         print(error, file=sys.stderr)
         return 2

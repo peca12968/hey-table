@@ -95,6 +95,24 @@ python bank_close.py examples/payout-notices.csv examples/bank-entries.csv
 
 [撥款通知樣本](examples/payout-notices.csv) · [銀行流水樣本](examples/bank-entries.csv) · [入帳核對實作](bank_close.py) · [批次與沖回測試](test_bank_close.py)
 
+### 一筆銀行匯款包含多個撥款批次
+
+店家連續兩天收到 500 元及 155 元，銀行流水都沒有批號。店家應收的 B01 批次為 450 元（LINE Pay、全支付），B02 批次為 205 元（街口支付）。雖然帳戶合計都是 655 元，仍須取得兩張匯款明細才能確認每批各收多少。取得明細後，可以下列指令核對。
+
+```sh
+python bank_close.py examples/payout-notices.csv examples/combined-bank.csv --allocations examples/combined-allocations.csv --strict
+```
+
+| 銀行流水 | 銀行實收 | 水單列入 B01 | 水單列入 B02 |
+| --- | ---: | ---: | ---: |
+| D11 | 500 元 | 320 元 | 180 元 |
+| D12 | 155 元 | 130 元 | 25 元 |
+| 合計 | 655 元 | 450 元 | 205 元 |
+
+在拆分檔逐列填寫收款帳戶、銀行流水號、撥款批號、入帳日期、該批分得的金額（`amount_twd`）、銀行原始金額（`statement_amount_twd`）及文件編號（`evidence_ref`）。同一筆匯款含扣回款時，扣回的部分填負數。每筆流水的拆分加總必須等於銀行原額；缺少其中一批的資料時，可保留整筆待查。某批有水單但尚缺撥款通知時，報表會列為 `bank_only`。
+
+`documented_allocations` 可按流水查看銀行原列及水單明細，批次報表也能按流水號與文件編號查回原始匯款。同一帳戶、流水及批號只填一列；完全相同的重複列只計一次。日期、原額、既有批號或重複列的內容有衝突時，整份核對中止。[合併匯款範例](examples/combined-bank.csv) · [水單拆分範例](examples/combined-allocations.csv) · [正負金額與核帳測試](test_bank_allocations.py)
+
 ### 查到水單後補登批號
 
 銀行流水 D03、D04 都是同日入帳 70 元，單靠金額與日期，兩筆都可能屬於 C 或 D。店員查到兩張水單後，可將 D03 對應到 C、D04 對應到 D，填入查證依據編號。同一份確認單也能登記另一個收款帳戶的負數扣款。以下使用 Remit Match 的八筆合成流水與本專案的三筆示範確認。
