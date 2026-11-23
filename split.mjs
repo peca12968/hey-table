@@ -62,19 +62,25 @@ function assign(graph, sink, units) {
 }
 
 export function splitReceipt(receipt, shares) {
-  const total = integer(receipt.total, 0, "receipt total");
-  if (!Array.isArray(receipt.items) || !receipt.items.length || !shares || typeof shares !== "object")
-    throw new TypeError("Expected receipt items and share weights");
+  if (!Array.isArray(receipt.items) || !receipt.items.length) throw new TypeError("Expected receipt items");
+  const rows = receipt.items.map(({id, price, qty}) => ({
+    id, amount: integer(price, 0, "price") * integer(qty, 1, "quantity")
+  }));
+  return splitAmounts(receipt.total, rows, shares);
+}
+
+function splitAmounts(receiptTotal, rows, shares) {
+  const total = integer(receiptTotal, 0, "receipt total");
+  if (!shares || typeof shares !== "object" || Array.isArray(shares)) throw new TypeError("Expected share weights");
   const dishes = new Map(), names = new Set();
   let scale = 1n, sum = 0n;
-  for (const {id, price, qty} of receipt.items) {
+  for (const {id, amount} of rows) {
     if (typeof id !== "string" || !id.trim() || dishes.has(id) || !Object.hasOwn(shares, id))
       throw new TypeError("Missing or repeated dish " + id);
     if (!shares[id] || typeof shares[id] !== "object" || Array.isArray(shares[id]))
       throw new TypeError("Invalid weights for " + id);
     const people = Object.keys(shares[id]).sort(textOrder);
     if (!people.length) throw new TypeError("Missing diner for " + id);
-    const amount = integer(price, 0, "price") * integer(qty, 1, "quantity");
     let denominator = 0n;
     for (const person of people) {
       if (!person.trim()) throw new TypeError("Empty diner name");
@@ -133,5 +139,48 @@ export function splitReceipt(receipt, shares) {
     totals[person] = {exact:scale === divisor ? String(exact / divisor) :
       String(exact / divisor) + "/" + String(scale / divisor), pay};
   }
-  return {total:receipt.total, lines, diners:totals};
+  return {total:receiptTotal, lines, diners:totals};
+}
+
+// Validate the amounts on a Combo Counter quote before assigning a diner's share.
+export function splitQuote(quote, shares) {
+  if (quote.currency !== "TWD" || !Array.isArray(quote.lines) || !Array.isArray(quote.bundles))
+    throw new TypeError("Expected a TWD Combo Counter quote");
+  const lines = new Map(), rows = [];
+  let gross = 0n, savings = 0n;
+  for (const line of quote.lines) {
+    if (typeof line.id !== "string" || !line.id.trim() || lines.has(line.id))
+      throw new TypeError("Missing or repeated quote dish");
+    const price = integer(line.price, 0, "price"), qty = integer(line.qty, 1, "quantity");
+    const subtotal = integer(line.subtotal, 0, "line subtotal"), discount = integer(line.discount, 0, "line discount");
+    const net = integer(line.total, 0, "line total"), paired = integer(line.paired, 0, "paired quantity");
+    if (subtotal !== price * qty || subtotal - discount !== net || paired > qty)
+      throw new TypeError("Inconsistent price or quantity for " + line.id);
+    lines.set(line.id, {price, paired, discount, used: 0n, applied: 0n});
+    rows.push({id:line.id, amount:net});
+    gross += subtotal;
+    savings += discount;
+  }
+  const ids = new Set(), mains = new Set(), sides = new Set();
+  for (const bundle of quote.bundles) {
+    const main = lines.get(bundle.main), side = lines.get(bundle.side);
+    if (typeof bundle.id !== "string" || !bundle.id.trim() || ids.has(bundle.id) || !main || !side)
+      throw new TypeError("Invalid bundle ID or dish");
+    ids.add(bundle.id); mains.add(bundle.main); sides.add(bundle.side);
+    const qty = integer(bundle.qty, 1, "bundle quantity");
+    const retail = main.price + side.price, price = integer(bundle.unitPrice, 0, "bundle price");
+    const saving = integer(bundle.unitSavings, 1, "unit savings");
+    const m = integer(bundle.mainUnitDiscount, 0, "main discount"), s = integer(bundle.sideUnitDiscount, 0, "side discount");
+    if (retail - price !== saving || m + s !== saving || m !== (2n * saving * main.price + retail) / (2n * retail))
+      throw new TypeError("Inconsistent unit discount for " + bundle.id);
+    main.used += qty; side.used += qty;
+    main.applied += qty * m; side.applied += qty * s;
+  }
+  for (const [id, line] of lines) {
+    if ((mains.has(id) && sides.has(id)) || line.paired !== line.used || line.discount !== line.applied)
+      throw new TypeError("Bundle quantities or discounts disagree for " + id);
+  }
+  if (integer(quote.subtotal, 0, "quote subtotal") !== gross || integer(quote.discount, 0, "quote discount") !== savings)
+    throw new TypeError("Quote header and lines disagree");
+  return splitAmounts(quote.total, rows, shares);
 }

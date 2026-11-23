@@ -20,6 +20,27 @@ python -m unittest -v
 
 收據使用禾日食堂顧客查單 API 的資料格式。程式只讀取 `items` 中的品項代碼、單價、數量，以及整單的 `total`。在分攤檔替每道菜列出一起吃的人及正整數權重。例如兩人按 2 比 1 分食煎餃，將該道菜的設定改成 `{"小安":2,"小岑":1}`。金額均使用同一幣別的整數最小單位。重複品項、重複 JSON 欄位、餐點未指定對象，或收據合計不符時會回報錯誤。
 
+## 同道餐點只有一份享有折扣
+
+小安點一碗親子丼，小岑點一杯煎茶，兩人平分兩份煎餃。餐點原價 385 元，其中一份煎餃與親子丼搭成優惠套餐，省下 40 元。Combo Counter 將 27 元折扣分給丼飯、13 元分給煎餃。兩份煎餃的小計為 157 元，分帳時直接按這個總額分攤，因此可以保留半元尾數直到整單結算。
+
+| 餐點 | 原價小計 | 折扣 | 折後小計 | 小安 | 小岑 |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| 親子丼（一碗） | 170 | 27 | 143 | 143 | — |
+| 煎餃（兩份） | 170 | 13 | 157 | 79 | 78 |
+| 煎茶（一杯） | 45 | 0 | 45 | — | 45 |
+| **合計** | **385** | **40** | **345** | **222** | **123** |
+
+```sh
+python split.py --combo examples/combo-quote.json examples/combo-shares.json
+```
+
+JavaScript 使用 `splitQuote(quote, shares)`，Python 使用 `split_quote(quote, shares)`。傳入完整的 Combo Counter 報價及每道菜的分攤權重。這個模式採用「同一菜色共同分攤折後小計」的約定。例如上述兩人均分煎餃折扣，個人理想總額分別是 221.5 和 123.5 元。
+
+程式逐項核對原價乘份數、套餐套數、組價、逐菜折扣與應付合計，再將驗證後的各行淨額交給分帳演算法。若某筆折扣從煎餃移到丼飯，即使整單仍為 345 元，分帳也會提示折扣歸屬不符。一般點餐收據繼續使用 `splitReceipt` 或原本的命令列指令。
+
+跨專案測試讓 Combo Counter 產生 256 組合成報價，另加一組全額折抵案例。每組都用窮舉解檢查逐菜和個人分攤，並逐格比對 Python 和 JavaScript。整合演練從本機禾日食堂 A03 桌的收據取得菜色及數量，套用合成優惠後再分帳。[套餐計價來源](https://github.com/peca12968/combo-counter) · [折後分帳測試](test_combo.py)
+
 ## 如何決定尾數歸誰
 
 1. 用精確分數算出每人每道菜的理想金額，先給每格無條件捨去的整數。需要補上的每一元，只能分給有吃該菜且有小數尾數的人。
@@ -49,9 +70,11 @@ JavaScript 的價格、數量、權重及收據總額接受安全整數。中間
 
 ```sh
 git clone https://github.com/peca12968/hey-table.git ../hey-table
-git -C ../hey-table checkout 4c1eaeeaf42734bcce787784feddc874fb3bbcf3
+git -C ../hey-table checkout 280603cddd54b7400c07374d45c8723c9bd0a915
 npm ci --prefix ../hey-table --include=optional
-node table-demo.mjs ../hey-table
+git clone https://github.com/peca12968/combo-counter.git ../combo-counter
+git -C ../combo-counter checkout 25fbf7ae239c8ca8c465588b0fe8ab1756a04ff9
+node table-demo.mjs ../hey-table ../combo-counter
 ```
 
 本專案以 AI 輔助開發，示範中的人物與訂單皆為合成資料。[跨專案演練](table-demo.mjs)

@@ -16,13 +16,21 @@ jobs:
       - uses: actions/checkout@v7
         with:
           repository: peca12968/hey-table
-          ref: 4c1eaeeaf42734bcce787784feddc874fb3bbcf3
+          ref: 280603cddd54b7400c07374d45c8723c9bd0a915
           path: hey-table
       - uses: actions/setup-node@v6
         with:
           node-version: '24'
           cache: npm
           cache-dependency-path: hey-table/package-lock.json
+      - uses: actions/checkout@v7
+        with:
+          repository: peca12968/combo-counter
+          ref: 25fbf7ae239c8ca8c465588b0fe8ab1756a04ff9
+          path: combo-counter
+          persist-credentials: false
       - run: python -m unittest -v
+        env:
+          COMBO_PROJECT: combo-counter
       - run: npm ci --prefix hey-table --include=optional
-      - run: node table-demo.mjs hey-table
+      - run: node table-demo.mjs hey-table combo-counter
