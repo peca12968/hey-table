@@ -89,20 +89,24 @@ def photograph(source, profile):
 
 def decode(scene, expected):
     reads = zxingcpp.read_barcodes(scene, formats=zxingcpp.BarcodeFormat.QRCode)
-    codes = sorted(r.bytes for r in reads if r.valid)
+    return compare_codes([r.bytes for r in reads if r.valid], expected)
+
+
+def display_code(code):
+    try:
+        return code.decode("utf8")
+    except UnicodeDecodeError:
+        return {"hex": code.hex()}
+
+
+def compare_codes(codes, expected):
     if not codes:
         status = "unreadable"
     elif len(codes) > 1:
         status = "ambiguous"
     else:
         status = "matched" if codes[0] == expected.encode("utf-8") else "wrong_target"
-    observed = []
-    for code in codes:
-        try:
-            observed.append(code.decode("utf8"))
-        except UnicodeDecodeError:
-            observed.append({"hex": code.hex()})
-    return status, observed
+    return status, [display_code(code) for code in sorted(codes)]
 
 
 def audit(path, failure_dir=None):

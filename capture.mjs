@@ -1,7 +1,7 @@
 // Render the pinned restaurant's /tables page and QR endpoint entirely on this machine.
 import assert from "node:assert/strict";
 import {createRequire} from "node:module";
-import {mkdir,readFile,readdir,writeFile} from "node:fs/promises";
+import {copyFile,mkdir,readFile,readdir,writeFile} from "node:fs/promises";
 import {join,resolve} from "node:path";
 
 if (process.argv.length !== 4) throw Error("Usage: node capture.mjs PATH_TO_BUILT_HEY_TABLE NEW_OUTPUT_DIR");
@@ -43,8 +43,12 @@ try {
     images.push(await qr.screenshot());
   }
   await mkdir(out);
+  await page.evaluate(() => document.fonts.ready);
+  await page.pdf({path:join(out,"tables.pdf"),format:"A4",printBackground:true,
+    margin:{top:"12mm",right:"12mm",bottom:"12mm",left:"12mm"}});
   for(const [i,entry] of manifest.cards.entries()) await writeFile(join(out,entry.image),images[i]);
   await writeFile(join(out,"manifest.json"),JSON.stringify(manifest,null,2)+"\n");
+  await copyFile(new URL("./examples/sheet-layout.json",import.meta.url),join(out,"sheet-layout.json"));
   console.log("Captured "+images.length+" printed QR regions from the local restaurant Worker.");
 } finally {
   await browser?.close();
