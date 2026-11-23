@@ -13,7 +13,16 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python }}
+      - uses: actions/checkout@v4
+        with:
+          repository: peca12968/hey-table
+          ref: d905ccfe1b8237f57e3e5092356c1929fc08587c
+          path: hey-table
+          sparse-checkout: drizzle
+          persist-credentials: false
       - run: python -m unittest -v
+        env:
+          HEY_TABLE_MIGRATIONS: hey-table/drizzle
       - run: python ledger.py examples/orders.csv examples/postings.csv
       - name: Explain the USD difference between the sample snapshots
         run: |
