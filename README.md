@@ -73,6 +73,28 @@ python restaurant_close.py wallet-day/restaurant.db --day 2026-11-23 --environme
 
 若來源明細加總超過交易金額，或同一金流交易在分頁間出現不同拆分，啟用明細的日結會以結束碼 2 中止。報表只取上述金額，不輸出錢包帳號或遮罩卡號。這份演練使用合成交易。[TapPay 交易紀錄欄位](https://docs.tappaysdk.com/px-pay-plus/zh/reference.html#trade_records) · [跨商店明細與退款測試](test_wallet_funding.py)
 
+## 從金流撥款通知核對銀行入帳
+
+金流日結能查到餐單付了多少。若要知道扣除退款及手續費後，哪一批錢真的匯進銀行，請準備同一對帳範圍的撥款通知與銀行已入帳明細，各自轉為範例 CSV。這兩份檔採本專案定義的格式，金額以整數新台幣元表示。
+
+```sh
+python bank_close.py examples/payout-notices.csv examples/bank-entries.csv
+```
+
+| 範例批次 | 撥款通知 | 銀行已入帳 | 差額 |
+| --- | --- | --- | --- |
+| B01 | LINE Pay 和全支付共收 500 元，扣 40 元退款及 10 元手續費，應撥 450 元 | 分兩天匯入 250 和 190 元 | 少 10 元 |
+| B02 | 街口支付收 210 元，扣 5 元手續費，應撥 205 元 | 先入帳 220 元，次日扣回 5 元 | 多 10 元 |
+| 合計 | 655 元 | 655 元 | 0 元，兩批仍須追查 |
+
+兩份來源都要填入約定的收款帳戶代號 `account` 與撥款批號 `payout_id`。同一帳戶可以接收多個商店編號的撥款，同一批也可分多日入帳。銀行未提供批號時留空，該筆會列入 `unassigned_bank_entries`，保留日期、金額與銀行流水號，等店員查證。日期範圍由輸入檔決定，跨期分次入帳可合併在同一份 CSV。
+
+- 撥款通知的 `amount_twd` 填正數。`collection` 和 `fee_return` 加入應撥金額，`refund` 和 `fee` 扣除。每列保留原商店、支付工具與明細編號。
+- 銀行端收入為正，扣款為負。銀行同帳戶流水號或金流同商店明細編號整列重複時只算一次，內容矛盾時整份報表中止。
+- 每批顯示應撥、實收、差額及原始明細。應撥淨額為零的批次可無銀行流水。僅有銀行流水、缺少應有的匯款、金額有差額或批號待查時，加上 `--strict` 會回傳 3。輸入錯誤回傳 2。
+
+[撥款通知樣本](examples/payout-notices.csv) · [銀行流水樣本](examples/bank-entries.csv) · [入帳核對實作](bank_close.py) · [批次與沖回測試](test_bank_close.py)
+
 ## 跑一次電商月結
 
 需要 Python 3.11 或更新版本。資料夾內附虛構的訂單與入帳明細。

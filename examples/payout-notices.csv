@@ -1,0 +1,8 @@
+account,payout_id,merchant,line_id,method,kind,amount_twd
+store-bank,B01,lunch,LP001,line_pay,collection,300
+store-bank,B01,lunch,LP002,line_pay,refund,40
+store-bank,B01,lunch,LP003,line_pay,fee,6
+store-bank,B01,dinner,PX001,px_pay_plus,collection,200
+store-bank,B01,dinner,PX002,px_pay_plus,fee,4
+store-bank,B02,lunch,JK001,jko_pay,collection,210
+store-bank,B02,lunch,JK002,jko_pay,fee,5

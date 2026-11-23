@@ -1,0 +1,5 @@
+account,entry_id,payout_id,posted_on,amount_twd
+store-bank,D01,B01,2026-11-23,250
+store-bank,D02,B01,2026-11-24,190
+store-bank,D03,B02,2026-11-24,220
+store-bank,D04,B02,2026-11-25,-5
