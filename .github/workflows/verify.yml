@@ -1,0 +1,38 @@
+name: Verify printed table destinations
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  scan:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - run: python -m pip install -r requirements.txt
+      - run: python -m unittest -v
+      - uses: actions/checkout@v7
+        with:
+          repository: peca12968/hey-table
+          ref: e0596f05039ff0520bfb1207c20fee05c1e7894b
+          path: hey-table
+          persist-credentials: false
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+      - run: npm ci --include=optional
+        working-directory: hey-table
+      - run: npm run build
+        working-directory: hey-table
+      - run: npm ci
+        working-directory: hey-table/qa
+      - run: npx playwright install --with-deps chromium
+        working-directory: hey-table/qa
+      - run: node capture.mjs hey-table printed
+      - run: python -m unittest -v
+        env:
+          TABLE_QR_MANIFEST: printed/manifest.json
