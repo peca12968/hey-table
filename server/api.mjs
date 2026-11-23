@@ -85,11 +85,18 @@ export async function api(request, env) {
     }));
     return json({capturedAt: Date.now(), orders});
   }
-  if (path === "/api/kitchen" && method === "GET") {
+  if ((path === "/api/kitchen" || path === "/api/kitchen/stations") && method === "GET") {
     const {results} = await db.prepare(`SELECT * FROM orders WHERE status NOT IN ('completed','cancelled')
         OR id IN (SELECT id FROM orders WHERE status IN ('completed','cancelled') ORDER BY id DESC LIMIT 20)
         ORDER BY id DESC`).all();
-    return json(results.map(receipt));
+    const orders = results.map(receipt);
+    if (path === "/api/kitchen/stations") {
+      return json({format:"hey-table.station-orders.v1",capturedAt:Date.now(),throughId:orders[0]?.id ?? 0,
+        orders:orders.map(({id,created,mode,table,note,status,items}) => ({
+          id,created,mode,table,note,status,items:items.map(({id,name,qty}) => ({id,name,qty}))
+        }))});
+    }
+    return json(orders);
   }
   if (path === "/api/kitchen/status" && method === "PATCH") {
     if (!Number.isSafeInteger(input.id) || !Object.hasOwn(transitions,input.from) ||

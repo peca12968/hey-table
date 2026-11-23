@@ -261,3 +261,62 @@ test("mobile diners split a receipt locally, restore edits and switch between re
   await expect(toggle).toHaveCount(0);
   expect(writes).toEqual([]);
 });
+
+test("staff downloads a fresh station export that remains safe to re-import out of order",async({page,request})=>{
+  const headers={Authorization:"Bearer local-test-kitchen"};
+  const move=async(id,from,to)=>{
+    expect((await request.patch("/api/kitchen/status",{headers,data:{id,from,to}})).ok()).toBe(true);
+  };
+  async function accepted(note){
+    const response=await request.post("/api/orders",{data:{token:randomUUID(),mode:"table",table:"A03",
+      items:[{id:"oyakodon",qty:1},{id:"sencha",qty:2}],note}});
+    expect(response.ok()).toBe(true);
+    const {id}=await response.json();
+    await move(id,"pending","preparing");
+    return id;
+  }
+  expect((await request.get("/api/kitchen/stations")).status()).toBe(403);
+  await page.goto("/kitchen");
+  const button=page.getByRole("button",{name:"下載分站出單檔"});
+  await expect(page.getByRole("heading",{name:"店員登入"})).toBeVisible();
+  await expect(button).toHaveCount(0);
+  await page.evaluate(()=>sessionStorage.setItem("he-ri-staff","local-test-kitchen"));
+  await page.reload();
+  await page.getByRole("button",{name:"待接單",exact:true}).click();
+  async function download(){
+    const event=page.waitForEvent("download");
+    await button.click();
+    const file=await event;
+    expect(file.suggestedFilename()).toMatch(/^hey-table-stations-.*\.json$/);
+    const path=await file.path();
+    return {path,data:JSON.parse(await readFile(path,"utf8"))};
+  }
+  const first=await accepted("兩杯分裝");
+  const old=await download();
+  expect(old.data.format).toBe("hey-table.station-orders.v1");
+  expect(old.data.throughId).toBe(first);
+  const ticket=old.data.orders.find(order=>order.id===first);
+  expect(ticket).toMatchObject({mode:"table",table:"A03",status:"preparing",note:"兩杯分裝"});
+  expect(ticket.items).toEqual([{id:"oyakodon",name:"雞肉親子丼",qty:1},{id:"sencha",name:"日式熱煎茶",qty:2}]);
+  for(const order of old.data.orders){
+    expect(Object.keys(order).sort()).toEqual(["created","id","items","mode","note","status","table"]);
+    for(const line of order.items)expect(Object.keys(line).sort()).toEqual(["id","name","qty"]);
+  }
+  await move(first,"preparing","ready");
+  const second=await accepted("第二張");
+  const recent=await download();
+  expect(recent.data.throughId).toBe(second);
+  expect(recent.data.orders.find(order=>order.id===first).status).toBe("ready");
+  if(process.env.RAIL_PROJECT){
+    const root=process.env.RAIL_PROJECT;
+    const db=test.info().outputPath("station-rail.db");
+    const run=(...args)=>JSON.parse(execFileSync("python",[join(root,"rail.py"),"--db",db,...args],
+      {encoding:"utf8",env:{...process.env,PYTHONUTF8:"1"}}));
+    const sync=path=>run("sync",path,join(root,"examples","routes.json"));
+    sync(old.path);sync(recent.path);
+    expect(sync(old.path)).toEqual({added:0,skipped:0});
+    const jobs=run("status");
+    expect(jobs.filter(j=>j.order_id===first).map(j=>j.state)).toEqual(["skipped","skipped"]);
+    expect(jobs.filter(j=>j.order_id===second).map(j=>[j.station,j.state])).toEqual([["bar","queued"],["hot","queued"]]);
+  }
+});

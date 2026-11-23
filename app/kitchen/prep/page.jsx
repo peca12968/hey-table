@@ -2,6 +2,7 @@
 import {useEffect,useState} from "react";
 import {Header,Footer,request} from "../../shared";
 import {dishes} from "../../../lib/menu.mjs";
+import {downloadJson} from "../../../lib/download-json.mjs";
 import "./prep.css";
 
 const names = new Map(dishes.map(dish => [dish.id, dish.name]));
@@ -19,16 +20,6 @@ function totals(orders) {
     }
   }
   return Array.from(counts);
-}
-
-function download(snapshot) {
-  const blob = new Blob([JSON.stringify(snapshot.orders,null,2)], {type:"application/json"});
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement("a");
-  link.href = url;
-  link.download = "hey-table-prep-" + new Date(snapshot.capturedAt).toISOString().replace(/:/g,"-") + ".json";
-  link.click();
-  setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
 export default function Prep() {
@@ -66,7 +57,7 @@ export default function Prep() {
       <button className="outline" disabled={!snapshot && !error} onClick={refresh}>重新擷取</button>
       {snapshot && <>
         <button className="outline" onClick={() => window.print()}>列印備料單</button>
-        <button className="primary" onClick={() => download(snapshot)}>下載訂單 JSON</button>
+        <button className="primary" onClick={() => downloadJson("hey-table-prep-",snapshot.capturedAt,snapshot.orders)}>下載訂單 JSON</button>
       </>}
     </div>
     <p className="prepControl"><a className="textLink" href="https://github.com/peca12968/prep-sheet">用 Prep Sheet 換算食材與批數</a></p>
