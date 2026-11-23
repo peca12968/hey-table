@@ -5,43 +5,17 @@ from contextlib import ExitStack, closing
 import json
 import os
 from pathlib import Path
-import re
 import sqlite3
 import sys
 from tempfile import TemporaryDirectory
 
 from fastapi.testclient import TestClient
-from model import Model, generate
+from model import Model, generate, validate
 
 
 SOURCE = Path(os.environ.get("STOCKROOM_SOURCE", Path(__file__).resolve().parent.parent / "stockroom-reservations"))
 sys.path.insert(0, str(SOURCE.resolve()))
 from stockroom.api import create_app
-
-
-FIELDS = {"advance": ("seconds",), "restart": (), "cancel": ("key",), "reserve": ("key", "qty"),
-          "ship": ("key", "qty", "receipt"), "release": ("key", "qty", "receipt"),
-          "renew": ("key", "receipt", "expected", "seconds")}
-
-
-def validate(actions):
-    if not isinstance(actions, list):
-        raise ValueError("expected an array of actions")
-    for i, action in enumerate(actions, 1):
-        if not isinstance(action, dict) or not isinstance(action.get("op"), str) or action["op"] not in FIELDS:
-            raise ValueError(f"step {i}: unknown operation")
-        fields = FIELDS[action["op"]]
-        if set(action) != {"op", *fields}:
-            raise ValueError(f"step {i}: expected fields {fields}")
-        for name in fields:
-            value = action[name]
-            if name in ("key", "receipt"):
-                valid = isinstance(value, str) and re.fullmatch(r"[a-zA-Z0-9_-]{1,80}", value)
-            else:
-                low, high = {"seconds": (1, 86400), "qty": (1, 1_000_000), "expected": (0, 2**63-1)}[name]
-                valid = type(value) is int and low <= value <= high
-            if not valid:
-                raise ValueError(f"step {i}: invalid {name}")
 
 
 def request(client, action):

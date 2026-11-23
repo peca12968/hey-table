@@ -1,6 +1,7 @@
 """Inventory oracle. Each reserved unit has its own disposition."""
 from dataclasses import dataclass, field
 import random
+import re
 
 
 @dataclass
@@ -118,3 +119,28 @@ def generate(seed, steps):
         model.apply(action)
         actions.append(action)
     return actions
+
+
+FIELDS = {"advance": ("seconds",), "restart": (), "cancel": ("key",), "reserve": ("key", "qty"),
+          "ship": ("key", "qty", "receipt"), "release": ("key", "qty", "receipt"),
+          "renew": ("key", "receipt", "expected", "seconds")}
+
+
+def validate(actions):
+    if not isinstance(actions, list):
+        raise ValueError("expected an array of actions")
+    for i, action in enumerate(actions, 1):
+        if not isinstance(action, dict) or not isinstance(action.get("op"), str) or action["op"] not in FIELDS:
+            raise ValueError(f"step {i}: unknown operation")
+        fields = FIELDS[action["op"]]
+        if set(action) != {"op", *fields}:
+            raise ValueError(f"step {i}: expected fields {fields}")
+        for name in fields:
+            value = action[name]
+            if name in ("key", "receipt"):
+                valid = isinstance(value, str) and re.fullmatch(r"[a-zA-Z0-9_-]{1,80}", value)
+            else:
+                low, high = {"seconds": (1, 86400), "qty": (1, 1_000_000), "expected": (0, 2**63-1)}[name]
+                valid = type(value) is int and low <= value <= high
+            if not valid:
+                raise ValueError(f"step {i}: invalid {name}")

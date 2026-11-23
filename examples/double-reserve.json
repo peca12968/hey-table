@@ -1,0 +1,9 @@
+{
+  "scenario": "synthetic-double-success",
+  "calls": [
+    {"start": 1, "end": 4, "action": {"op": "reserve", "key": "lunch", "qty": 13}, "status": 201,
+     "body": {"id": "lunch", "sku": "KIT-01", "quantity": 13, "state": "held", "expires_at_ms": 105000}},
+    {"start": 2, "end": 3, "action": {"op": "reserve", "key": "dinner", "qty": 13}, "status": 201,
+     "body": {"id": "dinner", "sku": "KIT-01", "quantity": 13, "state": "held", "expires_at_ms": 105000}}
+  ]
+}

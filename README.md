@@ -37,3 +37,25 @@ python check.py --trace failure.json
 | 時間前進 5 秒，正好到期 | 5 件釋放，可用量回到 17。示範故障只回報 12 |
 
 測試另逐一刪除三步中的任一步，檢查該差異是否消失。縮減保證的是單步刪除後無法保留相同失敗特徵，其他不同的操作序列仍可能觸發類似結果。[可重播的原始案例](examples/partial-expiry.json) · [重播與縮減測試](test_check.py) · [Delta Debugging 原始論文](https://www.st.cs.uni-saarland.de/publications/files/zeller-tse-2002.pdf)
+
+## 兩個服務同時接單
+
+庫存只有 20 件，午餐與晚餐各保留 13 件。顧客發出請求的順序和收到回應的順序可能不同。以下指令對共用暫存資料庫的兩個服務實例送出並行請求，記錄起訖順序、HTTP 狀態與內容，並在操作後查詢兩張保留單及剩餘庫存。
+
+```sh
+python history.py capture last-units --output history.json
+python history.py verify history.json
+python history.py verify examples/double-reserve.json
+```
+
+第一個情境中只有一筆保留能成功，可用量剩 7 件。第一、二個指令會根據同一份觀測找出相同的合法處理順序。第三個指令讀取刻意編寫的反例，兩筆都回報成功。若午餐已取走 13 件，晚餐應回 409，紀錄卻是 201，反過來排同樣矛盾。報表的 `blocked_next` 列出在其中一條最長可解釋前綴之後，下一筆應有及實際的回應。
+
+另外可用 `capture packing` 讓分箱出貨、重送同一箱單、部分取消與查詢彼此競爭，也可用 `capture renew` 對同一舊期限送出兩種續期單號。每筆請求的開始和結束都取得唯一事件序號。若甲已回應才送出乙，搜尋必須將甲排在乙之前。時間重疊的請求則嘗試不同次序，由獨立模型核對每次回應與讀取結果。成功回應逐欄核對，業務錯誤核對 HTTP 狀態。[線性一致性的原始定義](https://www.cs.cmu.edu/~wing/publications/HerlihyWing90.pdf)
+
+| 結果 | 如何讀取 |
+| --- | --- |
+| `linearizable`，結束碼 0 | `order` 列出一個可以解釋所有觀測的順序，以各請求的開始事件序號表示。 |
+| `impossible`，結束碼 1 | 所有符合先後關係的候選順序都已排除。 |
+| `inconclusive`，結束碼 3 | 搜尋達到步數上限，尚有候選順序待查，可提高 `--limit` 後重讀同一檔案。 |
+
+離線驗證只需 Python 3.11 以上的標準函式庫。紀錄從全新的 20 件庫存開始，服務時鐘固定，只包含已回應的操作。結果適用於該份紀錄。測試實際擷取三種競爭情境各五次，另用枚舉全部排列的對照程式，查核 160 份四筆請求的合成紀錄。[驗證程式](history.py) · [並行與時序測試](test_history.py)
