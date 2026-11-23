@@ -32,6 +32,8 @@ def open_rail(path):
     db.row_factory = sqlite3.Row
     db.executescript("""
         CREATE TABLE IF NOT EXISTS kitchen(namespace TEXT PRIMARY KEY);
+        CREATE TABLE IF NOT EXISTS coverage(id INTEGER PRIMARY KEY CHECK(id=1), through_id INTEGER NOT NULL);
+        INSERT OR IGNORE INTO coverage VALUES(1,0);
         CREATE TABLE IF NOT EXISTS orders(
           id INTEGER PRIMARY KEY, fingerprint TEXT NOT NULL, status TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS jobs(
@@ -76,7 +78,12 @@ def retire(db, oid):
     return db.execute("UPDATE jobs SET state='skipped' WHERE order_id=? AND state='queued'", (oid,)).rowcount
 
 
-def sync(db, orders, routes, previously_active=()):
+def sync(db, orders, routes, complete=False):
+    declared = None
+    if isinstance(orders, dict):
+        if orders.get("format") != "hey-table.station-orders.v1" or type(orders.get("throughId")) is not int:
+            raise ValueError("Invalid station export format or order boundary")
+        declared, orders, complete = orders["throughId"], orders["orders"], True
     if not isinstance(orders, list) or not isinstance(routes, dict):
         raise ValueError("Expected a kitchen snapshot array and a dish-to-station map")
     if any(not isinstance(v, str) or not STATION.fullmatch(v) for v in routes.values()):
@@ -85,11 +92,18 @@ def sync(db, orders, routes, previously_active=()):
     with db:
         db.execute("BEGIN IMMEDIATE")
         namespace = db.execute("SELECT namespace FROM kitchen").fetchone()[0]
+        previous_limit = db.execute("SELECT through_id FROM coverage WHERE id=1").fetchone()[0]
+        seen = set()
         for order in orders:
             ticket = validate_order(order)
             oid, status = ticket["id"], order["status"]
+            if oid in seen:
+                raise ValueError(f"Repeated order {oid} in snapshot")
+            seen.add(oid)
             fingerprint = digest(encode(ticket))
             prior = db.execute("SELECT * FROM orders WHERE id=?", (oid,)).fetchone()
+            if prior is None and oid <= previous_limit:
+                continue  # Absent when an export already covered this order number.
             if prior:
                 if prior["fingerprint"] != fingerprint:
                     raise ValueError(f"Order {oid} was reused with different contents")
@@ -110,13 +124,15 @@ def sync(db, orders, routes, previously_active=()):
                     added += 1
             elif RANK[status] >= 2:
                 skipped += retire(db, oid)
-        # The full live API includes every active order but only the last 20 terminal ones.
-        # Only retire orders known before the fetch, never orders first seen by a later pull.
-        for oid in set(previously_active).difference(order["id"] for order in orders):
-            changed = db.execute("""UPDATE orders SET status='archived' WHERE id=?
-                                  AND status IN ('pending','preparing')""", (oid,)).rowcount
-            if changed:
+        if complete:
+            limit = max(seen, default=0)
+            if declared is not None and declared != limit:
+                raise ValueError("Export boundary differs from its highest order ID")
+            active = db.execute("SELECT id FROM orders WHERE id<=? AND status IN ('pending','preparing')", (limit,))
+            for oid in {row[0] for row in active}.difference(seen):
+                db.execute("UPDATE orders SET status='archived' WHERE id=?", (oid,))
                 skipped += retire(db, oid)
+            db.execute("UPDATE coverage SET through_id=max(through_id,?) WHERE id=1", (limit,))
     return {"added": added, "skipped": skipped}
 
 
@@ -222,13 +238,11 @@ def main():
     try:
         with closing(open_rail(args.db)) as db:
             if args.cmd in ("sync", "pull"):
-                known = []
                 if args.cmd == "pull":
-                    known = [row[0] for row in db.execute("SELECT id FROM orders WHERE status IN ('pending','preparing')")]
                     orders = pull(args.kitchen_url)
                 else:
                     orders = json.loads(args.snapshot.read_text("utf-8"))
-                result = sync(db, orders, json.loads(args.routes.read_text("utf-8")), known)
+                result = sync(db, orders, json.loads(args.routes.read_text("utf-8")), complete=args.cmd == "pull")
             elif args.cmd == "status":
                 result = listed(db)
             else:

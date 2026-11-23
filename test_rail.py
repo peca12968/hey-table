@@ -152,16 +152,28 @@ rail.transfer(rail.open_rail(sys.argv[1]), "hot", sys.argv[2])
         with closing(sqlite3.connect(self.inbox)) as db:
             self.assertEqual(db.execute("SELECT count(*) FROM slips").fetchone()[0], 16)
 
-    def test_only_a_full_live_read_retires_missing_known_orders(self):
+    def test_reordered_exports_and_partial_snapshots_preserve_order_boundary(self):
         sync(self.db,self.orders,ROUTES)
         sync(self.db,[],ROUTES)
         self.assertEqual([j["state"] for j in listed(self.db)], ["queued","queued"])
         newer = dict(self.orders[0],id=99,created=2000)
         sync(self.db,[newer],ROUTES)
-        self.assertEqual(sync(self.db,[],ROUTES,previously_active=[17,18])["skipped"], 2)
+        def export(rows):
+            return {"format":"hey-table.station-orders.v1","throughId":max((r["id"] for r in rows),default=0),
+                    "orders":rows}
+        later = export([dict(self.orders[1],id=22,status="completed")])
+        self.assertEqual(sync(self.db,later,ROUTES)["skipped"], 2)
         self.assertEqual(sync(self.db,self.orders,ROUTES)["added"], 0)
+        # A much older export includes an order never previously imported. The
+        # later complete snapshot proves it had already left the kitchen's active set.
+        old = export([dict(self.orders[0],id=3)])
+        self.assertEqual(sync(self.db,old,ROUTES)["added"], 0)
+        self.assertEqual(sync(self.db,export([]),ROUTES)["skipped"], 0)
         queued = [j["order_id"] for j in listed(self.db,state="queued")]
         self.assertEqual(queued, [99,99])
+        with self.assertRaisesRegex(ValueError,"boundary"):
+            sync(self.db,dict(export([dict(newer,id=100)]),throughId=101),ROUTES)
+        self.assertEqual([j["order_id"] for j in listed(self.db,state="queued")],queued)
 
 
 if __name__ == "__main__":
