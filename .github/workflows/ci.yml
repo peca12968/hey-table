@@ -1,0 +1,22 @@
+name: Evaluate Prometheus burn-rate alerts
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  rules:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            binary: .tools/promtool
+          - os: windows-latest
+            binary: .tools/promtool.exe
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - run: python install_promtool.py .tools
+      - run: ${{ matrix.binary }} check rules rules.yml
+      - run: python verify.py ${{ matrix.binary }}

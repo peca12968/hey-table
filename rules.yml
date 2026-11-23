@@ -1,0 +1,59 @@
+groups:
+  - name: service-slo
+    interval: 1m
+    rules:
+      - record: service:slo_error_ratio:rate5m
+        expr: |
+          (
+            sum by (service) (rate(http_requests_total{status=~"5[0-9][0-9]"}[5m]))
+            or
+            0 * sum by (service) (rate(http_requests_total[5m]))
+          )
+          / sum by (service) (rate(http_requests_total[5m]))
+      - record: service:slo_error_ratio:rate1h
+        expr: |
+          (
+            sum by (service) (rate(http_requests_total{status=~"5[0-9][0-9]"}[1h]))
+            or
+            0 * sum by (service) (rate(http_requests_total[1h]))
+          )
+          / sum by (service) (rate(http_requests_total[1h]))
+      - record: service:slo_error_ratio:rate30m
+        expr: |
+          (
+            sum by (service) (rate(http_requests_total{status=~"5[0-9][0-9]"}[30m]))
+            or
+            0 * sum by (service) (rate(http_requests_total[30m]))
+          )
+          / sum by (service) (rate(http_requests_total[30m]))
+      - record: service:slo_error_ratio:rate6h
+        expr: |
+          (
+            sum by (service) (rate(http_requests_total{status=~"5[0-9][0-9]"}[6h]))
+            or
+            0 * sum by (service) (rate(http_requests_total[6h]))
+          )
+          / sum by (service) (rate(http_requests_total[6h]))
+      - record: service:slo_burn_fast
+        expr: |
+          (service:slo_error_ratio:rate5m > 0.0144)
+          and (service:slo_error_ratio:rate1h > 0.0144)
+      - record: service:slo_burn_sustained
+        expr: |
+          (service:slo_error_ratio:rate30m > 0.006)
+          and (service:slo_error_ratio:rate6h > 0.006)
+      - alert: ServiceErrorBudgetBurn
+        expr: service:slo_burn_fast or service:slo_burn_sustained
+        labels:
+          severity: page
+        annotations:
+          summary: 'Error budget for {{ $labels.service }} is burning across a pair of windows'
+      - alert: RequestTelemetryMissing
+        expr: |
+          max by (service, instance) (slo_target_expected == 1)
+          unless on (service, instance)
+          count by (service, instance) (count_over_time(http_requests_total[5m]))
+        labels:
+          severity: warning
+        annotations:
+          summary: 'No request counter samples for {{ $labels.service }} on {{ $labels.instance }} in 5m'
