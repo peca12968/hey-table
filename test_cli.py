@@ -219,8 +219,9 @@ class ParcelWindowsTests(unittest.TestCase):
         self.assertEqual(result.stdout.strip(), "SUMMARY\taccepted=0\tduplicates=0\tlate=0\tconflicts=0")
 
     def test_slow_partition_can_contribute_until_global_closure(self):
-        lines = (ROOT / "examples/sources.tsv").read_bytes().splitlines(keepends=True)
-        result = self.run_cli(b"".join(lines).decode())
+        data = (ROOT / "examples/sources.tsv").read_text(encoding="utf-8")
+        lines = data.encode().splitlines(keepends=True)
+        result = self.run_cli(data)
         self.assertEqual(result.returncode, 0, result.stderr)
         expected = [
             "WINDOW\t2026-11-23T00:00:00Z\t2026-11-23T00:05:00Z\tSOUTH\t1",
@@ -228,6 +229,8 @@ class ParcelWindowsTests(unittest.TestCase):
             "WINDOW\t2026-11-23T00:10:00Z\t2026-11-23T00:15:00Z\tNORTH\t1",
             "SUMMARY\taccepted=2\tduplicates=0\tlate=1\tconflicts=0"]
         self.assertEqual(result.stdout.splitlines(), expected)
+        crlf = subprocess.check_output(self.cmd, input=data.replace("\n", "\r\n").encode(), timeout=15)
+        self.assertEqual(crlf.decode().splitlines(), expected)
         self.assertIn("accepted=1\tduplicates=0\tlate=1", self.run_cli(b"".join(lines[1:3]).decode()).stdout)
         # Restart after every record, including while one partition has never reported.
         self.assertEqual(self.run_parts(lines + [b""]).decode().splitlines(), expected)
