@@ -56,3 +56,24 @@ node kitchen-demo.mjs ../hey-table
 ```
 
 同一演練也會讀取備料頁所用的訂單匯出 API，在本機帳本實際入庫、煮飯、領料，核對三張收據與剩餘的 40 g 白飯。另一組測試讓八個獨立 SQLite 連線競領最後一份煎茶，只有一張單成功。程式另針對 120 組庫存與相依配方，枚舉可行的批數範圍，獨立核對每項原料及半成品的最少批數。這些數字來自示範配方與合成訂單。專案以 AI 輔助開發。[批數演算法](prep.py) · [領料競爭測試](test_ledger.py) · [跨專案演練](kitchen-demo.mjs)
+
+
+## 核對採購單與分批到貨
+
+例如午餐採購單列了兩包醬油，每包 25 ml。上午先到一包，驗收後帳上增加 25 ml，下午仍可查到另一包待收。初次開單時會在既有的庫存帳加上採購單明細，保留原有收據與餘額。
+
+```sh
+python receiving.py --db kitchen.db --recipes examples/recipes.json open LUNCH purchase-report.json
+python receiving.py --db kitchen.db --recipes examples/recipes.json accept LUNCH market AM morning.json
+python receiving.py --db kitchen.db status LUNCH
+```
+
+`purchase-report.json` 使用 Pantry Freight 的完整 JSON 採購結果。`morning.json` 填寫實際收到的供應商 SKU 與整包數，例如 `{"market-soy": 1}`。同張採購單、供應商及送貨單號可安全重送，內容相同時會取回原收據。若任一品項超收，整張送貨單都會回滾。狀態輸出的每一列包含供應商、包裝規格、已收與待收包數。帳本追蹤實物數量，售價、運費和付款另由採購系統管理。
+
+以下演練會建立暫存庫存帳，從五碗丼飯的原料缺口產生採購單，先收一包醬油，再收剩下六包，最後重新詢價。驗收完成後的追加採購金額為 0 元。
+
+```sh
+git clone https://github.com/peca12968/pantry-freight.git ../pantry-freight
+git -C ../pantry-freight checkout c8f00428928e410d3cb098fa0cfe8a8d36f67452
+python receiving_demo.py ../pantry-freight
+```

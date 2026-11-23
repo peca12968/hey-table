@@ -19,6 +19,12 @@ jobs:
           repository: peca12968/hey-table
           ref: e68aefb12e246058622861e04c7a1a0fa4495efc
           path: hey-table
+      - uses: actions/checkout@v7
+        with:
+          repository: peca12968/pantry-freight
+          ref: c8f00428928e410d3cb098fa0cfe8a8d36f67452
+          path: pantry-freight
+      - run: python receiving_demo.py pantry-freight
       - uses: actions/setup-node@v6
         with:
           node-version: '24'
