@@ -1,0 +1,22 @@
+name: Verify kitchen estimates
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  estimate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - run: node --test estimate.test.mjs
+      - uses: actions/checkout@v4
+        with:
+          repository: peca12968/hey-table
+          ref: d905ccfe1b8237f57e3e5092356c1929fc08587c
+          path: hey-table
+          persist-credentials: false
+      - run: npm ci --include=optional
+        working-directory: hey-table
+      - run: node worker-demo.mjs hey-table
