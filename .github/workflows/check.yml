@@ -1,0 +1,26 @@
+name: Verify batch timing and pickup estimates
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python: ['3.11', '3.13']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - run: python -m unittest -v
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - uses: actions/checkout@v4
+        with:
+          repository: peca12968/pickup-window
+          ref: 1e86c05effd8ebd102ea92629df68dda6ab1bb6d
+          path: pickup-window
+          persist-credentials: false
+      - run: python pickup_demo.py pickup-window
