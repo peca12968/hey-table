@@ -24,6 +24,7 @@ jobs:
           python demo.py --restock
           python demo.py --reduce
           python demo.py --packing
+          python demo.py --batch
       - name: Show container logs on failure
         if: failure()
         run: docker logs stockroom

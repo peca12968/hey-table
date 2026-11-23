@@ -92,6 +92,24 @@ def demonstrate_renewal():
     call(path, "DELETE")
 
 
+def demonstrate_batch():
+    van = uuid4().hex
+    north, south = van+"-north", van+"-south"
+    before = next(row for row in call("/inventory")[1] if row["sku"] == "KIT-01")
+    for order, quantity in ((north, 4), (south, 2)):
+        call("/reservations", "POST", {"sku":"KIT-01", "quantity":quantity}, {"Idempotency-Key":order})
+    boxes = [{"reservation_id":order, "shipment_id":box, "quantity":quantity}
+             for order, box, quantity in [(north,"A",2), (north,"B",1), (south,"A",2)]]
+    headers = {"Idempotency-Key":van}
+    code, receipt = call("/dispatch-batches", "POST", {"boxes":boxes}, headers)
+    assert code == 201 and [row["held_after"] for row in receipt["boxes"]] == [2,1,0]
+    assert call("/dispatch-batches/"+van) == (200, receipt)
+    assert call("/dispatch-batches", "POST", {"boxes":boxes[::-1]}, headers) == (200, receipt)
+    call("/reservations/"+north, "DELETE")
+    after = next(row for row in call("/inventory")[1] if row["sku"] == "KIT-01")
+    assert (after["available"], after["capacity"]) == (before["available"]-5, before["capacity"]-5)
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     mode = parser.add_mutually_exclusive_group()
@@ -100,8 +118,11 @@ if __name__ == "__main__":
     mode.add_argument("--reduce", action="store_true", help="release two held units after a partial shipment")
     mode.add_argument("--packing", action="store_true", help="reconcile a reservation across two boxes and a return")
     mode.add_argument("--renew", action="store_true", help="extend an active checkout hold and replay its receipt")
+    mode.add_argument("--batch", action="store_true", help="dispatch three boxes from two reservations together")
     args = parser.parse_args()
-    if args.renew:
+    if args.batch:
+        demonstrate_batch()
+    elif args.renew:
         demonstrate_renewal()
     elif args.packing:
         demonstrate_packing()

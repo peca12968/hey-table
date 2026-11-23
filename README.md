@@ -21,6 +21,8 @@ python -m uvicorn stockroom.api:app
 | POST /reservations/{key}/renewals | 依目前期限延長仍有效的保留，以 Idempotency-Key 識別這次續期 |
 | POST /reservations/{key}/releases | 以 Idempotency-Key 指定本次減量單號，將指定的 quantity 件釋放給其他訂單 |
 | POST /reservations/{key}/fulfillments | 傳入本箱的 quantity 與 Idempotency-Key，登記實際出貨。不同保留可使用相同箱號 |
+| POST /dispatch-batches | 用一個 Idempotency-Key 登記同車的多箱出貨，可跨保留單。所有箱子共同提交 |
+| GET /dispatch-batches/{batch_id} | 用批號取回當時的整批收據，可在網路斷線後查詢 |
 | GET /reservations/{key} | 查詢原始數量、已出貨數量、尚在保留數量與已歸還數量 |
 | POST /reservations/{key}/fulfillments/{box}/returns | 以 Idempotency-Key 當作本箱的退貨單號，將驗收合格的 quantity 件商品入庫 |
 | GET /reservations/{key}/fulfillments/{box} | 查詢該箱實際寄出的 dispatched、已重新入庫的 restocked，以及尚可退回的 returnable |
@@ -68,6 +70,24 @@ SQLite 適合本機或單節點展示。此版本的使用情境是可信任的�
 每箱的出貨收據、保留數量更新與實體庫存扣減在同一筆交易完成。首次登記回傳 201。相同箱號與數量重送會回傳 200 和當時的原始收據，即使其後已寄出另一箱或保留已到期。`held_after` 是該箱登記當下的剩餘保留量，最新進度請查詢訂單。相同箱號改數量、超出剩餘保留量或對已關閉訂單新增出貨，會回傳 409。
 
 部分寄出後，尚未出貨的單位保留原期限。取消或到期只歸還剩餘數量。全部寄出時顯示 `fulfilled`。升級前的訂單初始已出貨量為零。每筆訂單的原始數量始終等於已出貨、尚在保留與已歸還數量之和。
+
+### 同車多箱一起交運
+
+北區訂單保留 4 件，南區訂單保留 2 件。司機要一次載走北區 A 箱 2 件、B 箱 1 件及南區 A 箱 2 件。如果誤把南區箱填成 3 件，服務會回傳 409 並標出失敗的訂單與箱號。兩張訂單都維持原來的保留量，批號可修正後再次使用。
+
+啟動服務後，在有至少 6 件可用庫存的本機示範環境執行 `python demo.py --batch`。示範會建立兩張保留單、送出整車、依批號查詢收據，再將箱子反序重送。以下是 `POST /dispatch-batches` 的請求內容範例，`Idempotency-Key` 標頭為這次交運的批號。
+
+```json
+{"boxes":[
+  {"reservation_id":"north","shipment_id":"A","quantity":2},
+  {"reservation_id":"north","shipment_id":"B","quantity":1},
+  {"reservation_id":"south","shipment_id":"A","quantity":2}
+]}
+```
+
+每批可含 1 至 100 箱。同一訂單內的箱號必須唯一，不同訂單可各用 A 箱。收據依訂單、箱號排序，保留每箱登記當下的 `held_after`，範例中依序為 2、1、0。第一次成功回 201；內容相同、順序不同的重送回 200。原批號若增刪箱子或改數量，回 409。後續退貨或訂單到期時，仍可依批號查回原收據。
+
+每箱沿用單箱出貨的扣庫與退貨流程。已經單獨出貨或由其他批次登記的箱子，無法再編入新批次。測試涵蓋兩個服務共用 SQLite、收據寫入中斷、到期重送、舊箱單升級，以及用戶端收不到成功回應後依批號復查。[整批出貨測試](tests/test_dispatch_batches.py)
 
 ### 部分取消未出貨的保留量
 

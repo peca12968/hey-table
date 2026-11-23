@@ -8,7 +8,7 @@ from typing import Annotated
 
 from fastapi import FastAPI, Header, Response
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 from prometheus_client import CollectorRegistry, Counter, generate_latest, CONTENT_TYPE_LATEST
 
 from .metrics import RequestMetrics
@@ -47,6 +47,31 @@ class Receipt(BaseModel):
     shipment_id: str
     quantity: int
     held_after: int
+
+
+BoxKey = Annotated[str, Field(pattern=r"^[a-zA-Z0-9_-]{1,80}$")]
+
+
+class DispatchBox(Quantity):
+    reservation_id: BoxKey
+    shipment_id: BoxKey
+
+
+class DispatchBatch(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    boxes: list[DispatchBox] = Field(min_length=1, max_length=100)
+
+    @field_validator("boxes")
+    @classmethod
+    def distinct_boxes(cls, boxes):
+        if len({(box.reservation_id, box.shipment_id) for box in boxes}) != len(boxes):
+            raise ValueError("Repeat shipment within a reservation")
+        return boxes
+
+
+class BatchReceipt(BaseModel):
+    batch_id: str
+    boxes: list[Receipt]
 
 
 class ShipmentBalance(BaseModel):
@@ -104,7 +129,7 @@ def create_app(path: Path, *, ttl_seconds=900, clock=time.time):
         store.initialize()
         yield
 
-    app = FastAPI(title="Stockroom Reservations", version="1.6", lifespan=lifespan)
+    app = FastAPI(title="Stockroom Reservations", version="1.7", lifespan=lifespan)
     registry = CollectorRegistry()
     requests = Counter("http_requests_total", "Application requests by HTTP response status.", ["status"], registry=registry)
     for status in ("200", "201", "404", "409", "422", "500"):
@@ -126,6 +151,19 @@ def create_app(path: Path, *, ttl_seconds=900, clock=time.time):
     @app.get("/inventory", response_model=list[Product])
     def inventory():
         return store.inventory()
+
+    @app.post("/dispatch-batches", response_model=BatchReceipt, status_code=201,
+              responses={200: {"model": BatchReceipt, "description": "Original dispatch batch receipt"}})
+    def dispatch_batch(batch: DispatchBatch, response: Response, idempotency_key: RequestKey):
+        boxes = [(box.reservation_id, box.shipment_id, box.quantity) for box in batch.boxes]
+        receipt, created = store.dispatch_batch(idempotency_key, boxes)
+        if not created:
+            response.status_code = 200
+        return receipt
+
+    @app.get("/dispatch-batches/{batch_id}", response_model=BatchReceipt)
+    def dispatch_batch_receipt(batch_id: str):
+        return store.dispatch_batch_receipt(batch_id)
 
     @app.post("/reservations", response_model=Reservation, status_code=201,
               responses={200: {"model": Reservation, "description": "Idempotent replay"}})

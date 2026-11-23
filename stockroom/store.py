@@ -36,6 +36,14 @@ CREATE TABLE IF NOT EXISTS fulfillments (
     held_after INTEGER NOT NULL CHECK (held_after >= 0),
     PRIMARY KEY (reservation_id, shipment_id)
 );
+CREATE TABLE IF NOT EXISTS dispatch_batch_boxes (
+    batch_id TEXT NOT NULL,
+    reservation_id TEXT NOT NULL,
+    shipment_id TEXT NOT NULL,
+    PRIMARY KEY (reservation_id, shipment_id),
+    FOREIGN KEY (reservation_id, shipment_id) REFERENCES fulfillments(reservation_id, shipment_id)
+);
+CREATE INDEX IF NOT EXISTS dispatch_batch_lookup ON dispatch_batch_boxes(batch_id, reservation_id, shipment_id);
 CREATE TABLE IF NOT EXISTS reservation_releases (
     reservation_id TEXT NOT NULL REFERENCES reservations(id),
     release_id TEXT NOT NULL,
@@ -259,24 +267,61 @@ class Store:
 
     def fulfill(self, key, shipment_id, quantity):
         with self.current_inventory() as (conn, _):
-            row = self.find_reservation(conn, key)
-            receipt = conn.execute("""SELECT * FROM fulfillments
-                                      WHERE reservation_id=? AND shipment_id=?""", (key, shipment_id)).fetchone()
-            if receipt:
-                if receipt["quantity"] != quantity:
-                    raise Conflict("Shipment key already used with different quantity")
-                return dict(receipt), False
-            held_after = self.held_units(row) - quantity
-            if held_after < 0:
-                raise Conflict("Insufficient held units for shipment")
-            # Reserving already deducted availability. Dispatch removes physical units.
-            conn.execute("UPDATE products SET capacity=capacity-? WHERE sku=?", (quantity, row["sku"]))
-            conn.execute("""UPDATE reservations SET shipped=shipped+?, state=? WHERE id=?""",
-                         (quantity, "held" if held_after else "released", key))
-            conn.execute("INSERT INTO fulfillments(reservation_id, shipment_id, quantity, held_after) VALUES (?,?,?,?)",
-                         (key, shipment_id, quantity, held_after))
-            return {"reservation_id": key, "shipment_id": shipment_id, "quantity": quantity,
-                    "held_after": held_after}, True
+            return self.record_shipment(conn, key, shipment_id, quantity)
+
+    def record_shipment(self, conn, key, shipment_id, quantity):
+        row = self.find_reservation(conn, key)
+        receipt = conn.execute("""SELECT * FROM fulfillments
+                                  WHERE reservation_id=? AND shipment_id=?""", (key, shipment_id)).fetchone()
+        if receipt:
+            if receipt["quantity"] != quantity:
+                raise Conflict("Shipment key already used with different quantity")
+            return dict(receipt), False
+        held_after = self.held_units(row) - quantity
+        if held_after < 0:
+            raise Conflict("Insufficient held units for shipment")
+        # Reserving already deducted availability. Dispatch removes physical units.
+        conn.execute("UPDATE products SET capacity=capacity-? WHERE sku=?", (quantity, row["sku"]))
+        conn.execute("""UPDATE reservations SET shipped=shipped+?, state=? WHERE id=?""",
+                     (quantity, "held" if held_after else "released", key))
+        conn.execute("INSERT INTO fulfillments(reservation_id, shipment_id, quantity, held_after) VALUES (?,?,?,?)",
+                     (key, shipment_id, quantity, held_after))
+        return {"reservation_id": key, "shipment_id": shipment_id, "quantity": quantity,
+                "held_after": held_after}, True
+
+    @staticmethod
+    def batch_receipts(conn, batch_id):
+        rows = conn.execute("""SELECT f.* FROM dispatch_batch_boxes b JOIN fulfillments f
+                               USING (reservation_id, shipment_id) WHERE b.batch_id=?
+                               ORDER BY b.reservation_id, b.shipment_id""", (batch_id,))
+        return [dict(row) for row in rows]
+
+    def dispatch_batch(self, batch_id, boxes):
+        ordered = sorted(boxes)
+        with self.current_inventory() as (conn, _):
+            receipts = self.batch_receipts(conn, batch_id)
+            if receipts:
+                prior = [(r["reservation_id"], r["shipment_id"], r["quantity"]) for r in receipts]
+                if prior != ordered:
+                    raise Conflict("Dispatch batch key already used with different boxes")
+                return {"batch_id": batch_id, "boxes": receipts}, False
+            for key, shipment_id, quantity in ordered:
+                try:
+                    receipt, created = self.record_shipment(conn, key, shipment_id, quantity)
+                except (Missing, Conflict) as exc:
+                    raise type(exc)(f"{key}/{shipment_id}: {exc}") from exc
+                if not created:
+                    raise Conflict(f"Shipment already recorded: {key}/{shipment_id}")
+                conn.execute("INSERT INTO dispatch_batch_boxes VALUES (?,?,?)", (batch_id, key, shipment_id))
+                receipts.append(receipt)
+            return {"batch_id": batch_id, "boxes": receipts}, True
+
+    def dispatch_batch_receipt(self, batch_id):
+        with closing(self.connect()) as conn:
+            boxes = self.batch_receipts(conn, batch_id)
+            if not boxes:
+                raise Missing("Unknown dispatch batch")
+            return {"batch_id": batch_id, "boxes": boxes}
 
     @staticmethod
     def shipment_balances(conn, key, shipment_id=None):
