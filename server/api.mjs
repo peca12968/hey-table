@@ -163,6 +163,17 @@ export async function api(request, env) {
     }));
     return json({capturedAt: Date.now(), orders});
   }
+  if (path === "/api/kitchen/return-receipt" && method === "GET") {
+    const number = url.searchParams.get("id");
+    const id = Number(number);
+    if (!/^[0-9]+$/.test(number ?? "") || !Number.isSafeInteger(id) || id < 1)
+      return fail("請輸入有效的取餐號碼");
+    const row = await db.prepare("SELECT id,created,items,total,combo_quote FROM orders WHERE id=?").bind(id).first();
+    if (!row) return fail("找不到這個取餐號碼",404);
+    const items = JSON.parse(row.items).map(({id,name,price,qty}) => ({id,name,price,qty}));
+    return json({id:row.id, created:row.created, items, total:row.total,
+      ...(row.combo_quote ? {combo:JSON.parse(row.combo_quote)} : {})});
+  }
   if ((path === "/api/kitchen" || path === "/api/kitchen/stations") && method === "GET") {
     const {results} = await db.prepare(`${selectOrders} WHERE status NOT IN ('completed','cancelled')
         OR id IN (SELECT id FROM orders WHERE status IN ('completed','cancelled') ORDER BY id DESC LIMIT 20)

@@ -33,9 +33,16 @@ jobs:
           ref: b7802ce073aca960aa5c5b81de40a1c81b9e83ba
           path: batch-clock
           persist-credentials: false
+      - uses: actions/checkout@v7
+        with:
+          repository: peca12968/receipt-returns
+          ref: d6dc1490e568ced896b62f7adfb56b3ba1714cb6
+          path: receipt-returns
+          persist-credentials: false
       - run: npx playwright test
         working-directory: qa
         env:
           PREP_PROJECT: ${{ github.workspace }}/prep-sheet
           RAIL_PROJECT: ${{ github.workspace }}/pass-rail
           BATCH_CLOCK_PROJECT: ${{ github.workspace }}/batch-clock
+          RECEIPT_RETURNS_PROJECT: ${{ github.workspace }}/receipt-returns
