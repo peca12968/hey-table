@@ -237,6 +237,8 @@ def test_upgrades_database_without_inventing_deadlines_for_old_holds(tmp_path):
         assert available(client) == 13
         old = reserve(client, "legacy", 7).json()
         assert old["expires_at_ms"] is None and old["state"] == "held"
+        assert renew(client, "legacy", "pay", 1, 15).status_code == 409
+        assert client.get("/reservations/legacy").json()["expires_at_ms"] is None
         assert reduce_hold(client, "legacy", "edit", 2).json()["held_after"] == 5
         assert ship(client, "legacy", "first-box", 3).status_code == 201
         assert client.delete("/reservations/legacy").json()["state"] == "released"
@@ -412,7 +414,8 @@ def test_receipt_insert_failure_rolls_back_all_stock_changes(tmp_path):
         assert ship(http, "r", "box", 4).status_code == 201
 
 
-def test_request_waiting_for_writer_cannot_dispatch_past_deadline(tmp_path, monkeypatch):
+@pytest.mark.parametrize("operation", ["ship", "renew"])
+def test_request_waiting_for_writer_cannot_use_hold_past_deadline(tmp_path, monkeypatch, operation):
     path = tmp_path / "locked.db"
     now = 100
     with TestClient(create_app(path, ttl_seconds=1, clock=lambda: now)) as http:
@@ -430,7 +433,10 @@ def test_request_waiting_for_writer_cannot_dispatch_past_deadline(tmp_path, monk
         with closing(sqlite3.connect(path)) as writer, ThreadPoolExecutor() as pool:
             writer.execute("BEGIN IMMEDIATE")
             try:
-                attempt = pool.submit(ship, http, "r", "late", 5)
+                if operation == "ship":
+                    attempt = pool.submit(ship, http, "r", "late", 5)
+                else:
+                    attempt = pool.submit(renew, http, "r", "late", 101000, 5)
                 assert connected.wait(timeout=5)
                 now = 101
             finally:
@@ -443,6 +449,82 @@ def test_request_waiting_for_writer_cannot_dispatch_past_deadline(tmp_path, monk
 def reduce_hold(client, key, receipt_id, quantity):
     return client.post(f"/reservations/{key}/releases", json={"quantity": quantity},
                        headers={"Idempotency-Key": receipt_id})
+
+
+def renew(http, key, receipt, expected_deadline, seconds):
+    return http.post(f"/reservations/{key}/renewals", headers={"Idempotency-Key": receipt},
+                     json={"expected_expires_at_ms": expected_deadline, "extend_seconds": seconds})
+
+
+def test_renewal_only_keeps_remaining_stock_and_receipt_survives_restart(tmp_path):
+    now = 100
+    path = tmp_path / "store.db"
+    with TestClient(create_app(path, ttl_seconds=5, clock=lambda: now)) as first:
+        assert reserve(first, "r", 8).json()["expires_at_ms"] == 105000
+        assert ship(first, "r", "box", 3).status_code == 201
+        assert reduce_hold(first, "r", "cut", 2).status_code == 201
+        now = 104
+        accepted = renew(first, "r", "pending", 105000, 30)
+        assert accepted.status_code == 201
+        assert accepted.json() == {"reservation_id": "r", "renewal_id": "pending",
+                                   "previous_expires_at_ms": 105000, "expires_at_ms": 135000}
+    with TestClient(create_app(path, ttl_seconds=1, clock=lambda: now)) as restarted:
+        now = 105
+        assert counts(restarted, "r") == ("held", 3, 3, 2)
+        assert available(restarted) == 14
+        assert reserve(restarted, "r", 8).json()["expires_at_ms"] == 135000
+        assert renew(restarted, "r", "pending", 105000, 40).status_code == 409
+        assert renew(restarted, "r", "next", 105000, 30).status_code == 409
+        assert renew(restarted, "r", "next", 135000, 5).status_code == 201
+        now = 140
+        assert renew(restarted, "r", "late", 140000, 30).status_code == 409
+        assert counts(restarted, "r") == ("expired", 3, 0, 5)
+        assert available(restarted) == 17
+        replay = renew(restarted, "r", "pending", 105000, 30)
+        assert (replay.status_code, replay.json()) == (200, accepted.json())
+        assert restarted.get("/reservations/r").json()["expires_at_ms"] == 140000
+
+
+def test_two_instances_cannot_stack_concurrent_renewals(tmp_path):
+    path = tmp_path / "stock.db"
+    with TestClient(create_app(path, ttl_seconds=5, clock=lambda: 100)) as a, \
+         TestClient(create_app(path, ttl_seconds=5, clock=lambda: 100)) as b:
+        reserve(a, "r", 20)
+        clients = [a, b]
+        barrier = Barrier(12)
+
+        def submit(i):
+            barrier.wait(timeout=10)
+            return renew(clients[i % 2], "r", f"payment-{i}", 105000, 10)
+
+        with ThreadPoolExecutor(max_workers=12) as pool:
+            results = list(pool.map(submit, range(12)))
+        assert sorted(r.status_code for r in results) == [201] + [409] * 11
+        winner = next(r.json() for r in results if r.status_code == 201)
+        assert b.get("/reservations/r").json()["expires_at_ms"] == 115000
+        assert available(a) == 0
+        with ThreadPoolExecutor(max_workers=12) as pool:
+            replies = list(pool.map(lambda i: renew(clients[i % 2], "r", winner["renewal_id"], 105000, 10), range(12)))
+        assert all((r.status_code, r.json()) == (200, winner) for r in replies)
+
+
+def test_renewal_validation_and_update_rollback(tmp_path):
+    path = tmp_path / "store.db"
+    with TestClient(create_app(path, ttl_seconds=5, clock=lambda: 100), raise_server_exceptions=False) as http:
+        assert renew(http, "missing", "k", 105000, 10).status_code == 404
+        reserve(http, "r", 2)
+        for seconds in (False, 0, 86401, "10"):
+            assert renew(http, "r", "k", 105000, seconds).status_code == 422
+        with closing(sqlite3.connect(path)) as db:
+            db.execute("""CREATE TRIGGER reject_renewal BEFORE INSERT ON reservation_renewals
+                          BEGIN SELECT RAISE(ABORT, 'receipt unavailable'); END""")
+            assert renew(http, "r", "k", 105000, 10).status_code == 500
+            assert http.get("/reservations/r").json()["expires_at_ms"] == 105000
+            db.execute("DROP TRIGGER reject_renewal")
+        assert renew(http, "r", "k", 105000, 10).status_code == 201
+        http.delete("/reservations/r")
+        assert renew(http, "r", "other", 115000, 10).status_code == 409
+        assert available(http) == 20
 
 
 @pytest.mark.parametrize("closing_action", ["cancel", "expire", "ship", "reduce"])

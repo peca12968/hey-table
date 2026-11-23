@@ -77,6 +77,21 @@ def demonstrate_packing():
             view["restocked"], view["returnable"]) == (5, 5, 1, 4)
 
 
+def demonstrate_renewal():
+    key = uuid4().hex
+    path = f"/reservations/{key}"
+    _, hold = call("/reservations", "POST", {"sku": "KIT-01", "quantity": 2}, {"Idempotency-Key": key})
+    deadline = hold["expires_at_ms"]
+    request = {"expected_expires_at_ms": deadline, "extend_seconds": 30}
+    headers = {"Idempotency-Key": "payment-pending"}
+    first, receipt = call(path + "/renewals", "POST", request, headers)
+    assert first == 201 and receipt["expires_at_ms"] == deadline + 30000
+    assert call(path + "/renewals", "POST", request, headers) == (200, receipt)
+    _, current = call(path)
+    assert current["held"] == 2 and current["expires_at_ms"] == receipt["expires_at_ms"]
+    call(path, "DELETE")
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     mode = parser.add_mutually_exclusive_group()
@@ -84,8 +99,11 @@ if __name__ == "__main__":
     mode.add_argument("--restock", action="store_true", help="inspect and restock two of three shipped units")
     mode.add_argument("--reduce", action="store_true", help="release two held units after a partial shipment")
     mode.add_argument("--packing", action="store_true", help="reconcile a reservation across two boxes and a return")
+    mode.add_argument("--renew", action="store_true", help="extend an active checkout hold and replay its receipt")
     args = parser.parse_args()
-    if args.packing:
+    if args.renew:
+        demonstrate_renewal()
+    elif args.packing:
         demonstrate_packing()
     elif args.reduce:
         demonstrate_reduction()

@@ -18,6 +18,7 @@ python -m uvicorn stockroom.api:app
 | GET /inventory | 讀取商品總量與可用量 |
 | POST /reservations | 傳入 sku、quantity 及 Idempotency-Key 標頭。相同鍵與內容可取得目前保留狀態 |
 | DELETE /reservations/{key} | 釋放保留。重複取消只會歸還一次 |
+| POST /reservations/{key}/renewals | 依目前期限延長仍有效的保留，以 Idempotency-Key 識別這次續期 |
 | POST /reservations/{key}/releases | 以 Idempotency-Key 指定本次減量單號，將指定的 quantity 件釋放給其他訂單 |
 | POST /reservations/{key}/fulfillments | 傳入本箱的 quantity 與 Idempotency-Key，登記實際出貨。不同保留可使用相同箱號 |
 | GET /reservations/{key} | 查詢原始數量、已出貨數量、尚在保留數量與已歸還數量 |
@@ -44,6 +45,14 @@ SQLite 適合本機或單節點展示。此版本的使用情境是可信任的�
 升級時會保留既有資料。舊版沒有記錄建立時間，因此既有保留維持原有手動釋放規則，回傳的期限為 `null`。查庫存目前也要取得寫入鎖，這是用讀取吞吐量換取單節點交易一致性的取捨。
 
 ## 驗證與容器
+
+### 付款等待期間延長保留
+
+若付款仍待確認，可信任的呼叫端可讀取該筆保留的 `expires_at_ms`，再送一次續期。啟動服務後執行 `python demo.py --renew`，可看到保留 2 件、延長 30 秒、重送取得相同收據，最後取消並歸還庫存。此示範使用本機 API。
+
+請求內容包含讀到的舊期限 `expected_expires_at_ms` 及從舊期限起算的 `extend_seconds`（每次 1 至 86,400 秒）。首次成功回 201，收據同列前後期限。已過期、已取消、已出完貨或舊版無期限的保留都無法新增續期。若另一個服務實例已更新期限，此次回 409；呼叫端可重新查詢保留狀態再決定是否需要延長。相同鍵及內容重送回 200，即使訂單已關閉，仍可取得第一次的收據。
+
+在可重跑案例中，保留 8 件、寄出 3 件、取消 2 件後，續期只延長剩下 3 件。新期限到達時釋放這 3 件，倉庫可用量回到 17 件。另以兩個 API 實例同時送出 12 筆不同單號的續期，驗證同一舊期限只會更新一次。[交易實作](stockroom/store.py) · [續期與並行測試](tests/test_api.py)
 
 ### 分批出貨及重送
 

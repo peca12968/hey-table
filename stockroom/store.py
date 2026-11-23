@@ -43,6 +43,13 @@ CREATE TABLE IF NOT EXISTS reservation_releases (
     held_after INTEGER NOT NULL CHECK (held_after >= 0),
     PRIMARY KEY (reservation_id, release_id)
 );
+CREATE TABLE IF NOT EXISTS reservation_renewals (
+    reservation_id TEXT NOT NULL REFERENCES reservations(id),
+    renewal_id TEXT NOT NULL,
+    previous_expires_at_ms INTEGER NOT NULL,
+    expires_at_ms INTEGER NOT NULL CHECK (expires_at_ms > previous_expires_at_ms),
+    PRIMARY KEY (reservation_id, renewal_id)
+);
 CREATE TABLE IF NOT EXISTS shipment_returns (
     reservation_id TEXT NOT NULL,
     shipment_id TEXT NOT NULL,
@@ -184,6 +191,29 @@ class Store:
                             VALUES (?, ?, ?, 'held', ?)""", (key, sku, quantity, expires_at_ms))
             return {"id": key, "sku": sku, "quantity": quantity, "state": "held",
                     "expires_at_ms": expires_at_ms}, True
+
+    def renew(self, key, renewal_id, expected_deadline, seconds):
+        with self.current_inventory() as (conn, _):
+            row = self.find_reservation(conn, key)
+            deadline = expected_deadline + seconds * 1000
+            receipt = conn.execute("""SELECT * FROM reservation_renewals
+                                      WHERE reservation_id=? AND renewal_id=?""", (key, renewal_id)).fetchone()
+            if receipt:
+                if (receipt["previous_expires_at_ms"], receipt["expires_at_ms"]) != (expected_deadline, deadline):
+                    raise Conflict("Renewal key already used with different input")
+                return dict(receipt), False
+            if row["state"] != "held" or row["expires_at_ms"] is None:
+                raise Conflict("Only an active hold with a deadline can be renewed")
+            if row["expires_at_ms"] != expected_deadline:
+                raise Conflict("Reservation deadline changed")
+            if deadline > 2**63 - 1:
+                raise Conflict("Deadline exceeds SQLite integer range")
+            conn.execute("UPDATE reservations SET expires_at_ms=? WHERE id=?", (deadline, key))
+            conn.execute("""INSERT INTO reservation_renewals
+                            (reservation_id, renewal_id, previous_expires_at_ms, expires_at_ms)
+                            VALUES (?,?,?,?)""", (key, renewal_id, expected_deadline, deadline))
+            return {"reservation_id": key, "renewal_id": renewal_id, "previous_expires_at_ms": expected_deadline,
+                    "expires_at_ms": deadline}, True
 
     def release(self, key):
         with self.current_inventory() as (conn, _):

@@ -80,6 +80,19 @@ class ReleaseReceipt(BaseModel):
     held_after: int
 
 
+class Renewal(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    expected_expires_at_ms: int = Field(strict=True, ge=0, le=2**63 - 1)
+    extend_seconds: int = Field(strict=True, ge=1, le=86_400)
+
+
+class RenewalReceipt(BaseModel):
+    reservation_id: str
+    renewal_id: str
+    previous_expires_at_ms: int
+    expires_at_ms: int
+
+
 RequestKey = Annotated[str, Header(pattern=r"^[a-zA-Z0-9_-]{1,80}$")]
 
 
@@ -91,7 +104,7 @@ def create_app(path: Path, *, ttl_seconds=900, clock=time.time):
         store.initialize()
         yield
 
-    app = FastAPI(title="Stockroom Reservations", version="1.5", lifespan=lifespan)
+    app = FastAPI(title="Stockroom Reservations", version="1.6", lifespan=lifespan)
     registry = CollectorRegistry()
     requests = Counter("http_requests_total", "Application requests by HTTP response status.", ["status"], registry=registry)
     for status in ("200", "201", "404", "409", "422", "500"):
@@ -126,6 +139,14 @@ def create_app(path: Path, *, ttl_seconds=900, clock=time.time):
     @app.delete("/reservations/{key}", response_model=Reservation)
     def release(key: str):
         return store.release(key)
+
+    @app.post("/reservations/{key}/renewals", response_model=RenewalReceipt, status_code=201,
+              responses={200: {"model": RenewalReceipt, "description": "Original renewal receipt"}})
+    def renew(key: str, renewal: Renewal, response: Response, idempotency_key: RequestKey):
+        receipt, created = store.renew(key, idempotency_key, renewal.expected_expires_at_ms, renewal.extend_seconds)
+        if not created:
+            response.status_code = 200
+        return receipt
 
     @app.post("/reservations/{key}/releases", response_model=ReleaseReceipt, status_code=201,
               responses={200: {"model": ReleaseReceipt, "description": "Original release receipt"}})
