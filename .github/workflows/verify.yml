@@ -1,0 +1,28 @@
+name: Check ready-time bounds and restaurant payments
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  verify:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+      - run: python -m unittest -v
+      - uses: actions/checkout@v7
+        with:
+          repository: peca12968/hey-table
+          ref: e0596f05039ff0520bfb1207c20fee05c1e7894b
+          path: hey-table
+          persist-credentials: false
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+      - run: npm ci --include=optional
+        working-directory: hey-table
+      - run: node demo.mjs hey-table
