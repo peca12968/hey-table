@@ -34,11 +34,24 @@ python restaurant_close.py dinner-demo/restaurant.db --day 2026-11-23 --merchant
 
 若信用卡只有授權，`direct_pay` 組會列出授權筆數，收款金額為零。全額退款會同時顯示原收款及退回金額。交易按金流交易號去重，店內付款方式與金流紀錄不一致時會保留差異供追查。信用卡示範交易在前一天發起，可用前一天的日結快照核對。
 
+### 同一家餐廳有兩個商店編號
+
+商店更換 LINE Pay 的收款編號後，顧客重試付款，舊、新商店各留下一筆 NT$120 的收款。各看各的日結時，兩邊都只看到一筆。以下用合成資料產生兩份金流快照，再以同一份店內 SQLite 備份核對。
+
+```sh
+python examples/restaurant_demo.py dinner-split --split-merchants
+python restaurant_close.py dinner-split/restaurant.db --day 2026-11-23 --environment sandbox --merchant demo-restaurant --merchant demo-wallet --snapshot dinner-split/records.json --snapshot dinner-split/wallet.json
+```
+
+範例中，兩個商店編號的淨額分別為 NT$160 與 NT$200。合計 NT$360，其中 LINE Pay NT$240、全支付 NT$80、街口支付 NT$40。查看 `multiple_collections` 的餐單 2，可看到兩筆各自的商店編號、店內付款參考號與金流交易號。若收款跨午夜，報表保留另一日的交易線索，`in_day` 標出該筆是否計入當日合計。
+
+`--merchant` 列出本次核帳範圍。離線模式每個編號各需一份同環境、同日期範圍的快照，順序可互換。線上模式以同一個具備相應查詢權限的 Partner Key 逐一查詢各編號。任何一個編號缺頁或金流交易號跨商店衝突，整份日結會以結束碼 2 中止。所有店內資料在同一筆唯讀交易中讀取。各商店的金流狀態以各自取得快照時為準。
+
 **查實際商店。** 準備包含 `orders` 和 `payment_attempts` 的一致性 SQLite 備份；若資料庫使用 WAL，請用 SQLite backup 功能取得已提交的完整資料。選擇與備份相符的商店編號和環境，將 Partner Key 注入本機環境變數 `TAPPAY_PARTNER_KEY`，以 `--fetch` 取代 `--snapshot FILE`。程式只呼叫 TapPay 的交易查詢端點，並以交易號核對總筆數。缺頁、分頁中途變動或兩筆同號交易的內容矛盾，都會中止並回傳結束碼 2。加上 `--strict` 時，成功產生報表但有待查項目會回傳 3。[TapPay Record API](https://docs.tappaysdk.com/px-pay-plus/zh/back.html) · [金額與交易狀態欄位](https://docs.tappaysdk.com/px-pay-plus/zh/reference.html)
 
 **日界與金額。** 有對應付款嘗試的交易，歸入店內發起付款的台灣日期；沒有對應餐單的交易，採金流端日期。查詢範圍前後各延伸一天，讓午夜前送出、午夜後確認的同筆付款只算一次。跨日重試若在這個範圍內出現兩次實收，會在餐單下列出兩個交易號。報表列出查詢當時的狀態；後續退款可以用更新後的資料重新核對。金流合計涵蓋該商戶該環境的 TWD 已請款金額與退款餘額；銀行撥款手續費另由撥款明細核對。
 
-**資料範圍。** 每次核對一個商店編號及環境，商店編號與其他通路共用時，其他通路交易也可能出現在 `provider_only`。本機示範付款和現金單皆排除。報表只輸出對帳欄位。保留在本機的 SQLite 備份與原始金流檔仍可能含顧客資料。CI 會在禾日食堂實際的資料庫遷移上建表，驗證跨午夜、重複收款、缺頁和付款重試等情境。[日結程式](restaurant_close.py) · [跨專案測試](test_restaurant_close.py)
+**資料範圍。** 每次核對指定環境中列入的商店編號，商店編號與其他通路共用時，其他通路交易也可能出現在 `provider_only`。本機示範付款和現金單皆排除。報表只輸出對帳欄位。保留在本機的 SQLite 備份與原始金流檔仍可能含顧客資料。CI 會在禾日食堂實際的資料庫遷移上建表，驗證跨午夜、重複收款、缺頁和付款重試等情境。[日結程式](restaurant_close.py) · [跨專案測試](test_restaurant_close.py)
 
 ## 跑一次電商月結
 

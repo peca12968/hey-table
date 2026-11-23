@@ -59,9 +59,34 @@ def seed(directory, migrations=None):
     return db_path, snapshot
 
 
+WALLET = "demo-wallet"
+
+
+def seed_split(directory, migrations=None):
+    db_path, base = seed(directory, migrations)
+    moved = {"L1", "P1"}
+    with closing(sqlite3.connect(db_path)) as db, db:
+        db.execute("UPDATE payment_attempts SET merchant=? WHERE reference IN (?,?)", (WALLET, *sorted(moved)))
+    data = json.loads(base.read_text(encoding="utf8"))
+    records = [r for page in data["pages"] for r in page["trade_records"]]
+    wallet = directory / "wallet.json"
+    for merchant, path in [(MERCHANT, base), (WALLET, wallet)]:
+        rows = [dict(r, merchant_id=merchant) for r in records
+                if (r["bank_transaction_id"] in moved) == (merchant == WALLET)]
+        page = {"status": 0, "page": 0, "total_page_count": 1, "number_of_transactions": len(rows),
+                "trade_records": rows}
+        path.write_text(json.dumps({"scope": dict(SCOPE, merchant=merchant), "pages": [page]}, indent=2),
+                        encoding="utf8")
+    return db_path, base, wallet
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("directory", type=Path)
     parser.add_argument("--migrations", type=Path)
+    parser.add_argument("--split-merchants", action="store_true", help="place a payment retry in a second merchant account")
     args = parser.parse_args()
-    seed(args.directory, args.migrations)
+    if args.split_merchants:
+        seed_split(args.directory, args.migrations)
+    else:
+        seed(args.directory, args.migrations)

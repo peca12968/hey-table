@@ -112,7 +112,7 @@ def fetch_pages(scope, partner_key):
 
 def payment_method_totals(trades):
     totals = {}
-    for group in trades.values():
+    for group in trades:
         for trade in group:
             method = trade["method"]
             row = totals.setdefault(method, {"trades": 0, "states": Counter(),
@@ -129,28 +129,24 @@ def payment_method_totals(trades):
     return totals
 
 
-def close_day(db, scope, start, records, repeated):
+def reconcile_merchant(db, scope, start, records, repeated):
     args = (scope["merchant"], scope["environment"])
-    db.row_factory = sqlite3.Row
-    db.execute("BEGIN")
     attempts = {r["reference"]: r for r in db.execute(
         COLUMNS + " AND a.created>=? AND a.created<?", (*args, start, start + DAY_MS))}
     trades = defaultdict(list)
-    adjacent_collections = defaultdict(list)
-    order_ids = {row["order_id"] for row in attempts.values()}
+    collections = []
     for r in records:
-        if r["ref"] in attempts:
+        local = attempts.get(r["ref"])
+        today = local is not None
+        if not today:
+            local = db.execute(COLUMNS + " AND a.reference=?", (*args, r["ref"])).fetchone()
+        if today or (local is None and start <= r["time"] < start + DAY_MS):
             trades[r["ref"]].append(r)
-        else:
-            # A midnight retry may belong to this day's order without belonging to its totals.
-            other = db.execute(COLUMNS + " AND a.reference=?", (*args, r["ref"])).fetchone()
-            if other is None and start <= r["time"] < start + DAY_MS:
-                trades[r["ref"]].append(r)
-            elif (other and other["order_id"] in order_ids and r["state"] in COUNTED
-                  and r["amount_twd"] > 0):
-                adjacent_collections[other["order_id"]].append(r["trade"])
+        # Keep a nearby retry for duplicate detection without adding it to this day's net.
+        if local is not None and r["state"] in COUNTED and r["amount_twd"] > 0:
+            collections.append((local["order_id"], {"merchant": scope["merchant"], "reference": r["ref"],
+                                                    "trade_id": r["trade"], "in_day": today}))
     exceptions = []
-    paid_orders = defaultdict(list)
     matched = 0
     for ref in sorted(attempts.keys() | trades.keys()):
         local = attempts.get(ref)
@@ -163,8 +159,6 @@ def close_day(db, scope, start, records, repeated):
         if len(remote) > 1:
             reasons.append("multiple_gateway_trades")
         for r in remote:
-            if local and r["state"] in COUNTED and r["amount_twd"] > 0:
-                paid_orders[local["order_id"]].append(r["trade"])
             if local:
                 method = "direct_pay" if local["payment_method"] == "card" else local["payment_method"]
                 for label, actual, expected in [
@@ -180,47 +174,106 @@ def close_day(db, scope, start, records, repeated):
                                "local": dict(local) if local else None, "gateway": remote})
         else:
             matched += 1
+    by_method = payment_method_totals(trades.values())
+    report = {"gateway_by_method": by_method, "matched_references": matched, "local_attempts": len(attempts),
+              "gateway_trades": sum(map(len, trades.values())),
+              "gateway_net_twd": sum(row["net_twd"] for row in by_method.values()),
+              "repeated_source_rows": repeated, "exceptions": exceptions,
+              "reason_counts": dict(Counter(reason for e in exceptions for reason in e["reasons"]))}
+    return report, trades.values(), collections
+
+
+def reconcile_accounts(db, scopes, start, inputs):
+    db.row_factory = sqlite3.Row
+    db.execute("BEGIN")
+    by_merchant = {}
+    trade_groups = []
+    collections = defaultdict(list)
+    for merchant, scope in sorted(scopes.items()):
+        report, groups, payments = reconcile_merchant(db, scope, start, *inputs[merchant])
+        by_merchant[merchant] = report
+        trade_groups.extend(groups)
+        for order_id, payment in payments:
+            collections[order_id].append(payment)
     multiple = []
-    for oid, ids in sorted(paid_orders.items()):
-        combined = sorted(ids + adjacent_collections[oid])
-        if len(combined) > 1:
-            multiple.append({"order_id": oid, "trade_ids": combined})
-    by_method = payment_method_totals(trades)
-    return {"gateway_by_method": by_method,
-            "matched_references": matched, "local_attempts": len(attempts),
-            "gateway_trades": sum(map(len, trades.values())), "gateway_net_twd": sum(row["net_twd"] for row in by_method.values()),
-            "repeated_source_rows": repeated, "exceptions": exceptions, "multiple_collections": multiple,
-            "reason_counts": dict(Counter(reason for e in exceptions for reason in e["reasons"]))}
+    for order_id, payments in sorted(collections.items()):
+        if len(payments) > 1 and any(p["in_day"] for p in payments):
+            multiple.append({"order_id": order_id, "payments": sorted(
+                payments, key=lambda p: (p["merchant"], p["trade_id"]))})
+    if len(by_merchant) == 1:
+        report, = by_merchant.values()
+        report["multiple_collections"] = [{"order_id": entry["order_id"], "trade_ids": sorted(
+            p["trade_id"] for p in entry["payments"])} for entry in multiple]
+        return report
+    exceptions = []
+    reason_counts = Counter()
+    for merchant, report in by_merchant.items():
+        exceptions.extend(dict(issue, merchant=merchant) for issue in report.pop("exceptions"))
+        reason_counts.update(report["reason_counts"])
+    totals = {key: sum(report[key] for report in by_merchant.values()) for key in
+              ("matched_references", "local_attempts", "gateway_trades", "gateway_net_twd", "repeated_source_rows")}
+    return {**totals, "gateway_by_method": payment_method_totals(trade_groups), "by_merchant": by_merchant,
+            "multiple_collections": multiple, "exceptions": exceptions, "reason_counts": dict(reason_counts)}
+
+
+def close_day(db, scope, start, records, repeated):
+    """Reconcile one validated merchant feed against a read-only restaurant connection."""
+    merchant = scope["merchant"]
+    return reconcile_accounts(db, {merchant: scope}, start, {merchant: (records, repeated)})
+
+
+def load_inputs(scopes, snapshots):
+    inputs = {}
+    if snapshots:
+        for path in snapshots:
+            data = json.loads(path.read_text(encoding="utf-8-sig"))
+            scope = data.get("scope") if isinstance(data, dict) else None
+            merchant = scope.get("merchant") if isinstance(scope, dict) else None
+            if (not isinstance(merchant, str) or merchant not in scopes or scope != scopes[merchant]
+                    or not isinstance(data.get("pages"), list)):
+                raise ValueError("snapshot scope must match the requested merchant, environment and three-day TWD window")
+            if merchant in inputs:
+                raise ValueError(f"{merchant}: duplicate merchant snapshot")
+            inputs[merchant] = read_pages(data["pages"], scope)
+        missing = sorted(scopes.keys() - inputs.keys())
+        if missing:
+            raise ValueError(f"Missing snapshot for {', '.join(missing)}")
+    else:
+        key = os.environ.get("TAPPAY_PARTNER_KEY")
+        if not key:
+            raise ValueError("TAPPAY_PARTNER_KEY is required for --fetch")
+        for merchant, scope in sorted(scopes.items()):
+            inputs[merchant] = read_pages(fetch_pages(scope, key), scope)
+    owners = {}
+    for merchant, (records, _) in inputs.items():
+        for record in records:
+            trade = record["trade"]
+            if owners.setdefault(trade, merchant) != merchant:
+                raise ValueError(f"{trade}: gateway trade ID appears under multiple merchants")
+    return inputs
 
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("database", type=Path, help="read-only Hey Table SQLite backup")
     parser.add_argument("--day", required=True, help="YYYY-MM-DD in Taiwan")
-    parser.add_argument("--merchant", required=True)
+    parser.add_argument("--merchant", required=True, action="append", help="merchant ID, repeat for a combined close")
     parser.add_argument("--environment", required=True, choices=["sandbox", "production"])
     source = parser.add_mutually_exclusive_group(required=True)
-    source.add_argument("--snapshot", type=Path, help="offline JSON with scope and Record API pages")
+    source.add_argument("--snapshot", type=Path, action="append", help="one offline JSON per requested merchant")
     source.add_argument("--fetch", action="store_true", help="read TapPay records using TAPPAY_PARTNER_KEY")
     parser.add_argument("--strict", action="store_true")
     args = parser.parse_args(argv)
     try:
         start = day_start(args.day)
-        scope = {"environment": args.environment, "merchant": args.merchant, "currency": "TWD",
-                 "start_time": start - DAY_MS, "end_time": start + 2 * DAY_MS - 1}
-        if args.snapshot:
-            data = json.loads(args.snapshot.read_text(encoding="utf-8-sig"))
-            if not isinstance(data, dict) or data.get("scope") != scope or not isinstance(data.get("pages"), list):
-                raise ValueError("snapshot scope must match the merchant, environment and three-day TWD window")
-            pages = data["pages"]
-        else:
-            key = os.environ.get("TAPPAY_PARTNER_KEY")
-            if not key:
-                raise ValueError("TAPPAY_PARTNER_KEY is required for --fetch")
-            pages = fetch_pages(scope, key)
+        window = {"environment": args.environment, "currency": "TWD",
+                  "start_time": start - DAY_MS, "end_time": start + 2 * DAY_MS - 1}
+        merchants = sorted({identifier(m, "merchant ID") for m in args.merchant})
+        scopes = {m: dict(window, merchant=m) for m in merchants}
+        inputs = load_inputs(scopes, args.snapshot)
         with closing(sqlite3.connect(args.database.resolve().as_uri() + "?mode=ro", uri=True)) as db:
-            records, repeated = read_pages(pages, scope)
-            report = close_day(db, scope, start, records, repeated)
+            report = reconcile_accounts(db, scopes, start, inputs)
+        scope = scopes[merchants[0]] if len(merchants) == 1 else dict(window, merchants=merchants)
         print(json.dumps({"day": args.day, "scope": scope, **report}, sort_keys=True, ensure_ascii=False, indent=2))
         return 3 if args.strict and (report["exceptions"] or report["multiple_collections"]) else 0
     except (ValueError, OSError, URLError, sqlite3.Error) as exc:
