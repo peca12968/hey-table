@@ -5,9 +5,13 @@ const json = (value, status=200) => Response.json(value,{status,headers:{"Cache-
 const fail = (message,status=400) => json({error:message},status);
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
+import {latestState,payableForKitchen,paymentApi,checkKitchenPayment} from "./payment-api.mjs";
+import {settings} from "./tappay.mjs";
+import {methods} from "../lib/payments.mjs";
+const selectOrders = "SELECT orders.*, "+latestState+" AS payment_state FROM orders";
 function receipt(row) {
   return {id:row.id, mode:row.mode, table:row.table_no, note:row.note, items:JSON.parse(row.items),
-    total:row.total, status:row.status, created:row.created};
+    paymentMethod:row.payment_method,paymentEnv:row.payment_env,paymentState:row.payment_state??'unpaid',total:row.total, status:row.status, created:row.created};
 }
 function prepare(input) {
   if (!uuid.test(input.token) || !["pickup","table"].includes(input.mode) ||
@@ -53,40 +57,46 @@ export async function api(request, env) {
     try { input = await request.json(); } catch {return fail("資料格式錯誤");}
     if (!input || typeof input !== "object") return fail("資料格式錯誤");
   }
+  if(path==="/api/kitchen/payment" && method==="PATCH")return checkKitchenPayment(env,input.id);
+  if(path.startsWith("/api/payments/") && method==="POST")return paymentApi(path,request,env,input);
   if (path === "/api/menu" && method === "GET") {
     const {results} = await db.prepare("SELECT dish FROM unavailable").all();
-    return json({unavailable:results.map(r=>r.dish)});
+    return json({payments:settings(env),unavailable:results.map(r=>r.dish)});
   }
   if (path === "/api/orders" && method === "POST") {
     const order = prepare(input);
     if (!order) return fail("請確認桌號、餐點數量與備註");
+    const method=input.paymentMethod ?? "cash", config=settings(env);
+    if(!Object.hasOwn(methods,method))return fail("付款方式無效");
+    const available=config.methods.includes(method);
     const lines = JSON.stringify(order.items);
-    const stmt = db.prepare(`INSERT INTO orders(token,mode,table_no,note,items,total,created)
-      SELECT ?,?,?,?,?,?,? WHERE NOT EXISTS (SELECT 1 FROM unavailable u
+    const stmt = db.prepare(`INSERT INTO orders(token,mode,table_no,note,items,total,created,payment_method,payment_env)
+      SELECT ?,?,?,?,?,?,?,?,? WHERE ? AND NOT EXISTS (SELECT 1 FROM unavailable u
       JOIN json_each(?) j ON u.dish=json_extract(j.value,'$.id')) ON CONFLICT(token) DO NOTHING`);
-    await stmt.bind(order.token,order.mode,order.table,order.note,lines,order.total,Date.now(),lines).run();
-    const row = await db.prepare("SELECT * FROM orders WHERE token=?").bind(order.token).first();
+    await stmt.bind(order.token,order.mode,order.table,order.note,lines,order.total,Date.now(),method,method==='cash'?'cash':config.mode,available?1:0,lines).run();
+    const row = await db.prepare(selectOrders+" WHERE token=?").bind(order.token).first();
+    if (!row && !available) return fail('此付款方式暫停使用',409);
     if (!row) return fail("部分餐點已售完，請重新確認菜單",409);
-    if (row.mode!==order.mode || row.table_no!==order.table || row.note!==order.note || row.items!==lines)
+    if (row.payment_method!==method || row.mode!==order.mode || row.table_no!==order.table || row.note!==order.note || row.items!==lines)
       return fail("送單識別碼已用於另一張訂單",409);
     return json(receipt(row));
   }
   if (path === "/api/ticket" && method === "GET") {
     const token = request.headers.get("X-Ticket");
     if (!uuid.test(token)) return fail("找不到訂單",404);
-    const row = await db.prepare("SELECT * FROM orders WHERE token=?").bind(token).first();
+    const row = await db.prepare(selectOrders+" WHERE token=?").bind(token).first();
     return row ? json(receipt(row)) : fail("找不到訂單",404);
   }
   if (path === "/api/kitchen/prep" && method === "GET") {
     const {results} = await db.prepare(`SELECT id, created, status, items FROM orders
-      WHERE status IN ('pending','preparing') ORDER BY id`).all();
+      WHERE status IN ('pending','preparing') AND ${payableForKitchen} ORDER BY id`).all();
     const orders = results.map(row => ({
       ...row, items: JSON.parse(row.items).map(({id, qty}) => ({id, qty}))
     }));
     return json({capturedAt: Date.now(), orders});
   }
   if ((path === "/api/kitchen" || path === "/api/kitchen/stations") && method === "GET") {
-    const {results} = await db.prepare(`SELECT * FROM orders WHERE status NOT IN ('completed','cancelled')
+    const {results} = await db.prepare(`${selectOrders} WHERE status NOT IN ('completed','cancelled')
         OR id IN (SELECT id FROM orders WHERE status IN ('completed','cancelled') ORDER BY id DESC LIMIT 20)
         ORDER BY id DESC`).all();
     const orders = results.map(receipt);
@@ -101,7 +111,8 @@ export async function api(request, env) {
   if (path === "/api/kitchen/status" && method === "PATCH") {
     if (!Number.isSafeInteger(input.id) || !Object.hasOwn(transitions,input.from) ||
         !transitions[input.from].includes(input.to)) return fail("無效的訂單狀態轉換");
-    const {meta} = await db.prepare("UPDATE orders SET status=? WHERE id=? AND status=?")
+    const {meta} = await db.prepare("UPDATE orders SET status=? WHERE id=? AND status=? AND "+(input.to==="cancelled" ?
+      "(payment_method='cash' OR COALESCE("+latestState+",'unpaid') IN ('unpaid','failed','cancelled','refunded'))" : payableForKitchen))
       .bind(input.to,input.id,input.from).run();
     return meta.changes ? json({ok:true}) : fail("訂單已更新，請重新整理",409);
   }

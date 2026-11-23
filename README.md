@@ -1,6 +1,6 @@
 # 禾日食堂｜線上自取與桌邊掃碼點餐
 
-客人從首頁送自取單，或掃描桌牌進入該桌菜單，加購餐點、填備註並取得取餐號碼。店家在另一台裝置接單、製作、交餐或標示售完，客人的收據會自動更新。這是繁中示範餐廳，菜單價格採新台幣，付款方式為現場付款。
+客人從首頁送自取單，或掃描桌牌進入該桌菜單，加購餐點、填備註並取得取餐號碼。店家在另一台裝置接單、製作、交餐或標示售完，客人的收據會自動更新。這是繁中示範餐廳，菜單價格採新台幣，自取和掃碼內用都可選擇 LINE Pay、全支付、街口支付、信用卡或現場付款。私人預覽的線上付款採示範模式。
 
 [私人點餐預覽](https://hey-table-peca12968.peca12968.chatgpt.site) · [可列印桌牌](https://hey-table-peca12968.peca12968.chatgpt.site/tables) · [店家後台](https://hey-table-peca12968.peca12968.chatgpt.site/kitchen)
 
@@ -11,6 +11,26 @@
 1. 在 `/tables` 列印 A01 到 A08 桌牌。掃描 A03 後，菜單與收據顯示「A03 桌內用」。從首頁開啟則預設線上自取。託管預覽與桌牌連結都需有網站存取權。
 2. 加入滑蛋豬排丼 NT$190，可增減數量、加備註，再確認送單。保留收據連結即可查這張餐單；同一裝置也能從「查詢餐單」找回最近一單。
 3. 店主在 `/kitchen` 接單，依序切換製作中、可取餐、已完成。待接單時也能取消。收據每五秒更新一次，可手動更新。後台可暫停售餐，再恢復供應。
+
+## 試一次線上付款
+
+加入餐點，在餐單選擇付款方式，送單後從收據按「開始模擬付款」。可試成功、失敗或取消；失敗與取消後可以重新付款。待確認期間重按只會開啟原交易。店員在接單台能辨識示範單；線上單須取得授權或付款成功才可製作。顧客未開始付款時，店家可取消餐單。廚房取消餐單與金流退款各自有獨立狀態。
+
+### 串接 TapPay 商店
+
+私人預覽預設使用本機示範資料，不連線到金流商、不收款、不收集卡號。串接程式分成 SDK 取得一次性 prime、伺服器用訂單金額發起付款、Record API 查證交易三步。卡號、安全碼與到期日輸入在 TapPay 的託管欄位。付款人的聯絡資料只在該次請求送至金流商，應用程式不寫入資料庫。
+
+| 部署環境設定 | 用途 |
+| --- | --- |
+| `TAPPAY_MODE` | 預設 `demo`。商店測試用 `sandbox`，正式環境用 `production`。 |
+| `TAPPAY_APP_ID`、`TAPPAY_APP_KEY` | 同環境的前端 SDK 設定，依 TapPay 商店後台設定網站網域。 |
+| `TAPPAY_PARTNER_KEY` | 僅限伺服器的機密設定。 |
+| `TAPPAY_MERCHANT_LINE_PAY`、`TAPPAY_MERCHANT_PX_PAY_PLUS`、`TAPPAY_MERCHANT_JKO_PAY`、`TAPPAY_MERCHANT_CARD` | 各付款方式已開通的商店編號。只顯示有完整設定的方式。 |
+| `TAPPAY_SITE_ORIGIN`、`TAPPAY_NOTIFY_URL` | 顧客返回的 HTTPS 網站，以及 TapPay 能從外網 POST 到的後端通知網址，處理路徑為 `/api/payments/notify`。私人 Sites 的外部登入限制也適用於通知網址，可在獨立測試部署驗證通知。 |
+
+返回網址及通知內容只用於找到交易。伺服器以商店、幣別、銀行訂單號查詢金流，核對交易識別碼、支付方式、餐單金額及交易狀態。收據與店員都能重新查詢。授權、已付款、部分退款與全額退款各有獨立顯示。若金流逾時且查無紀錄，訂單保留「付款確認中」，請使用商店後台核對。退款由商店在金流端辦理，再回本站查詢結果。
+
+整合測試使用本機替身驗證 TapPay 請求與回應，實際商戶驗收仍需各支付方式的測試資格。[TapPay 全支付](https://docs.tappaysdk.com/px-pay-plus/zh/home.html) · [後端 API](https://docs.tappaysdk.com/px-pay-plus/zh/back.html) · [付款狀態](https://docs.tappaysdk.com/px-pay-plus/zh/reference.html) · [官方 Web SDK 範例](https://github.com/TapPay/tappay-web-example)
 
 ## 送單時斷線，如何找回收據？
 
@@ -44,6 +64,7 @@ React、Vinext、Cloudflare Workers、D1 SQLite 與 Drizzle 遷移。訂單與�
 npm ci --include=optional
 npm run build
 node --import ./scripts/sites-env.mjs ./node_modules/wrangler/bin/wrangler.js d1 execute DB --local --config dist/server/wrangler.json --persist-to .wrangler/state --file drizzle/0000_fresh_white_tiger.sql
+node --import ./scripts/sites-env.mjs ./node_modules/wrangler/bin/wrangler.js d1 execute DB --local --config dist/server/wrangler.json --persist-to .wrangler/state --file drizzle/0001_online_payments.sql
 npm start
 ```
 
@@ -52,6 +73,7 @@ npm start
 ## 端對端驗證
 
 ```sh
+node --test qa/tappay.test.mjs
 npm ci --prefix qa
 cd qa
 npx playwright install chromium
