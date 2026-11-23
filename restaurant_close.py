@@ -19,6 +19,9 @@ COLUMNS = """SELECT a.reference, a.trade_id, a.created, a.state, o.id AS order_i
                     o.payment_method, o.total FROM payment_attempts a JOIN orders o ON o.id=a.order_id
              WHERE a.merchant=? AND o.payment_env=?"""
 COUNTED = {"paid", "partial", "refunded"}
+WALLETS = {"line_pay", "jko_pay", "px_pay_plus", "easy_wallet", "pi_wallet", "plus_pay"}
+PAY_FIELDS = ("point", "discount", "credit_card", "balance", "bank_account")
+REFUND_FIELDS = ("returned_reward_amount", "returned_real_amount")
 
 
 def day_start(day):
@@ -37,7 +40,23 @@ def identifier(value, field):
     return value
 
 
-def transaction(raw, scope):
+def components(raw, key, fields, total):
+    detail = raw.get(key)
+    if detail is None or detail == "":
+        detail = {}
+    if not isinstance(detail, dict):
+        raise ValueError(f"{raw['rec_trade_id']}: expected {key} object")
+    parts = {}
+    for field in fields:
+        value = detail.get(field)
+        parts[field] = 0 if value is None or value == "" else integer(value, f"{key}.{field}")
+    remainder = total - sum(parts.values())
+    if remainder < 0:
+        raise ValueError(f"{raw['rec_trade_id']}: {key} exceeds transaction amount")
+    return {**parts, "unclassified": remainder}
+
+
+def transaction(raw, scope, wallet_funding=False):
     if not isinstance(raw, dict) or raw.get("merchant_id") != scope["merchant"] or raw.get("currency", "TWD") != "TWD":
         raise ValueError("record is outside merchant or currency scope")
     at = integer(raw.get("time"), "time")
@@ -52,13 +71,22 @@ def transaction(raw, scope):
         raise ValueError("refund record lacks original_amount")
     if (status == 2 and not 0 < amount < original) or (status == 3 and amount != 0):
         raise ValueError("refund state and remaining amount disagree")
-    return {"ref": identifier(raw.get("bank_transaction_id"), "bank_transaction_id"),
+    record = {"ref": identifier(raw.get("bank_transaction_id"), "bank_transaction_id"),
             "trade": identifier(raw.get("rec_trade_id"), "rec_trade_id"),
             "method": identifier(raw.get("payment_method"), "payment_method"),
             "state": STATES[status], "original_twd": original, "amount_twd": amount, "time": at}
+    if wallet_funding and record["method"] in WALLETS and record["state"] in COUNTED:
+        gross = original if status in (2, 3) else amount
+        refunded = gross - amount
+        stated = raw.get("refunded_amount")
+        if stated is not None and stated != "" and integer(stated, "refunded_amount") != refunded:
+            raise ValueError(f"{record['trade']}: refunded_amount disagrees with transaction balance")
+        record["paid_with_twd"] = components(raw, "pay_info", PAY_FIELDS, gross)
+        record["returned_as_twd"] = components(raw, "refund_info", REFUND_FIELDS, refunded)
+    return record
 
 
-def read_pages(pages, scope):
+def read_pages(pages, scope, wallet_funding=False):
     records = {}
     count = total_pages = None
     pages_read = repeated = 0
@@ -73,7 +101,7 @@ def read_pages(pages, scope):
             raise ValueError("inconsistent page sequence or totals")
         pages_read, total_pages, count = index + 1, size, total
         for raw in rows:
-            record = transaction(raw, scope)
+            record = transaction(raw, scope, wallet_funding)
             trade = record["trade"]
             if trade in records:
                 if records[trade] != record:
@@ -126,6 +154,23 @@ def payment_method_totals(trades):
                 row["gross_twd"] += gross
                 row["refunded_twd"] += gross - net
                 row["net_twd"] += net
+    return totals
+
+
+def wallet_totals(groups):
+    totals = {}
+    for group in groups:
+        for trade in group:
+            if "paid_with_twd" not in trade:
+                continue
+            row = totals.setdefault(trade["method"], {"paid_with_twd": Counter(), "returned_as_twd": Counter(),
+                                                       "unclassified_trade_ids": []})
+            for key in ("paid_with_twd", "returned_as_twd"):
+                row[key].update(trade[key])
+            if trade["paid_with_twd"]["unclassified"] or trade["returned_as_twd"]["unclassified"]:
+                row["unclassified_trade_ids"].append(trade["trade"])
+    for row in totals.values():
+        row["unclassified_trade_ids"].sort()
     return totals
 
 
@@ -183,7 +228,7 @@ def reconcile_merchant(db, scope, start, records, repeated):
     return report, trades.values(), collections
 
 
-def reconcile_accounts(db, scopes, start, inputs):
+def reconcile_accounts(db, scopes, start, inputs, wallet_funding=False):
     db.row_factory = sqlite3.Row
     db.execute("BEGIN")
     by_merchant = {}
@@ -191,6 +236,8 @@ def reconcile_accounts(db, scopes, start, inputs):
     collections = defaultdict(list)
     for merchant, scope in sorted(scopes.items()):
         report, groups, payments = reconcile_merchant(db, scope, start, *inputs[merchant])
+        if wallet_funding:
+            report["wallet_funding_by_method"] = wallet_totals(groups)
         by_merchant[merchant] = report
         trade_groups.extend(groups)
         for order_id, payment in payments:
@@ -212,6 +259,8 @@ def reconcile_accounts(db, scopes, start, inputs):
         reason_counts.update(report["reason_counts"])
     totals = {key: sum(report[key] for report in by_merchant.values()) for key in
               ("matched_references", "local_attempts", "gateway_trades", "gateway_net_twd", "repeated_source_rows")}
+    if wallet_funding:
+        totals["wallet_funding_by_method"] = wallet_totals(trade_groups)
     return {**totals, "gateway_by_method": payment_method_totals(trade_groups), "by_merchant": by_merchant,
             "multiple_collections": multiple, "exceptions": exceptions, "reason_counts": dict(reason_counts)}
 
@@ -222,7 +271,7 @@ def close_day(db, scope, start, records, repeated):
     return reconcile_accounts(db, {merchant: scope}, start, {merchant: (records, repeated)})
 
 
-def load_inputs(scopes, snapshots):
+def load_inputs(scopes, snapshots, wallet_funding=False):
     inputs = {}
     if snapshots:
         for path in snapshots:
@@ -234,7 +283,7 @@ def load_inputs(scopes, snapshots):
                 raise ValueError("snapshot scope must match the requested merchant, environment and three-day TWD window")
             if merchant in inputs:
                 raise ValueError(f"{merchant}: duplicate merchant snapshot")
-            inputs[merchant] = read_pages(data["pages"], scope)
+            inputs[merchant] = read_pages(data["pages"], scope, wallet_funding)
         missing = sorted(scopes.keys() - inputs.keys())
         if missing:
             raise ValueError(f"Missing snapshot for {', '.join(missing)}")
@@ -243,7 +292,7 @@ def load_inputs(scopes, snapshots):
         if not key:
             raise ValueError("TAPPAY_PARTNER_KEY is required for --fetch")
         for merchant, scope in sorted(scopes.items()):
-            inputs[merchant] = read_pages(fetch_pages(scope, key), scope)
+            inputs[merchant] = read_pages(fetch_pages(scope, key), scope, wallet_funding)
     owners = {}
     for merchant, (records, _) in inputs.items():
         for record in records:
@@ -263,6 +312,7 @@ def main(argv=None):
     source.add_argument("--snapshot", type=Path, action="append", help="one offline JSON per requested merchant")
     source.add_argument("--fetch", action="store_true", help="read TapPay records using TAPPAY_PARTNER_KEY")
     parser.add_argument("--strict", action="store_true")
+    parser.add_argument("--wallet-funding", action="store_true", help="break down wallet purchase and refund amounts")
     args = parser.parse_args(argv)
     try:
         start = day_start(args.day)
@@ -270,9 +320,9 @@ def main(argv=None):
                   "start_time": start - DAY_MS, "end_time": start + 2 * DAY_MS - 1}
         merchants = sorted({identifier(m, "merchant ID") for m in args.merchant})
         scopes = {m: dict(window, merchant=m) for m in merchants}
-        inputs = load_inputs(scopes, args.snapshot)
+        inputs = load_inputs(scopes, args.snapshot, args.wallet_funding)
         with closing(sqlite3.connect(args.database.resolve().as_uri() + "?mode=ro", uri=True)) as db:
-            report = reconcile_accounts(db, scopes, start, inputs)
+            report = reconcile_accounts(db, scopes, start, inputs, args.wallet_funding)
         scope = scopes[merchants[0]] if len(merchants) == 1 else dict(window, merchants=merchants)
         print(json.dumps({"day": args.day, "scope": scope, **report}, sort_keys=True, ensure_ascii=False, indent=2))
         return 3 if args.strict and (report["exceptions"] or report["multiple_collections"]) else 0

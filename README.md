@@ -4,7 +4,7 @@
 
 ## 禾日食堂的電子支付日結
 
-若客人第一次付款顯示失敗、重試後成功，店員可以用這個指令確認金流端到底收了幾筆。指令以唯讀方式開啟禾日食堂的 SQLite 備份，逐次比對付款參考號、金流交易號、支付工具、原始金額與狀態。適用於 LINE Pay、全支付、街口支付及信用卡。另支援下方的通用電商 CSV 月結。
+若客人第一次付款顯示失敗、重試後成功，店員可以用這個指令確認金流端到底收了幾筆。指令以唯讀方式開啟禾日食堂的 SQLite 備份，逐次比對付款參考號、金流交易號、支付工具、原始金額與狀態。支援 LINE Pay、全支付、街口支付、悠遊付、Pi 拍錢包、全盈+PAY 及信用卡。另支援下方的通用電商 CSV 月結。
 
 從空白目錄名稱開始，產生合成交易，再跑一次離線日結。
 
@@ -52,6 +52,26 @@ python restaurant_close.py dinner-split/restaurant.db --day 2026-11-23 --environ
 **日界與金額。** 有對應付款嘗試的交易，歸入店內發起付款的台灣日期；沒有對應餐單的交易，採金流端日期。查詢範圍前後各延伸一天，讓午夜前送出、午夜後確認的同筆付款只算一次。跨日重試若在這個範圍內出現兩次實收，會在餐單下列出兩個交易號。報表列出查詢當時的狀態；後續退款可以用更新後的資料重新核對。金流合計涵蓋該商戶該環境的 TWD 已請款金額與退款餘額；銀行撥款手續費另由撥款明細核對。
 
 **資料範圍。** 每次核對指定環境中列入的商店編號，商店編號與其他通路共用時，其他通路交易也可能出現在 `provider_only`。本機示範付款和現金單皆排除。報表只輸出對帳欄位。保留在本機的 SQLite 備份與原始金流檔仍可能含顧客資料。CI 會在禾日食堂實際的資料庫遷移上建表，驗證跨午夜、重複收款、缺頁和付款重試等情境。[日結程式](restaurant_close.py) · [跨專案測試](test_restaurant_close.py)
+
+## 查錢包的點數、實付與退款
+
+日結加上 `--wallet-funding`，即可從 `wallet_funding_by_method` 查看六種電子錢包各自的付款來源與退款。各商店小計也有相同欄位。以下指令以兩個合成商店編號重跑案例。
+
+```sh
+python examples/restaurant_demo.py wallet-day --wallet-funding
+python restaurant_close.py wallet-day/restaurant.db --day 2026-11-23 --environment sandbox --merchant demo-restaurant --merchant demo-wallet --snapshot wallet-day/demo-restaurant.json --snapshot wallet-day/demo-wallet.json --wallet-funding
+```
+
+| 報表位置 | 合成日結中的數字 |
+| --- | --- |
+| `pi_wallet.paid_with_twd` | 兩個商店共收 300 元，包含點數折抵 70 元、信用卡 160 元、連結帳戶 70 元。 |
+| `pi_wallet.returned_as_twd` | 部分退款 60 元，金流回報返還點數折抵金額 10 元、實付金額 50 元。Pi 拍錢包淨額為 240 元。 |
+| `plus_pay.returned_as_twd.unclassified` | 已確認全退 90 元，來源未提供退款組成。可用 `unclassified_trade_ids` 查回該筆交易。 |
+| `gateway_net_twd` | 六種錢包合計淨額 550 元，加上信用卡 19 元，全日合計 569 元。待確認交易另列狀態。 |
+
+購買時的 `pay_info` 可提供點數、優惠券、信用卡、錢包餘額與銀行連結帳戶金額。退款的 `refund_info` 可提供返還點數折抵金額與實付金額，單位皆為新台幣元。兩組資料分別與總收及退款核對。來源可省略欄位或回傳空值，未能解釋的差額列入 `unclassified`；例如只知道消費 50 元中用了 10 元點數，其餘 40 元就留待查明。該差額仍計入總額與淨額。
+
+若來源明細加總超過交易金額，或同一金流交易在分頁間出現不同拆分，啟用明細的日結會以結束碼 2 中止。報表只取上述金額，不輸出錢包帳號或遮罩卡號。這份演練使用合成交易。[TapPay 交易紀錄欄位](https://docs.tappaysdk.com/px-pay-plus/zh/reference.html#trade_records) · [跨商店明細與退款測試](test_wallet_funding.py)
 
 ## 跑一次電商月結
 

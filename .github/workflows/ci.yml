@@ -16,7 +16,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: peca12968/hey-table
-          ref: d905ccfe1b8237f57e3e5092356c1929fc08587c
+          ref: e0596f05039ff0520bfb1207c20fee05c1e7894b
           path: hey-table
           sparse-checkout: drizzle
           persist-credentials: false
