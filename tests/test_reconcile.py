@@ -65,6 +65,19 @@ def test_original_schema_through_expiry_replays_and_equal_physical_balance(tmp_p
     value = json.loads(report.stdout)
     assert value["opening"] == {"capacity": 20, "available": 13, "held": 7}
     assert value["closing"] == {"capacity": 20, "available": 16, "held": 4}
+    assert value["hold_events"] == [
+        {"kind": "reserve", "reservation": "timed", "quantity": 6},
+        {"kind": "expired", "reservation": "timed", "quantity": 3},
+    ]
+    assert value["available_changes"] == {
+        "reserve": -6,
+        "inbound": 4,
+        "restock": 1,
+        "partial_release": 1,
+        "released": 0,
+        "expired": 3,
+    }
+    assert value["expected_available"] == 16 and value["available_difference"] == 0
     assert (
         value["balanced"] and value["capacity_difference"] == 0 and not value["issues"]
     )
@@ -206,3 +219,36 @@ def test_over_return_on_one_box_despite_balanced_physical_units(tmp_path):
             "snapshot": "closing",
         }
     ]
+
+
+def test_manual_cancel_full_release_and_fully_shipped_do_not_double_count(tmp_path):
+    current, opening = tmp_path / "live.db", tmp_path / "opening.db"
+    store = Store(current)
+    store.initialize()
+    for key in ["manual", "edited", "shipped", "before"]:
+        store.reserve(key, SKU, 3)
+    store.release("before")
+    backup(current, opening)
+    store.fulfill("manual", "A", 1)
+    store.release("manual")
+    store.release("manual")
+    store.release_units("edited", "all", 3)
+    store.fulfill("shipped", "A", 3)
+    report = reconcile(opening, current, SKU)
+    assert report["balanced"] and report["expected_available"] == 16
+    assert report["hold_events"] == [
+        {"kind": "released", "reservation": "manual", "quantity": 2}
+    ]
+    assert report["available_changes"]["partial_release"] == 3
+    assert report["available_changes"]["expired"] == 0
+    with closing(sqlite3.connect(current)) as db, db:
+        db.execute("DELETE FROM reservations WHERE id='before'")
+        db.execute("UPDATE reservations SET quantity=4 WHERE id='manual'")
+    issues = reconcile(opening, current, SKU)["issues"]
+    assert {"reason": "missing_reservation", "reservation": "before"} in issues
+    assert {
+        "reason": "changed_order_quantity",
+        "reservation": "manual",
+        "opening": 3,
+        "closing": 4,
+    } in issues

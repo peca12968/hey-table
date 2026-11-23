@@ -11,11 +11,19 @@ import sys
 
 
 @dataclass
+class Hold:
+    quantity: int
+    state: str
+    remainder: int
+
+
+@dataclass
 class Snapshot:
     capacity: int
     available: int
     held: int
     receipts: dict
+    reservations: dict[str, Hold]
     issues: list
 
     def balances(self):
@@ -88,6 +96,8 @@ def read_snapshot(path, sku):
                 raise ValueError(f"{path}: inconsistent schema for {table}")
         shipped = "shipped" if "shipped" in columns else "0"
         reduced = "reduced" if "reduced" in columns else "0"
+        expired = "timed_out" if "timed_out" in columns else "0"
+        reservations = {}
         held = 0
         issues = []
         for box, restocked in sorted(returns_by_box.items()):
@@ -101,8 +111,8 @@ def read_snapshot(path, sku):
                         "restocked": restocked,
                     }
                 )
-        for key, quantity, state, sent, released in db.execute(
-            f"SELECT id, quantity, state, {shipped}, {reduced} FROM reservations WHERE sku=? ORDER BY id",
+        for key, quantity, state, sent, released, timed_out in db.execute(
+            f"SELECT id, quantity, state, {shipped}, {reduced}, {expired} FROM reservations WHERE sku=? ORDER BY id",
             (sku,),
         ):
             for kind, stored in (("dispatch", sent), ("release", released)):
@@ -117,6 +127,9 @@ def read_snapshot(path, sku):
                         }
                     )
             remaining = quantity - totals["dispatch", key] - totals["release", key]
+            reservations[key] = Hold(
+                quantity, "expired" if timed_out else state, remaining
+            )
             if remaining < 0:
                 issues.append(
                     {
@@ -137,7 +150,52 @@ def read_snapshot(path, sku):
                     "expected": capacity - held,
                 }
             )
-        return Snapshot(capacity, available, held, receipts, issues)
+        return Snapshot(capacity, available, held, receipts, reservations, issues)
+
+
+def hold_events(before, after, issues):
+    events = []
+    for key in sorted(before.keys() | after.keys()):
+        previous, current = before.get(key), after.get(key)
+        if current is None:
+            issues.append({"reason": "missing_reservation", "reservation": key})
+            continue
+        if previous is None:
+            events.append(
+                {"reservation": key, "kind": "reserve", "quantity": current.quantity}
+            )
+        else:
+            if previous.quantity != current.quantity:
+                issues.append(
+                    {
+                        "reason": "changed_order_quantity",
+                        "reservation": key,
+                        "opening": previous.quantity,
+                        "closing": current.quantity,
+                    }
+                )
+            if previous.state != "held":
+                if previous.state != current.state:
+                    issues.append(
+                        {
+                            "reason": "changed_closed_state",
+                            "reservation": key,
+                            "opening": previous.state,
+                            "closing": current.state,
+                        }
+                    )
+                continue
+        # A final box or a partial-release receipt taking the balance to zero
+        # already explains the close. Only cancel/expiry frees a residual hold.
+        if current.state != "held" and current.remainder > 0:
+            events.append(
+                {
+                    "reservation": key,
+                    "kind": current.state,
+                    "quantity": current.remainder,
+                }
+            )
+    return events
 
 
 def reconcile(opening, closing_snapshot, sku):
@@ -180,6 +238,27 @@ def reconcile(opening, closing_snapshot, sku):
         issues.append(
             {"reason": "capacity", "stored": after.capacity, "expected": expected}
         )
+    events = hold_events(before.reservations, after.reservations, issues)
+    changes = {
+        "inbound": movement["inbound"],
+        "restock": movement["restock"],
+        "partial_release": movement["release"],
+        "reserve": 0,
+        "released": 0,
+        "expired": 0,
+    }
+    for event in events:
+        sign = -1 if event["kind"] == "reserve" else 1
+        changes[event["kind"]] += sign * event["quantity"]
+    expected_available = before.available + sum(changes.values())
+    if after.available != expected_available:
+        issues.append(
+            {
+                "reason": "available_movement",
+                "stored": after.available,
+                "expected": expected_available,
+            }
+        )
     return {
         "sku": sku,
         "opening": before.balances(),
@@ -188,6 +267,10 @@ def reconcile(opening, closing_snapshot, sku):
         "new_receipts": additions,
         "expected_capacity": expected,
         "capacity_difference": difference,
+        "hold_events": events,
+        "available_changes": changes,
+        "expected_available": expected_available,
+        "available_difference": after.available - expected_available,
         "balanced": not issues,
         "issues": issues,
     }
