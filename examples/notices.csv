@@ -1,0 +1,8 @@
+account,payout_id,merchant,line_id,method,kind,amount_twd
+food,A,lunch,L1,line_pay,collection,100
+food,B,dinner,L2,px_pay_plus,collection,150
+food,C,lunch,L3,pi_wallet,collection,70
+food,D,dinner,L4,plus_pay,collection,70
+food,E,lunch,L5,jko_pay,collection,60
+food,F,lunch,L6,card,collection,25
+second,A,branch,L1,line_pay,refund,100

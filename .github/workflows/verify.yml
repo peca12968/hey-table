@@ -1,0 +1,24 @@
+name: Verify bank match candidates
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  matching:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python: ['3.11', '3.13']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - uses: actions/checkout@v4
+        with:
+          repository: peca12968/payout-ledger
+          ref: a95730bda99d7498e4e93eb42bddf8d506e9737d
+          path: payout-ledger
+          persist-credentials: false
+      - run: python -m unittest -v
+        env:
+          PAYOUT_BANK_CLOSE: payout-ledger/bank_close.py
