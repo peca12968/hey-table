@@ -1,0 +1,25 @@
+name: Verify corpus replay against real Stockroom endpoints
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  replay:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7
+        with:
+          repository: peca12968/stockroom-reservations
+          ref: d6d5139e2b4413fea49f83d15b3928c7e97be6da
+          fetch-depth: 0
+          path: stockroom-src
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - run: python -m pip install -r requirements.txt -r stockroom-src/requirements-dev.txt
+      - run: python -m unittest -v
+      - run: python demo.py stockroom-src results
