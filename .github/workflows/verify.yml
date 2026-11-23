@@ -1,0 +1,23 @@
+name: Verify grocery procurement plans
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  procurement:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python: ['3.11', '3.13']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - run: python -m unittest -v
+      - uses: actions/checkout@v4
+        with:
+          repository: peca12968/prep-sheet
+          ref: dcf6360a8530dadc6f11657ad0b69c605a319581
+          path: prep-sheet
+          persist-credentials: false
+      - run: python prep_demo.py prep-sheet
