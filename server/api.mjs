@@ -1,4 +1,5 @@
 import {addOnFor} from "./add-ons.mjs";
+import {comboVersion,priceCombos} from "../lib/combo-pricing.mjs";
 import qrcode from "qrcode-generator";
 import {dishes, tables, transitions} from "../lib/menu.mjs";
 
@@ -16,6 +17,7 @@ const fromTimingRow = row => ({revision:row?.revision??0, kitchen:activeKitchen(
 const selectOrders = "SELECT orders.*, "+latestState+" AS payment_state FROM orders";
 function receipt(row) {
   return {id:row.id, mode:row.mode, table:row.table_no, note:row.note, items:JSON.parse(row.items),
+    ...(row.combo_quote ? {combo:JSON.parse(row.combo_quote)} : {}),
     paymentMethod:row.payment_method,paymentEnv:row.payment_env,paymentState:row.payment_state??'unpaid',total:row.total, status:row.status, created:row.created};
 }
 function menuItems(lines) {
@@ -122,18 +124,30 @@ export async function api(request, env) {
     if (!order) return fail("請確認桌號、餐點數量與備註");
     const method=input.paymentMethod ?? "cash", config=settings(env);
     if(!Object.hasOwn(methods,method))return fail("付款方式無效");
+    const selected = Object.hasOwn(input,"comboVersion");
+    if (selected && (typeof input.comboVersion !== "string" || !Number.isSafeInteger(input.expectedTotal)))
+      return fail("請重新確認套餐版本與金額");
+    const quote = selected && input.comboVersion === comboVersion && config.mode === "demo"
+      ? priceCombos(order.items) : null;
+    const validPrice = !selected || (quote?.discount > 0 && quote.total === input.expectedTotal);
+    const snapshot = quote && validPrice ? JSON.stringify({version:comboVersion,quote}) : null;
     const available=config.methods.includes(method);
     const lines = JSON.stringify(order.items);
-    const stmt = db.prepare(`INSERT INTO orders(token,mode,table_no,note,items,total,created,payment_method,payment_env)
-      SELECT ?,?,?,?,?,?,?,?,? WHERE ? AND NOT EXISTS (SELECT 1 FROM unavailable u
+    const stmt = db.prepare(`INSERT INTO orders(token,mode,table_no,note,items,total,created,payment_method,payment_env,combo_quote)
+      SELECT ?,?,?,?,?,?,?,?,?,? WHERE ? AND NOT EXISTS (SELECT 1 FROM unavailable u
       JOIN json_each(?) j ON u.dish=json_extract(j.value,'$.id')) ON CONFLICT(token) DO NOTHING`);
-    await stmt.bind(order.token,order.mode,order.table,order.note,lines,order.total,Date.now(),method,method==='cash'?'cash':config.mode,available?1:0,lines).run();
+    await stmt.bind(order.token,order.mode,order.table,order.note,lines,quote?.total??order.total,Date.now(),method,method==='cash'?'cash':config.mode,snapshot,available&&validPrice?1:0,lines).run();
     const row = await db.prepare(selectOrders+" WHERE token=?").bind(order.token).first();
+    if (!row && !validPrice) return fail("套餐優惠或金額已變更，請重新確認餐單",409);
     if (!row && !available) return fail('此付款方式暫停使用',409);
     if (!row) return fail("部分餐點已售完，請重新確認菜單",409);
-    if (row.payment_method!==method || row.mode!==order.mode || row.table_no!==order.table || row.note!==order.note || row.items!==lines)
+    const saved = receipt(row);
+    const sameItems = saved.items.length === order.items.length && saved.items.every(line =>
+      order.items.some(item => item.id === line.id && item.qty === line.qty));
+    if (saved.combo?.version !== input.comboVersion || (selected && saved.total !== input.expectedTotal) ||
+        row.payment_method!==method || row.mode!==order.mode || row.table_no!==order.table || row.note!==order.note || !sameItems)
       return fail("送單識別碼已用於另一張訂單",409);
-    return json(receipt(row));
+    return json(saved);
   }
   if (path === "/api/ticket" && method === "GET") {
     const token = request.headers.get("X-Ticket");

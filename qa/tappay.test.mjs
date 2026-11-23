@@ -25,13 +25,37 @@ test("match payment, merchant, currency filter, original amount and trade before
     assert.equal(await lookup(env,order,attempt,reply({...data,record_status:1,...override})),null);
   }
 });
-function database(){
+function database(beforeMigration=()=>{}){
   const sqlite=new DatabaseSync(":memory:");
   const journal=JSON.parse(readFileSync(new URL("../drizzle/meta/_journal.json",import.meta.url)));
-  for(const {tag} of journal.entries)sqlite.exec(readFileSync(new URL("../drizzle/"+tag+".sql",import.meta.url),"utf8"));
+  for(const {tag} of journal.entries){
+    beforeMigration(tag,sqlite);
+    sqlite.exec(readFileSync(new URL("../drizzle/"+tag+".sql",import.meta.url),"utf8"));
+  }
   return {sqlite,prepare(sql){const stmt=sqlite.prepare(sql);return {bind(...args){return {
     first:()=>stmt.get(...args),run:()=>({meta:stmt.run(...args)}),all:()=>({results:stmt.all(...args)})};}};}};
 }
+test("migrate a historic price and recover accepted demo orders after a change of payment environment",async t=>{
+  const oldToken=crypto.randomUUID(),newToken=crypto.randomUUID();
+  const db=database((tag,sqlite)=>{
+    if(tag==="0004_combo_pricing")
+      sqlite.prepare("INSERT INTO orders(token,mode,note,items,total,created) VALUES (?,'pickup','',?,180,1)")
+        .run(oldToken,JSON.stringify([{id:"katsudon",name:"豬排丼",price:180,qty:1}]));
+  });
+  t.after(()=>db.sqlite.close());
+  const post=(mode,body)=>api(new Request("https://order.example/api/orders",{method:"POST",
+    headers:{"Content-Type":"application/json"},body:JSON.stringify(body)}),{DB:db,TAPPAY_MODE:mode});
+  const old={mode:"pickup",note:"",token:oldToken,items:[{id:"katsudon",qty:1}]};
+  const recovered=await (await post("production",old)).json();
+  assert.equal(recovered.total,180);
+  assert.equal(recovered.items[0].price,180);
+  assert.equal(Object.hasOwn(recovered,"combo"),false);
+  const deal={...old,token:newToken,items:[...old.items,{id:"sencha",qty:1}],comboVersion:"demo-v1",expectedTotal:200};
+  for(const mode of ["production","sandbox"])assert.equal((await post(mode,deal)).status,409);
+  const first=await (await post("demo",deal)).json();
+  assert.equal(first.total,200);
+  assert.deepEqual(await (await post("production",deal)).json(),first);
+});
 for(const method of ["line_pay","px_pay_plus","jko_pay","card"]){
   test(method+" follows sandbox charge, verified notification and out-of-order result",async t=>{
     const db=database();t.after(()=>db.sqlite.close());

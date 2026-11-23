@@ -29,6 +29,13 @@
       "when": 1795463410869,
       "tag": "0003_kitchen_timing_revisions",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "6",
+      "when": 1795467599769,
+      "tag": "0004_combo_pricing",
+      "breakpoints": true
     }
   ]
 }

@@ -1,6 +1,6 @@
 "use client";
 import {useEffect,useState} from "react";
-import {splitReceipt} from "@peca12968/table-shares";
+import {splitQuote,splitReceipt} from "@peca12968/table-shares";
 import "./bill-shares.css";
 
 function newDiner(id, items) {
@@ -35,7 +35,7 @@ function calculate(order, people) {
     if (!Object.keys(weights).length) return {error:"請至少指定一人分攤" + item.name + "。"};
     shares[item.id] = weights;
   }
-  return {result:splitReceipt(order,shares)};
+  return {result:order.combo ? splitQuote(order.combo.quote,shares) : splitReceipt(order,shares)};
 }
 
 function Editor({order}) {
@@ -63,7 +63,7 @@ function Editor({order}) {
     <h3>餐點分攤</h3>
     <p>平分填 1，沒吃填 0。想按 2 比 1 分食，就分別填 2 和 1。</p>
     {order.items.map(item => <fieldset key={item.id} className="shareItem">
-      <legend>{item.name} × {item.qty} · NT$ {item.price*item.qty}</legend>
+      <legend>{item.name} × {item.qty} · NT$ {order.combo?.quote.lines.find(line=>line.id===item.id)?.total ?? item.price*item.qty}</legend>
       {people.map((person,i) => {
         const name = person.name.trim() || "用餐人 "+(i+1);
         return <label key={person.id}><span>{name}</span>

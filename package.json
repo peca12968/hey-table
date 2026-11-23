@@ -16,9 +16,10 @@
   "dependencies": {
     "@base-ui/react": "^1.7.0",
     "@hookform/resolvers": "^5.7.1",
+    "@peca12968/combo-counter": "https://codeload.github.com/peca12968/combo-counter/tar.gz/25fbf7ae239c8ca8c465588b0fe8ab1756a04ff9",
     "@peca12968/menu-pairs": "https://codeload.github.com/peca12968/menu-pairs/tar.gz/388bf24e0b90538191fcf05994106bfb90a991bd",
     "@peca12968/pickup-window": "https://codeload.github.com/peca12968/pickup-window/tar.gz/1e86c05effd8ebd102ea92629df68dda6ab1bb6d",
-    "@peca12968/table-shares": "https://codeload.github.com/peca12968/table-shares/tar.gz/f96519878f9ac6ad79f7b3eae3602fa0c7a6afc0",
+    "@peca12968/table-shares": "https://codeload.github.com/peca12968/table-shares/tar.gz/91ff344a99838d91906d90328ac31f2533da1407",
     "@shadcn/react": "^0.3.0",
     "class-variance-authority": "0.7.1",
     "clsx": "2.1.1",

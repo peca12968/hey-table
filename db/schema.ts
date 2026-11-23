@@ -9,6 +9,7 @@ export const orders = sqliteTable("orders", {
   items: text("items").notNull(),
   paymentMethod: text("payment_method").notNull().default("cash"),
   paymentEnv: text("payment_env").notNull().default("cash"),
+  comboQuote: text("combo_quote"),
   total: integer("total").notNull(),
   status: text("status").notNull().default("pending"),
   created: integer("created").notNull(),
