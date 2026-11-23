@@ -4,6 +4,7 @@ import {Plus,Minus,ShoppingBag,X,Utensils,Check} from "lucide-react";
 import {dishes,tables} from "../lib/menu.mjs";
 import {Header,Footer,Mode,request} from "./shared";
 import {cartKey,openReceipt,read,save} from "../lib/order-storage.mjs";
+import CartQuote from "./cart-quote";
 
 import {methods,environmentLabel} from "../lib/payments.mjs";
 const groups=["全部","丼飯","小食","飲品"];
@@ -62,6 +63,7 @@ export default function Menu(){
     }
   }
   const hero=dishes[0],blocked=lines.some(d=>sold.includes(d.id));
+  const quoteBody=JSON.stringify({items:lines.map(d=>({id:d.id,qty:cart[d.id]}))});
   function addButton(d){return <button className="add" aria-label={"加入"+d.name} disabled={!loaded||busy||!!draft||sold.includes(d.id)||(cart[d.id]||0)>=20||invalid} onClick={()=>change(d.id,1)}><Plus size={18}/></button>;}
   return <><Header home/><main className="shell">
     <section className="hero"><div className="heroCopy"><p className="kicker"><span/> 本日主廚推薦</p><h1>{hero.name}</h1><p>{hero.description}</p><button className="heroAction" onClick={()=>change(hero.id,1)} disabled={!loaded||busy||!!draft||sold.includes(hero.id)||(cart[hero.id]||0)>=20||invalid}><Plus size={16}/> 加入餐單 <b>NT$ {hero.price}</b></button></div><img className="heroImg" src="/food/katsudon.webp" alt="滑蛋豬排丼"/></section>
@@ -78,6 +80,7 @@ export default function Menu(){
       {payments.methods.map(m=><option key={m} value={m}>{methods[m]}</option>)}</select>
       {method!=="cash"&&<small>{environmentLabel(payments.mode)}</small>}</label>}
     <div className="total"><span>合計</span><b>NT$ {total}</b></div>
+    {count>0&&loaded&&!invalid&&!blocked&&!draft&&!busy&&<CartQuote key={quoteBody} body={quoteBody}/>}
     {error&&<p className="error" role="alert">{error}</p>}{draft&&!busy&&lookup&&<p role="status">{lookup}</p>}{scope&&!loaded&&<p role="status">正在確認餐點供應狀態…</p>}
     <button className="primary full" disabled={busy||!count||invalid||(!draft&&(blocked||!loaded||!payments.methods.includes(method)))} onClick={submit}><Check size={17}/>{busy?"送單中…":draft?"重試同一張訂單":"確認送出訂單"}</button></aside></div>
     <span className="sr" aria-live="polite">{announcement}</span></main><Footer/>

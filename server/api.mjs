@@ -8,23 +8,29 @@ const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{1
 import {latestState,payableForKitchen,paymentApi,checkKitchenPayment} from "./payment-api.mjs";
 import {settings} from "./tappay.mjs";
 import {methods} from "../lib/payments.mjs";
+import {estimate} from "@peca12968/pickup-window";
+import kitchen from "@peca12968/pickup-window/demo-kitchen.json" with {type:"json"};
 const selectOrders = "SELECT orders.*, "+latestState+" AS payment_state FROM orders";
 function receipt(row) {
   return {id:row.id, mode:row.mode, table:row.table_no, note:row.note, items:JSON.parse(row.items),
     paymentMethod:row.payment_method,paymentEnv:row.payment_env,paymentState:row.payment_state??'unpaid',total:row.total, status:row.status, created:row.created};
 }
-function prepare(input) {
-  if (!uuid.test(input.token) || !["pickup","table"].includes(input.mode) ||
-      (input.mode === "table" ? !tables.includes(input.table) : input.table != null) ||
-      typeof input.note !== "string" || input.note.length > 160 ||
-      !Array.isArray(input.items) || !input.items.length || input.items.length > dishes.length) return null;
+function menuItems(lines) {
+  if (!Array.isArray(lines) || !lines.length || lines.length > dishes.length) return null;
   const byId = new Map();
-  for (const line of input.items) {
+  for (const line of lines) {
     if (!line || !dishes.some(d => d.id === line.id) || byId.has(line.id) ||
         !Number.isInteger(line.qty) || line.qty < 1 || line.qty > 20) return null;
     byId.set(line.id,line.qty);
   }
-  const items = dishes.filter(d => byId.has(d.id)).map(({id,name,price}) => ({id,name,price,qty:byId.get(id)}));
+  return dishes.filter(d => byId.has(d.id)).map(({id,name,price}) => ({id,name,price,qty:byId.get(id)}));
+}
+function prepare(input) {
+  if (!uuid.test(input.token) || !["pickup","table"].includes(input.mode) ||
+      (input.mode === "table" ? !tables.includes(input.table) : input.table != null) ||
+      typeof input.note !== "string" || input.note.length > 160) return null;
+  const items = menuItems(input.items);
+  if (!items) return null;
   return {token:input.token,mode:input.mode,table:input.table??null,note:input.note.trim(),items,
     total:items.reduce((sum,line) => sum + line.qty * line.price,0)};
 }
@@ -62,6 +68,21 @@ export async function api(request, env) {
   if (path === "/api/menu" && method === "GET") {
     const {results} = await db.prepare("SELECT dish FROM unavailable").all();
     return json({payments:settings(env),unavailable:results.map(r=>r.dish)});
+  }
+  if (path === "/api/quote" && method === "POST") {
+    const items = menuItems(input.items);
+    if (!items) return fail("請確認餐點與數量");
+    const [stock, queue] = await db.batch([
+      db.prepare("SELECT dish FROM unavailable"),
+      db.prepare("SELECT id,created,items,status FROM orders WHERE status='preparing' ORDER BY id DESC")
+    ]);
+    if (stock.results.some(row => items.some(item => item.id === row.dish)))
+      return fail("餐單中有已售完餐點，請調整數量後再試算",409);
+    const capturedAt = Date.now();
+    const orders = queue.results.map(row => ({...row,items:JSON.parse(row.items)}));
+    const snapshot = {format:"hey-table.station-orders.v1", capturedAt, throughId:orders[0]?.id ?? 0, orders};
+    const {quote} = estimate(snapshot, kitchen, {cart:{items}});
+    return json({capturedAt, seconds:quote.seconds});
   }
   if (path === "/api/orders" && method === "POST") {
     const order = prepare(input);

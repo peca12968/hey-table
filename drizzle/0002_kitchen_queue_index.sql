@@ -1,0 +1,1 @@
+CREATE INDEX `orders_status_id` ON `orders` (`status`,`id`);

@@ -12,7 +12,7 @@ export const orders = sqliteTable("orders", {
   total: integer("total").notNull(),
   status: text("status").notNull().default("pending"),
   created: integer("created").notNull(),
-});
+}, t => [index("orders_status_id").on(t.status,t.id)]);
 export const paymentAttempts = sqliteTable("payment_attempts", {
   id: integer("id").primaryKey({autoIncrement:true}),
   orderId: integer("order_id").notNull().references(()=>orders.id),

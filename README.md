@@ -8,6 +8,10 @@
 
 ## 用兩台裝置試點一單
 
+自取與掃碼內用的購物車會在餐點或份數改變後自動顯示預估出餐時間，亦可按「重新試算」讀取最新廚房狀態。試算假設目前的餐單接在製作中餐單之後，把各站尚在製作的餐點按完整批次計算。使用示範工時，尚未納入鍋中進度與店家接單前的等候時間。
+
+一個可重跑的案例是熱台正在做三碗親子丼及兩份唐揚雞，飲品台正在做兩杯煎茶。此時加點一碗親子丼約需 11–14 分鐘；第一張單出餐後重新試算，降為 4–5 分鐘。購物車只收到試算時間及秒數區間。試算不建立餐單或付款，廚房備註及其他餐單資料留在後端。[Pickup Window 排程](https://github.com/peca12968/pickup-window) · [瀏覽器與 D1 測試](qa/cart-quote.spec.mjs)
+
 1. 在 `/tables` 列印 A01 到 A08 桌牌。掃描 A03 後，菜單與收據顯示「A03 桌內用」。從首頁開啟則預設線上自取。託管預覽與桌牌連結都需有網站存取權。
 2. 加入滑蛋豬排丼 NT$190，可增減數量、加備註，再確認送單。保留收據連結即可查這張餐單；同一裝置也能從「查詢餐單」找回最近一單。
 3. 店主在 `/kitchen` 接單，依序切換製作中、可取餐、已完成。待接單時也能取消。收據每五秒更新一次，可手動更新。後台可暫停售餐，再恢復供應。
@@ -65,6 +69,7 @@ npm ci --include=optional
 npm run build
 node --import ./scripts/sites-env.mjs ./node_modules/wrangler/bin/wrangler.js d1 execute DB --local --config dist/server/wrangler.json --persist-to .wrangler/state --file drizzle/0000_fresh_white_tiger.sql
 node --import ./scripts/sites-env.mjs ./node_modules/wrangler/bin/wrangler.js d1 execute DB --local --config dist/server/wrangler.json --persist-to .wrangler/state --file drizzle/0001_online_payments.sql
+node --import ./scripts/sites-env.mjs ./node_modules/wrangler/bin/wrangler.js d1 execute DB --local --config dist/server/wrangler.json --persist-to .wrangler/state --file drizzle/0002_kitchen_queue_index.sql
 npm start
 ```
 
