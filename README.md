@@ -95,6 +95,28 @@ python bank_close.py examples/payout-notices.csv examples/bank-entries.csv
 
 [撥款通知樣本](examples/payout-notices.csv) · [銀行流水樣本](examples/bank-entries.csv) · [入帳核對實作](bank_close.py) · [批次與沖回測試](test_bank_close.py)
 
+### 查到水單後補登批號
+
+銀行流水 D03、D04 都是同日入帳 70 元，單靠金額與日期，兩筆都可能屬於 C 或 D。店員查到兩張水單後，可將 D03 對應到 C、D04 對應到 D，填入查證依據編號。同一份確認單也能登記另一個收款帳戶的負數扣款。以下使用 Remit Match 的八筆合成流水與本專案的三筆示範確認。
+
+```sh
+git clone https://github.com/peca12968/remit-match ../remit-match
+git -C ../remit-match checkout ec46694f1774e9a4e625d929f4e9c6db95ce14a6
+python bank_review.py ../remit-match/examples/notices.csv ../remit-match/examples/bank.csv examples/review-confirmations.csv review.zip
+python -m zipfile -e review.zip reviewed
+python ../remit-match/remit.py reviewed/report.json ../remit-match/examples/windows.csv
+```
+
+覆核後，無批號流水從 8 筆減為 5 筆。三個批次各自核平，剩下五筆可繼續用 Remit Match 查找。輸出的 ZIP 內有三份檔案。
+
+| 檔案 | 可查到的內容 |
+| --- | --- |
+| `bank.csv` | 補上批號的完整銀行流水。同帳戶重複的相同流水合併成一列，可直接再交給銀行核帳指令。 |
+| `report.json` | 依新批號重新核算的完整報表。若水單上的批號仍缺撥款通知，會列為 `bank_only`。 |
+| `audit.json` | 每筆確認的帳戶、流水號、日期、金額、原批號、新批號與依據編號，另列覆核前後各帳戶小計。 |
+
+確認單使用和銀行明細相同的五個欄位，最後加上 `evidence_ref` 填寫可供回查的文件編號。程式逐筆核對帳戶、流水號、日期和有正負號的金額。已登記相同批號時會留下 `already_present` 紀錄。日期、金額或既有批號矛盾時，整次覆核中止，結束碼為 2。原始輸入保留，輸出請指定新的 ZIP 檔名。工具記錄店員已查證的文件編號，文件真實性由查核人員確認。[示範確認單](examples/review-confirmations.csv) · [覆核程式](bank_review.py) · [覆核與重跑測試](test_bank_review.py)
+
 ## 跑一次電商月結
 
 需要 Python 3.11 或更新版本。資料夾內附虛構的訂單與入帳明細。

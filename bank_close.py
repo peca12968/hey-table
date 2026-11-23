@@ -53,6 +53,10 @@ def read_feed(path, fields, identity):
 def reconcile(notices, statement):
     advice, repeated_advice = read_feed(notices, NOTICE, ("merchant", "line_id"))
     movements, repeated_bank = read_feed(statement, BANK, ("account", "entry_id"))
+    return reconcile_rows(advice, movements, repeated_advice, repeated_bank)
+
+
+def reconcile_rows(advice, movements, repeated_advice, repeated_bank):
     notice_groups, bank_groups = defaultdict(list), defaultdict(list)
     unassigned = []
     totals = defaultdict(lambda: {"expected_twd": 0, "bank_twd": 0, "unassigned_twd": 0})

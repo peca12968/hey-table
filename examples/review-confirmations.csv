@@ -1,0 +1,4 @@
+account,entry_id,payout_id,posted_on,amount_twd,evidence_ref
+food,D03,C,2026-11-22,70,DEMO-SLIP-C03
+food,D04,D,2026-11-22,70,DEMO-SLIP-D04
+second,D01,A,2026-11-22,-100,DEMO-DEBIT-A01
