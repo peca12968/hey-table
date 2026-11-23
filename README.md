@@ -11,7 +11,7 @@
 
 ## 重跑一桌
 
-需要 Python 3.12 或更新版本，僅使用標準函式庫。
+命令列使用 Python 3.12 或更新版本的標準函式庫。跨語言測試另需 Node.js 24。
 
 ```sh
 python split.py examples/receipt.json examples/shares.json
@@ -27,6 +27,21 @@ python -m unittest -v
 3. 多組解同分時，以固定的品項及人名順序求解，調換輸入資料排列仍會拿到同一份明細。輸出中的 `exact` 保留個人原始分數，`pay` 是實收整數。
 
 測試獨立枚舉 240 張合成帳單的可行整元分配，逐筆核對兩層目標。另檢查只有各自兩人分食的兩組菜、零元品項，以及大於 64 位元的金額。[分帳實作](split.py) · [窮舉驗證](test_split.py)
+
+## 在瀏覽器使用相同分帳規則
+
+瀏覽器可直接匯入 ES 模組。在呼叫端將餐點與參與者權重交給 `splitReceipt` 即可取得可顯示的逐菜明細及個人總額，所有金額都在裝置上計算。
+
+```js
+import {splitReceipt} from "./split.mjs";
+const result = splitReceipt(
+  {total: 85, items: [{id: "gyoza", qty: 1, price: 85}]},
+  {gyoza: {"小安": 1, "小岑": 1}}
+);
+console.log(result.lines.gyoza);
+```
+
+JavaScript 的價格、數量、權重及收據總額接受安全整數。中間乘積與成本以 BigInt 精確計算。兩個版本對 240 桌逐一比較完整輸出，包含同分時的尾數歸屬，再用接近安全整數上限的輸入核對中間精度。[瀏覽器模組](split.mjs)
 
 ## 連到點餐服務重跑
 

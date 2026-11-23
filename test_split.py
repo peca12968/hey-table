@@ -14,6 +14,18 @@ from split import split
 ROOT = Path(__file__).resolve().parent
 
 
+def browser_results(cases):
+    script = """
+      import {readFileSync} from "node:fs";
+      import {splitReceipt} from "./split.mjs";
+      const cases = JSON.parse(readFileSync(0, "utf8"));
+      console.log(JSON.stringify(cases.map(([receipt, shares]) => splitReceipt(receipt, shares))));
+    """
+    output = subprocess.run(["node", "--input-type=module", "-e", script], cwd=ROOT, check=True,
+                            input=json.dumps(cases), capture_output=True, encoding="utf-8")
+    return json.loads(output.stdout)
+
+
 def oracle(receipt, shares, result):
     """Enumerate whole line allocations without using the implementation's network."""
     rows = receipt["items"]
@@ -64,6 +76,7 @@ class SplitTests(unittest.TestCase):
 
     def test_weighted_receipts_match_exhaustive_two_level_optimum(self):
         rng = Random(2794)
+        cases, expected = [], []
         for i in range(240):
             items, shares = [], {}
             for j in range(rng.randint(1, 4)):
@@ -74,8 +87,19 @@ class SplitTests(unittest.TestCase):
             with self.subTest(i=i):
                 result = split(receipt, shares)
                 oracle(receipt, shares, result)
+                cases.append((receipt, shares))
+                expected.append(result)
                 reordered = {d: dict(reversed(list(weights.items()))) for d, weights in reversed(list(shares.items()))}
                 self.assertEqual(split(dict(receipt, items=items[::-1]), reordered), result)
+        self.assertEqual(browser_results(cases), expected)
+
+    def test_browser_exact_intermediates_and_unicode_ties(self):
+        large = 2**53 - 1
+        receipt = {"total": large, "items": [{"id": "__proto__", "qty": 1, "price": large}]}
+        weights = {"__proto__": {"constructor": large, "\uffff": large - 1, "🍚": large}}
+        cases = [(receipt, weights), (dict(receipt, total=1, items=[dict(receipt["items"][0], price=1)]),
+                                     {"__proto__": {"🍚": 1, "\uffff": 1}})]
+        self.assertEqual(browser_results(cases), [split(*case) for case in cases])
 
     def test_precision_and_invalid_inputs(self):
         price = 2**70 + 1
