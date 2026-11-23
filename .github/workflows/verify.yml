@@ -1,0 +1,30 @@
+name: Verify private pickup calendar revisions
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  calendar:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - run: python -m pip install -r requirements.txt
+      - run: python -m unittest -v
+      - uses: actions/checkout@v7
+        with:
+          repository: peca12968/pickup-window
+          ref: 1e86c05effd8ebd102ea92629df68dda6ab1bb6d
+          path: pickup-window
+          persist-credentials: false
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+      - run: npm ci
+      - run: npm test
+        env:
+          PICKUP_WINDOW: pickup-window

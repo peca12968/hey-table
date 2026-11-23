@@ -1,0 +1,9 @@
+{
+  "format":"hey-table.station-orders.v1", "capturedAt":1795406400000, "throughId":19,
+  "orders":[
+    {"id":19,"mode":"pickup","status":"pending","created":1795406399000,"items":[{"id":"katsudon","qty":8}]},
+    {"id":18,"mode":"table","status":"preparing","created":1795406398000,"items":[{"id":"karaage","qty":2}]},
+    {"id":17,"mode":"pickup","status":"preparing","created":1795406397000,"note":"fixture-private-note",
+     "items":[{"id":"oyakodon","qty":3},{"id":"sencha","qty":2}]}
+  ]
+}
