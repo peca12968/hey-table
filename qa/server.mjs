@@ -1,0 +1,14 @@
+import {mkdtempSync,rmSync} from "node:fs";
+import {tmpdir} from "node:os";
+import {join} from "node:path";
+import {spawn,execFileSync} from "node:child_process";
+import {fileURLToPath} from "node:url";
+const root=fileURLToPath(new URL("../",import.meta.url));
+const state=mkdtempSync(join(tmpdir(),"hey-table-"));
+const wrangler=["--import","./scripts/sites-env.mjs","./node_modules/wrangler/bin/wrangler.js"];
+const common=["--local","--config","dist/server/wrangler.json","--persist-to",state];
+execFileSync(process.execPath,[...wrangler,"d1","execute","DB",...common,"--file","drizzle/0000_fresh_white_tiger.sql"],{cwd:root});
+const child=spawn(process.execPath,[...wrangler,"dev",...common,"--ip","127.0.0.1","--port","18841",
+  "--inspector-port","0","--var","STAFF_KEY:local-test-kitchen"],{cwd:root,stdio:"inherit"});
+for(const signal of ["SIGTERM","SIGINT"]) process.on(signal,()=>child.kill());
+child.on("exit",code=>{try{rmSync(state,{force:true,recursive:true,maxRetries:4});}finally{process.exitCode=code??0;}});

@@ -1,0 +1,6 @@
+{
+  "name":"hey-table-browser-tests",
+  "private":true,
+  "type":"module",
+  "dependencies":{"@playwright/test":"1.65.1","jsqr":"1.4.0","pngjs":"7.0.0"}
+}
