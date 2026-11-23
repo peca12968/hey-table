@@ -204,3 +204,60 @@ test("printable kitchen snapshot exports the displayed orders to Prep Sheet",asy
   await page.getByRole("button",{name:"重新擷取"}).click();
   await expect(row.getByRole("cell")).toHaveText(["0","2"]);
 });
+
+test("mobile diners split a receipt locally, restore edits and switch between receipts",async({page,request})=>{
+  async function order(items){
+    const token=randomUUID();
+    const response=await request.post("/api/orders",{data:{token,mode:"table",table:"A03",note:"",
+      items:items.map(id=>({id,qty:1}))}});
+    expect(response.ok()).toBeTruthy();
+    return {token,receipt:await response.json()};
+  }
+  const first=await order(["katsudon","gyoza","edamame"]), second=await order(["sencha"]);
+  const writes=[];
+  page.on("request",r=>{if(r.method()!=="GET"&&new URL(r.url()).pathname.startsWith("/api/"))writes.push(r.url());});
+  await page.setViewportSize({width:390,height:844});
+  await page.goto("/ticket#"+first.token);
+  const toggle=page.getByRole("button",{name:"這張餐單怎麼分帳？"});
+  const totals=page.getByRole("region",{name:"每人應付"});
+  const amounts=totals.locator("dl > div");
+  await toggle.click();
+  await page.getByRole("textbox",{name:"用餐人 1的稱呼"}).fill("小安");
+  await page.getByRole("textbox",{name:"用餐人 2的稱呼"}).fill("小岑");
+  const weight=(dish,name)=>page.getByRole("spinbutton",{name:dish+"・"+name+"的分攤份數",exact:true});
+  await weight("滑蛋豬排丼","小岑").fill("0");
+  await expect(amounts).toHaveText(["小安NT$ 260","小岑NT$ 70"]);
+  const dumplings=page.getByRole("group",{name:/海苔柴魚煎餃/});
+  await expect(dumplings.getByText("NT$ 42",{exact:true})).toBeVisible();
+  await expect(dumplings.getByText("NT$ 43",{exact:true})).toBeVisible();
+  await page.locator(".shareSheet").screenshot({path:test.info().outputPath("a03-split.png")});
+  await page.getByRole("button",{name:"新增用餐人"}).click();
+  await expect(amounts).toHaveCount(3);
+  await page.getByRole("button",{name:"移除用餐人 3"}).click();
+  await expect(amounts).toHaveText(["小安NT$ 260","小岑NT$ 70"]);
+  await weight("滑蛋豬排丼","小安").fill("0");
+  await expect(page.getByRole("alert")).toContainText("至少指定一人");
+  await expect(totals).toHaveCount(0);
+  await weight("滑蛋豬排丼","小安").fill("1");
+  await weight("海苔柴魚煎餃","小安").fill("2");
+  await expect(amounts).toHaveText(["小安NT$ 274","小岑NT$ 56"]);
+  await page.reload();
+  await toggle.click();
+  await expect(amounts).toHaveText(["小安NT$ 274","小岑NT$ 56"]);
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth)).toBe(true);
+  await page.goto("/ticket#"+second.token);
+  await expect(page.getByRole("heading",{name:"取餐號碼 "+String(second.receipt.id).padStart(4,"0")})).toBeVisible();
+  await toggle.click();
+  await expect(amounts).toHaveText(["用餐人 1NT$ 23","用餐人 2NT$ 22"]);
+  await page.goto("/ticket#"+first.token);
+  await expect(page.getByRole("heading",{name:"取餐號碼 "+String(first.receipt.id).padStart(4,"0")})).toBeVisible();
+  await toggle.click();
+  await expect(amounts).toHaveText(["小安NT$ 274","小岑NT$ 56"]);
+  const cancelled=await request.patch("/api/kitchen/status",{headers:{Authorization:"Bearer local-test-kitchen"},
+    data:{id:first.receipt.id,from:"pending",to:"cancelled"}});
+  expect(cancelled.ok()).toBeTruthy();
+  await page.getByRole("button",{name:"更新進度"}).click();
+  await expect(page.getByText("已取消",{exact:true})).toBeVisible();
+  await expect(toggle).toHaveCount(0);
+  expect(writes).toEqual([]);
+});

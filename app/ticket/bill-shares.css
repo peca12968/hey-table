@@ -1,0 +1,22 @@
+.shareSheet {margin: 1rem 0}
+.shareToggle {display: flex; align-items: center; justify-content: space-between; gap: 1rem; width: 100%; padding: 0; border: 0; background: transparent; color: var(--green); font: inherit; font-weight: 700; text-align: left}
+.shareToggle span {font-size: 1.35rem}
+.shareEditor h3 {margin: 1.4rem 0 .65rem}
+.shareEditor p {margin: .5rem 0 1rem}
+.shareEditor input {width: 100%; min-width: 0; font: inherit; padding: .4rem .55rem; border: 1px solid var(--line); border-radius: .4rem; color: var(--ink); background: white}
+.sharePerson, .sharePerson label {display: flex; align-items: center; gap: .65rem; min-width: 0}
+.sharePerson {margin: .5rem 0}
+.sharePerson label {flex: 1}
+.sharePerson label span {white-space: nowrap}
+.sharePerson .textLink {border: 0; background: transparent; padding: .4rem}
+.shareEditor .outline {margin-top: .7rem}
+.shareItem {min-width: 0; border: 1px solid var(--line); border-radius: .6rem; margin: 1rem 0; padding: .45rem .8rem .75rem}
+.shareItem legend {max-width: 100%; padding: 0 .25rem; font-weight: 650}
+.shareItem label {display: grid; grid-template-columns: minmax(0,1fr) 4rem minmax(4.1rem,auto); align-items: center; gap: .5rem; margin-top: .4rem}
+.shareItem label span:first-child, .shareTotals dt {overflow-wrap: anywhere}
+.shareItem label span:last-child, .shareTotals dd {text-align: right; font-variant-numeric: tabular-nums}
+.shareTotals {border-radius: .6rem; background: var(--pale); padding: .85rem 1rem}
+.shareTotals h3 {margin: 0}
+.shareTotals dl {margin: .7rem 0}
+.shareTotals dl div {display: flex; justify-content: space-between; gap: .5rem; margin: .4rem 0}
+.shareTotals dd {margin: 0; white-space: nowrap}
