@@ -1,0 +1,7 @@
+[
+  {"id":17,"created":1000,"mode":"table","table":"A03","note":"分兩杯","status":"preparing",
+   "items":[{"id":"oyakodon","name":"雞肉親子丼","qty":1,"price":170},
+            {"id":"sencha","name":"日式熱煎茶","qty":2,"price":45}],"total":260},
+  {"id":18,"created":1001,"mode":"pickup","table":null,"note":"","status":"pending",
+   "items":[{"id":"edamame","name":"鹽味毛豆","qty":1,"price":55}],"total":55}
+]
