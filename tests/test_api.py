@@ -26,6 +26,21 @@ def available(client):
     return client.get("/inventory").json()[0]["available"]
 
 
+def test_metrics_separate_idempotent_replays_conflicts_and_scrapes(client):
+    from prometheus_client.parser import text_string_to_metric_families
+    assert reserve(client, "private-order", 2).status_code == 201
+    assert reserve(client, "private-order", 2).status_code == 200
+    assert reserve(client, "private-order", 3).status_code == 409
+    assert reserve(client, "invalid", 0).status_code == 422
+    assert client.get("/reservations/absent").status_code == 404
+    raw = client.get("/metrics")
+    assert raw.content == client.get("/metrics").content
+    assert "private-order" not in raw.text
+    codes = {sample.labels["status"]: sample.value for family in text_string_to_metric_families(raw.text)
+             for sample in family.samples if sample.name == "http_requests_total"}
+    assert codes == {"200": 1, "201": 1, "404": 1, "409": 1, "422": 1, "500": 0}
+
+
 def test_dispatch_export_freezes_original_box_quantities_at_close(tmp_path):
     now = [10]
     db = tmp_path / "stock.db"

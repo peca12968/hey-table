@@ -116,6 +116,12 @@ docker run --rm -p 127.0.0.1:8000:8000 -v stockroom-data:/app/data stockroom
 
 [測試案例](tests/test_api.py)以 24 個各需 2 件庫存的請求競爭 20 件，驗證恰有 10 筆成功、14 筆衝突，並另測並行重送、重啟後持久性及重複釋放。GitHub Actions 也建置映像並透過 HTTP 讀取容器內的庫存。
 
+## 從請求計數器重現事故告警
+
+`GET /metrics` 提供 Prometheus 文字格式的 `http_requests_total{status}`。狀態碼按回應開始時計數；回應開始前的未處理例外計入 500。讀取指標本身會略過計數。每個服務程序有自己的 registry，請在抓取設定加上穩定的 `service` 與各程序的 `instance` 標籤，依部署目標清單另外提供 `slo_target_expected`。
+
+演練用兩個 FastAPI 實例實際處理 842 個應用程式請求，從指標端點讀回計數器。暫存 SQLite 裡的測試觸發器讓其中 8 次保留交易失敗，逐筆回傳 HTTP 500，交易回滾後資料庫裡沒有留下訂單。將取樣對應到每分鐘一點的模擬時間線後，promtool 確認第 388 分鐘只剩慢速條件成立，410 分鐘檢查時告警已解除。稍後停抓其中一個實例，該實例單獨出現遙測缺口警告。這是加速重播，沒有等候七小時，也沒有對外發送通知。[重現程式](monitoring_drill.py) · [Burn Pair](https://github.com/peca12968/burn-pair)
+
 ## 把結單明細交給收貨端
 
 `GET /reservations/{key}/dispatch-manifest.csv` 會輸出 `box_id,units` 兩欄，表頭 `X-Box-Count` 提供接收端應收到的箱數。只要訂單仍保留庫存、或整張訂單都沒有寄出箱件，端點就回覆 409。最後一件出貨、取消或到期之後，可取得按箱號排序的原始出貨明細。日後退貨會更新裝箱對帳表，原始出貨 CSV 則可再次傳給收貨端核對。

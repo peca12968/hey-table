@@ -44,3 +44,11 @@ jobs:
           persist-credentials: false
       - run: python -m pip install -r intake-checkout/requirements.txt
       - run: python manifest_drill.py intake-checkout
+      - uses: actions/checkout@v7
+        with:
+          repository: peca12968/burn-pair
+          ref: 5f7840f82560aab18190b50fdb85a6ffc3aa475d
+          path: slo-checkout
+          persist-credentials: false
+      - run: python slo-checkout/install_promtool.py .tools
+      - run: python monitoring_drill.py .tools/promtool slo-checkout/rules.yml

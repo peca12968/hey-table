@@ -9,7 +9,9 @@ from typing import Annotated
 from fastapi import FastAPI, Header, Response
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
+from prometheus_client import CollectorRegistry, Counter, generate_latest, CONTENT_TYPE_LATEST
 
+from .metrics import RequestMetrics
 from .store import Conflict, Missing, Store
 
 
@@ -90,6 +92,15 @@ def create_app(path: Path, *, ttl_seconds=900, clock=time.time):
         yield
 
     app = FastAPI(title="Stockroom Reservations", version="1.5", lifespan=lifespan)
+    registry = CollectorRegistry()
+    requests = Counter("http_requests_total", "Application requests by HTTP response status.", ["status"], registry=registry)
+    for status in ("200", "201", "404", "409", "422", "500"):
+        requests.labels(status)
+    app.add_middleware(RequestMetrics, counter=requests)
+
+    @app.get("/metrics", include_in_schema=False)
+    def metrics():
+        return Response(generate_latest(registry), headers={"Content-Type": CONTENT_TYPE_LATEST})
 
     @app.exception_handler(Missing)
     async def missing(request, exc):
