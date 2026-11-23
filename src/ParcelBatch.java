@@ -21,6 +21,7 @@ import java.util.zip.ZipOutputStream;
 /** Publish one immutable output segment and its matching continuation state. */
 public final class ParcelBatch {
     private static final int MAGIC = 0x50574331; // PWC1, checkpoint format version 1.
+    private static final int SOURCES_MAGIC = 0x50574332;
 
     static void writeInstant(DataOutputStream out, Instant time) throws IOException {
         out.writeLong(time.getEpochSecond());
@@ -36,11 +37,21 @@ public final class ParcelBatch {
 
     static void save(OutputStream stream, ParcelWindows.Counter counter, long batch, boolean terminal) throws IOException {
         var out = new DataOutputStream(stream);
-        out.writeInt(MAGIC);
+        out.writeInt(counter.sources.isEmpty() ? MAGIC : SOURCES_MAGIC);
         out.writeLong(batch);
         out.writeBoolean(terminal);
         out.writeBoolean(counter.watermark != null);
         if (counter.watermark != null) writeInstant(out, counter.watermark);
+        if (!counter.sources.isEmpty()) {
+            out.writeInt(counter.sources.size());
+            for (var entry : counter.sources.entrySet()) {
+                out.writeUTF(entry.getKey());
+                var source = entry.getValue();
+                out.writeBoolean(source.ended());
+                out.writeBoolean(source.progress() != null);
+                if (source.progress() != null) writeInstant(out, source.progress());
+            }
+        }
         out.writeLong(counter.accepted);
         out.writeLong(counter.duplicates);
         out.writeLong(counter.late);
@@ -57,10 +68,25 @@ public final class ParcelBatch {
     }
 
     static void restore(DataInputStream in, ParcelWindows.Counter counter, long nextBatch) throws IOException {
-        if (in.readInt() != MAGIC) throw new IOException("unknown checkpoint format");
+        int format = in.readInt();
+        if (format != MAGIC && format != SOURCES_MAGIC) throw new IOException("unknown checkpoint format");
         if (in.readLong() != nextBatch - 1) throw new IOException("batch must immediately follow its parent");
         if (in.readBoolean()) throw new IOException("parent is already final");
         counter.watermark = in.readBoolean() ? readInstant(in) : null;
+        if (format == SOURCES_MAGIC) {
+            int count = in.readInt();
+            if (count < 1) throw new IOException("missing source declarations");
+            for (int i = 0; i < count; i++) {
+                String name = in.readUTF();
+                boolean ended = in.readBoolean();
+                Instant progress = in.readBoolean() ? readInstant(in) : null;
+                if (!ParcelWindows.IDENTIFIER.matcher(name).matches() ||
+                    counter.sources.putIfAbsent(name, new ParcelWindows.Source(progress, ended)) != null)
+                    throw new IOException("invalid checkpoint source");
+            }
+            if (!java.util.Objects.equals(counter.sourceMinimum(), counter.watermark))
+                throw new IOException("checkpoint watermark and source progress disagree");
+        }
         counter.accepted = in.readLong();
         counter.duplicates = in.readLong();
         counter.late = in.readLong();
@@ -72,7 +98,8 @@ public final class ParcelBatch {
             var scan = new ParcelWindows.Scan(readInstant(in), in.readUTF(), in.readUTF());
             Instant start = ParcelWindows.Counter.windowStart(scan.time());
             if (!ParcelWindows.IDENTIFIER.matcher(scan.id()).matches() || !ParcelWindows.IDENTIFIER.matcher(scan.hub()).matches()
-                    || counter.watermark == null || counter.closed(start) || counter.activeIds.containsKey(scan.id()))
+                    || (format == MAGIC ? counter.watermark == null : !counter.sources.containsKey(scan.hub()))
+                    || counter.closed(start) || counter.activeIds.containsKey(scan.id()))
                 throw new IOException("invalid active scan in checkpoint");
             counter.remember(start, scan);
         }

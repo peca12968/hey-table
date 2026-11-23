@@ -217,3 +217,42 @@ class ParcelWindowsTests(unittest.TestCase):
         result = self.run_cli()
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stdout.strip(), "SUMMARY\taccepted=0\tduplicates=0\tlate=0\tconflicts=0")
+
+    def test_slow_partition_can_contribute_until_global_closure(self):
+        lines = (ROOT / "examples/sources.tsv").read_bytes().splitlines(keepends=True)
+        result = self.run_cli(b"".join(lines).decode())
+        self.assertEqual(result.returncode, 0, result.stderr)
+        expected = [
+            "WINDOW\t2026-11-23T00:00:00Z\t2026-11-23T00:05:00Z\tSOUTH\t1",
+            "REJECT\tlate\t2026-11-23T00:03:30Z\ts2\tSOUTH\t2026-11-23T00:05:00Z",
+            "WINDOW\t2026-11-23T00:10:00Z\t2026-11-23T00:15:00Z\tNORTH\t1",
+            "SUMMARY\taccepted=2\tduplicates=0\tlate=1\tconflicts=0"]
+        self.assertEqual(result.stdout.splitlines(), expected)
+        self.assertIn("accepted=1\tduplicates=0\tlate=1", self.run_cli(b"".join(lines[1:3]).decode()).stdout)
+        # Restart after every record, including while one partition has never reported.
+        self.assertEqual(self.run_parts(lines + [b""]).decode().splitlines(), expected)
+        with tempfile.TemporaryDirectory() as directory:
+            parent = "-"
+            for number, line in enumerate(lines, 1):
+                target = Path(directory) / f"{number}.zip"
+                result = self.batch("append", number, parent, target, line)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                with zipfile.ZipFile(target) as archive:
+                    emitted = archive.read("records.tsv").decode().splitlines()
+                self.assertEqual(emitted, {4: expected[0:1], 5: expected[1:2], 7: expected[2:3]}.get(number, []))
+                parent = target
+
+    def test_source_control_and_conflict_before_initial_progress(self):
+        head = "SOURCES\tA\tB\n"
+        first = f"SCAN\t{iso(720)}\tone\tA\n"
+        data = head + first + first + f"SCAN\t{iso(900)}\tone\tA\nEND_SOURCE\tB\nEND_SOURCE\tB\n"
+        result = self.run_cli(data)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.splitlines()[0], f"REJECT\tconflict\t{iso(900)}\tone\tA\t-")
+        self.assertIn("accepted=1\tduplicates=1\tlate=0\tconflicts=1", result.stdout)
+        for bad in [head + "END_SOURCE\tC", head + "END_SOURCE\tA\n" + first,
+                    head + f"WATERMARK\t{iso(500)}", head + f"WATERMARK\tC\t{iso(800)}",
+                    head + "SOURCES\tC", first + head, "SOURCES\tA\tA", "SOURCES\tA\t"]:
+            result = self.run_cli(bad)
+            self.assertNotEqual(result.returncode, 0, bad)
+            self.assertNotIn("SUMMARY", result.stdout)

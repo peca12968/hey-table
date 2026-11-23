@@ -21,3 +21,8 @@ jobs:
       - run: python -m unittest -v
       - run: python batch_demo.py
       - run: java src/ParcelWindows.java examples/scans.tsv
+      - uses: actions/checkout@v7
+        with:
+          ref: fd2d41f4f732d0157c6fcf56571061604627e366
+          path: legacy
+      - run: python legacy_demo.py legacy
