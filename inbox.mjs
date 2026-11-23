@@ -32,6 +32,7 @@ export class Inbox {
         device TEXT NOT NULL, id TEXT NOT NULL, time_ms INTEGER NOT NULL, milli_c INTEGER NOT NULL,
         PRIMARY KEY(device,id)
       ) WITHOUT ROWID;
+      CREATE INDEX IF NOT EXISTS readings_by_device_time ON readings(device,time_ms,id,milli_c);
       CREATE TABLE IF NOT EXISTS rejected (
         digest TEXT PRIMARY KEY, topic TEXT NOT NULL, reason TEXT NOT NULL
       ) WITHOUT ROWID;

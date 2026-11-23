@@ -17,3 +17,16 @@ jobs:
       - run: npm ci --no-audit --no-fund
       - run: npm test
       - run: npm run demo
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+      - uses: actions/checkout@v7
+        with:
+          ref: 320c6586eaeb233e127ba999e5903f95d37fa38c
+          path: legacy
+      - uses: actions/checkout@v7
+        with:
+          repository: peca12968/thaw-window
+          ref: 8183b10d648d90f3cdc445298abb58e1a2ca560e
+          path: thaw-window
+      - run: node coverage-demo.mjs legacy/inbox.mjs thaw-window/thaw.py

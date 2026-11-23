@@ -22,6 +22,26 @@ broker 在示範全程持續運作，session 存於記憶體。測試驗證的�
 
 ## 接到自己的 broker
 
+### 依觀測時間匯出歷史資料
+
+執行 `node history.mjs readings.db north 3000 12000`，以 NDJSON 匯出指定裝置的讀值。區間含起點、排除終點，時間戳相同時依事件 ID 排序。查詢開啟後讀取同一個 SQLite 快照；在這期間補送的讀值可在下一次查詢讀到。收集器升級時替既有資料建立裝置與時間索引，測試檢查查詢計畫確實使用涵蓋索引，能依索引順序直接輸出。
+
+### 補送的讀值會怎樣改變超溫報表？
+
+用歷史版收集器寫入第一筆溫度，升級後經真實 MQTT 連線補齊其餘紀錄。15 秒的合成紀錄中，有效期設定為 4 秒時，原先估算高於 −16 °C 的時間為 8 至 13 秒。晚到的第 7 秒讀值補上兩秒缺測，區間縮至 10 至 13 秒。第 9 秒仍有兩筆不同事件 ID 的讀值跨越門檻，保留三秒的不確定性。相同事件的重送與衝突也在演練中核對。
+
+```sh
+npm ci
+git worktree add --detach ../coldroom-legacy 320c6586eaeb233e127ba999e5903f95d37fa38c
+git clone https://github.com/peca12968/thaw-window.git ../thaw-window
+git -C ../thaw-window checkout 8183b10d648d90f3cdc445298abb58e1a2ca560e
+node coverage-demo.mjs ../coldroom-legacy/inbox.mjs ../thaw-window/thaw.py
+```
+
+此演練需 Python 3.12 執行時間區間計算工具。[跨版本與跨專案演練](coverage-demo.mjs)
+
+### 啟動收集器
+
 ```sh
 node consumer.mjs mqtt://127.0.0.1:1883 freezer-sink readings.db
 ```
