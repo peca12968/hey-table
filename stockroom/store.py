@@ -283,6 +283,14 @@ class Store:
         with closing(self.connect()) as conn:
             return self.shipment_balance(conn, key, shipment_id)
 
+    def dispatch_manifest(self, key):
+        with self.current_inventory() as (conn, _):
+            row = self.find_reservation(conn, key)
+            if self.held_units(row) or not row["shipped"]:
+                raise Conflict("Dispatch manifest requires a closed reservation with shipped units")
+            return conn.execute("""SELECT shipment_id, quantity FROM fulfillments
+                                   WHERE reservation_id=? ORDER BY shipment_id""", (key,)).fetchall()
+
     def restock(self, key, shipment_id, return_id, quantity):
         with self.current_inventory() as (conn, _):
             ids = (key, shipment_id, return_id)

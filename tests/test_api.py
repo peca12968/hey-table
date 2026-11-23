@@ -26,6 +26,30 @@ def available(client):
     return client.get("/inventory").json()[0]["available"]
 
 
+def test_dispatch_export_freezes_original_box_quantities_at_close(tmp_path):
+    now = [10]
+    db = tmp_path / "stock.db"
+    path = "/reservations/shift/dispatch-manifest.csv"
+    with TestClient(create_app(db, ttl_seconds=2, clock=lambda: now[0])) as api:
+        assert api.get(path).status_code == 404
+        assert reserve(api, "shift", 6).status_code == 201
+        box = "/reservations/shift/fulfillments"
+        for key, quantity in (("Z", 3), ("A", 2)):
+            assert api.post(box, headers={"Idempotency-Key": key}, json={"quantity": quantity}).status_code == 201
+        assert api.get(path).status_code == 409
+        now[0] += 2
+        frozen = api.get(path)
+        assert frozen.status_code == 200 and frozen.headers["X-Box-Count"] == "2"
+        assert frozen.content == b"box_id,units\r\nA,2\r\nZ,3\r\n"
+        assert api.post(box + "/Z/returns", headers={"Idempotency-Key": "r"}, json={"quantity": 1}).status_code == 201
+        assert api.get(path).content == frozen.content
+        assert reserve(api, "empty").status_code == 201
+        api.delete("/reservations/empty")
+        assert api.get("/reservations/empty/dispatch-manifest.csv").status_code == 409
+    with TestClient(create_app(db)) as restarted:
+        assert restarted.get(path).content == frozen.content
+
+
 def test_packing_statement_after_expiry_and_restart(tmp_path):
     path = tmp_path / "packing.db"
     now = 100

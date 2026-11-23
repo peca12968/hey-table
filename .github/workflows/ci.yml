@@ -36,3 +36,11 @@ jobs:
         with:
           node-version: '24'
       - run: python dock_drill.py dock-checkout
+      - uses: actions/checkout@v7
+        with:
+          repository: peca12968/manifest-intake
+          ref: 3ba0fc554334ed236300b66423e7c6301eb8fabd
+          path: intake-checkout
+          persist-credentials: false
+      - run: python -m pip install -r intake-checkout/requirements.txt
+      - run: python manifest_drill.py intake-checkout

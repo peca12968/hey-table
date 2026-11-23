@@ -1,4 +1,6 @@
 from contextlib import asynccontextmanager
+import csv
+from io import StringIO
 from pathlib import Path
 import os
 import time
@@ -129,6 +131,20 @@ def create_app(path: Path, *, ttl_seconds=900, clock=time.time):
     @app.get("/reservations/{key}/fulfillments", response_model=PackingStatement)
     def packing_statement(key: str):
         return store.packing_statement(key)
+
+    @app.get("/reservations/{key}/dispatch-manifest.csv", response_class=Response, responses={
+        200: {"content": {"text/csv": {"schema": {"type": "string"}}},
+              "headers": {"X-Box-Count": {"schema": {"type": "integer"}, "description": "Number of dispatched boxes"}}},
+        409: {"description": "Reservation still holds stock or has no dispatched boxes"},
+    })
+    def dispatch_manifest(key: str):
+        boxes = store.dispatch_manifest(key)
+        output = StringIO(newline="")
+        writer = csv.writer(output, lineterminator="\r\n")
+        writer.writerow(("box_id", "units"))
+        writer.writerows(boxes)
+        return Response(output.getvalue(), media_type="text/csv", headers={
+            "X-Box-Count": str(len(boxes)), "Content-Disposition": 'attachment; filename="dispatch-manifest.csv"'})
 
     @app.post("/reservations/{key}/fulfillments", response_model=Receipt, status_code=201,
               responses={200: {"model": Receipt, "description": "Original shipment receipt"}})
