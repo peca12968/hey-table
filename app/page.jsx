@@ -18,6 +18,7 @@ export default function Menu(){
   const [announcement,setAnnouncement]=useState(""); const sending=useRef(false);
   const [method,setMethod]=useState("cash"),[payments,setPayments]=useState({methods:["cash"]});
   const [intake,setIntake]=useState({});
+  const [tableIntake,setTableIntake]=useState({});
   const activeMenuRequest=useRef(null);
   const [useCombo,setUseCombo]=useState(false);
   const [lookup,setLookup]=useState("");
@@ -31,6 +32,7 @@ export default function Menu(){
       setSold(data.unavailable);
       setPayments(data.payments??{methods:["cash"]});
       setIntake(data.accepting??{});
+      setTableIntake(data.acceptingTables??{});
       setLoaded(true);
     }catch{
       if(!controller.signal.aborted)setLoaded(false);
@@ -75,7 +77,9 @@ export default function Menu(){
   },[scope,draft,busy]);
   useEffect(()=>{if(!panel)return;const close=e=>{if(e.key==="Escape")setPanel(false);};window.addEventListener("keydown",close);return()=>window.removeEventListener("keydown",close);},[panel]);
   const invalid=table!==null&&!tables.includes(table), lines=dishes.filter(d=>cart[d.id]>0);
-  const mode=table?"table":"pickup", paused=!!scope&&intake[mode]===false;
+  const mode=table?"table":"pickup";
+  const pausedTable=table&&tableIntake[table]===false ? table : null;
+  const paused=!!scope&&(intake[mode]===false || pausedTable!==null);
   const count=lines.reduce((s,d)=>s+cart[d.id],0), subtotal=lines.reduce((s,d)=>s+d.price*cart[d.id],0);
   const items=lines.map(d=>({id:d.id,qty:cart[d.id]}));
   const offer=count && (payments.mode==="demo" || draft?.comboVersion===comboVersion)
@@ -95,6 +99,7 @@ export default function Menu(){
       if([400,409,415].includes(e.status)){
         setDraft(null);
         if(e.code==="intake_paused")setIntake(current=>({...current,[mode]:false}));
+        else if(e.code==="table_paused")setTableIntake(current=>({...current,[table]:false}));
         else setError(e.message);
         refreshMenu();
       }
@@ -107,7 +112,7 @@ export default function Menu(){
   return <><Header home/><main className="shell">
     <section className="hero"><div className="heroCopy"><p className="kicker"><span/> 本日主廚推薦</p><h1>{hero.name}</h1><p>{hero.description}</p><button className="heroAction" onClick={()=>change(hero.id,1)} disabled={!loaded||busy||!!draft||sold.includes(hero.id)||(cart[hero.id]||0)>=20||invalid}><Plus size={16}/> 加入餐單 <b>NT$ {hero.price}</b></button></div><img className="heroImg" src="/food/katsudon.webp" alt="滑蛋豬排丼"/></section>
     {invalid&&<p className="error" role="alert">桌號無效，請重新掃描桌牌。也可<a href="/">改為線上自取</a>。</p>}
-    {paused&&!invalid&&<p className="error" role="status">{intakeNotice(mode)}</p>}
+    {paused&&!invalid&&<p className="error" role="status">{intakeNotice(mode,intake[mode]===false?null:pausedTable)}</p>}
     <div className="columns"><section><div className="menuTitle"><div><p className="eyebrow">OUR MENU</p><h2>點餐菜單</h2></div><Mode table={table}/></div>
     <nav className="tabs" aria-label="餐點分類">{groups.map(g=><button key={g} aria-pressed={group===g} onClick={()=>setGroup(g)}>{g}</button>)}</nav>
     <div className="grid">{dishes.filter(d=>group==="全部"||d.group===group).map(d=><article className="dish" key={d.id}><img src={"/food/"+d.id+".webp"} alt={d.name} loading="lazy"/><div className="dishInfo"><small>{d.group}</small><h3>{d.name}</h3><p>{d.description}</p><div className="price"><strong>NT$ {d.price}</strong>{sold.includes(d.id)?<span>已售完</span>:addButton(d)}</div></div></article>)}</div></section>

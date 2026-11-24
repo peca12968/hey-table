@@ -17,13 +17,19 @@ const timingRows = "SELECT revision,config FROM kitchen_timing ORDER BY revision
 const fromTimingRow = row => ({revision:row?.revision??0, kitchen:activeKitchen(row ? JSON.parse(row.config) : null)});
 const selectOrders = "SELECT orders.*, "+latestState+" AS payment_state FROM orders";
 const intakeRows = "SELECT mode,accepting,revision FROM order_intake";
-function intakeByMode(rows) {
-  const stored = new Map(rows.map(row=>[row.mode,row]));
-  return Object.fromEntries(Object.keys(intakeLabels).map(mode=>{
-    const row=stored.get(mode);
-    return [mode,{accepting:row ? Boolean(row.accepting) : true,revision:row?.revision??0}];
+const tableIntakeRows = "SELECT table_no,accepting,revision FROM table_intake";
+const modePaused = "EXISTS (SELECT 1 FROM order_intake WHERE mode=? AND accepting=0)";
+const tablePaused = "EXISTS (SELECT 1 FROM table_intake WHERE table_no=? AND accepting=0)";
+function intakeState(rows,key,scopes) {
+  const stored = new Map(rows.map(row=>[row[key],row]));
+  return Object.fromEntries(scopes.map(scope=>{
+    const row=stored.get(scope);
+    return [scope,{accepting:row?.accepting!==0,revision:row?.revision??0}];
   }));
 }
+const modeState=rows=>intakeState(rows,"mode",Object.keys(intakeLabels));
+const tableState=rows=>intakeState(rows,"table_no",tables);
+const acceptingOnly=states=>Object.fromEntries(Object.entries(states).map(([scope,state])=>[scope,state.accepting]));
 function receipt(row) {
   return {id:row.id, mode:row.mode, table:row.table_no, note:row.note, items:JSON.parse(row.items),
     ...(row.combo_quote ? {combo:JSON.parse(row.combo_quote)} : {}),
@@ -103,25 +109,29 @@ export async function api(request, env) {
   }
   if(path.startsWith("/api/payments/") && method==="POST")return paymentApi(path,request,env,input);
   if (path === "/api/kitchen/intake" && method === "GET") {
-    const {results} = await db.prepare(intakeRows).all();
-    return json(intakeByMode(results));
+    const [modes,seats]=await db.batch([db.prepare(intakeRows),db.prepare(tableIntakeRows)]);
+    return json({...modeState(modes.results),tables:tableState(seats.results)});
   }
   if (path === "/api/kitchen/intake" && method === "PATCH") {
-    const {mode,accepting,revision}=input;
-    if (typeof mode!=="string" || !Object.hasOwn(intakeLabels,mode) || typeof accepting!=="boolean" ||
+    const {mode,table,accepting,revision}=input;
+    const byTable=Object.hasOwn(input,"table");
+    const validScope=byTable ? !Object.hasOwn(input,"mode") && tables.includes(table)
+      : typeof mode==="string" && Object.hasOwn(intakeLabels,mode);
+    if (!validScope || typeof accepting!=="boolean" ||
         !Number.isSafeInteger(revision) || revision<0 || revision>=Number.MAX_SAFE_INTEGER)
-      return fail("接單管道、狀態或版本無效");
-    const {meta}=await db.prepare(`INSERT INTO order_intake (mode,accepting,revision)
-      SELECT ?,?,? WHERE COALESCE((SELECT revision FROM order_intake WHERE mode=?),0)=?
-      ON CONFLICT(mode) DO UPDATE SET accepting=excluded.accepting,revision=excluded.revision`)
-      .bind(mode,accepting?1:0,revision+1,mode,revision).run();
+      return fail("接單管道、桌號、狀態或版本無效");
+    const [relation,key,scope]=byTable ? ["table_intake","table_no",table] : ["order_intake","mode",mode];
+    const {meta}=await db.prepare(`INSERT INTO ${relation} (${key},accepting,revision)
+      SELECT ?,?,? WHERE COALESCE((SELECT revision FROM ${relation} WHERE ${key}=?),0)=?
+      ON CONFLICT(${key}) DO UPDATE SET accepting=excluded.accepting,revision=excluded.revision`)
+      .bind(scope,accepting?1:0,revision+1,scope,revision).run();
     if (!meta.changes) return fail("接單設定已由其他店員更新，請載入最新狀態。",409);
-    return json({mode,accepting,revision:revision+1});
+    return json({...(byTable ? {table} : {mode}),accepting,revision:revision+1});
   }
   if (path === "/api/menu" && method === "GET") {
-    const [stock,intake]=await db.batch([db.prepare("SELECT dish FROM unavailable"),db.prepare(intakeRows)]);
-    const accepting=Object.fromEntries(Object.entries(intakeByMode(intake.results)).map(([mode,state])=>[mode,state.accepting]));
-    return json({payments:settings(env),unavailable:stock.results.map(r=>r.dish),accepting});
+    const [stock,modes,seats]=await db.batch([db.prepare("SELECT dish FROM unavailable"),db.prepare(intakeRows),db.prepare(tableIntakeRows)]);
+    return json({payments:settings(env),unavailable:stock.results.map(r=>r.dish),
+      accepting:acceptingOnly(modeState(modes.results)),acceptingTables:acceptingOnly(tableState(seats.results))});
   }
   if (path === "/api/add-on" && method === "POST") {
     const items = menuItems(input.items);
@@ -160,19 +170,21 @@ export async function api(request, env) {
     const available=config.methods.includes(method);
     const lines = JSON.stringify(order.items);
     const stmt = db.prepare(`INSERT INTO orders(token,mode,table_no,note,items,total,created,payment_method,payment_env,combo_quote)
-      SELECT ?,?,?,?,?,?,?,?,?,? WHERE ? AND NOT EXISTS (SELECT 1 FROM order_intake WHERE mode=? AND accepting=0)
+      SELECT ?,?,?,?,?,?,?,?,?,? WHERE ? AND NOT ${modePaused} AND NOT ${tablePaused}
       AND NOT EXISTS (SELECT 1 FROM unavailable u
       JOIN json_each(?) j ON u.dish=json_extract(j.value,'$.id')) ON CONFLICT(token) DO NOTHING`);
     const [,savedOrder,intake] = await db.batch([
-      stmt.bind(order.token,order.mode,order.table,order.note,lines,quote?.total??order.total,Date.now(),method,method==='cash'?'cash':config.mode,snapshot,available&&validPrice?1:0,order.mode,lines),
+      stmt.bind(order.token,order.mode,order.table,order.note,lines,quote?.total??order.total,Date.now(),method,method==='cash'?'cash':config.mode,snapshot,available&&validPrice?1:0,order.mode,order.table,lines),
       db.prepare(selectOrders+" WHERE token=?").bind(order.token),
-      db.prepare("SELECT accepting FROM order_intake WHERE mode=?").bind(order.mode)
+      db.prepare(`SELECT ${modePaused} AS mode_paused, ${tablePaused} AS table_paused`).bind(order.mode,order.table)
     ]);
     const row=savedOrder.results[0];
     if (!row && !validPrice) return fail("套餐優惠或金額已變更，請重新確認餐單",409);
     if (!row && !available) return fail('此付款方式暫停使用',409);
-    if (!row && intake.results[0]?.accepting===0)
+    if (!row && intake.results[0].mode_paused)
       return json({error:intakeNotice(order.mode),code:"intake_paused"},409);
+    if (!row && intake.results[0].table_paused)
+      return json({error:intakeNotice(order.mode,order.table),code:"table_paused"},409);
     if (!row) return fail("部分餐點已售完，請重新確認菜單",409);
     const saved = receipt(row);
     const sameItems = saved.items.length === order.items.length && saved.items.every(line =>

@@ -34,6 +34,10 @@ Stockroom 支援在一筆交易內保留多個 SKU。若其中一項缺貨，該
 
 ## 用兩台裝置試點一單
 
+店員可在「管理接單管道」選擇 A01 至 A08 的單桌設定。例如，暫停 A03 清潔期間的新餐單，A04 顧客仍可掃碼，線上自取也照常。A03 已成立的餐單可繼續付款、製作和交餐。顧客在暫停期間仍能編輯購物車，恢復後可直接送出。
+
+單桌與整個掃碼管道各有設定，兩者都開放才接受該桌新單。資料庫在寫入訂單時一併檢查設定。兩台店員裝置用同一版本修改同一桌時，後到的更新會要求重新載入。[店員與手機整合測試](qa/intake.spec.mjs)
+
 自取與掃碼內用的購物車會在餐點或份數改變後自動顯示預估出餐時間，亦可按「重新試算」讀取最新廚房狀態。試算假設目前的餐單接在製作中餐單之後，把各站尚在製作的餐點按完整批次計算。初始工時採示範值，店員可匯入校準結果。估算尚未納入鍋中進度與店家接單前的等候時間。
 
 一個可重跑的案例是熱台正在做三碗親子丼及兩份唐揚雞，飲品台正在做兩杯煎茶。此時加點一碗親子丼約需 11–14 分鐘；第一張單出餐後重新試算，降為 4–5 分鐘。購物車只收到試算時間及秒數區間。試算不建立餐單或付款，廚房備註及其他餐單資料留在後端。[Pickup Window 排程](modules/pickup-window/README.md) · [瀏覽器與 D1 測試](qa/cart-quote.spec.mjs)
@@ -124,6 +128,7 @@ node --import ./scripts/sites-env.mjs ./node_modules/wrangler/bin/wrangler.js d1
 node --import ./scripts/sites-env.mjs ./node_modules/wrangler/bin/wrangler.js d1 execute DB --local --config dist/server/wrangler.json --persist-to .wrangler/state --file drizzle/0003_kitchen_timing_revisions.sql
 node --import ./scripts/sites-env.mjs ./node_modules/wrangler/bin/wrangler.js d1 execute DB --local --config dist/server/wrangler.json --persist-to .wrangler/state --file drizzle/0004_combo_pricing.sql
 node --import ./scripts/sites-env.mjs ./node_modules/wrangler/bin/wrangler.js d1 execute DB --local --config dist/server/wrangler.json --persist-to .wrangler/state --file drizzle/0005_order_intake.sql
+node --import ./scripts/sites-env.mjs ./node_modules/wrangler/bin/wrangler.js d1 execute DB --local --config dist/server/wrangler.json --persist-to .wrangler/state --file drizzle/0006_table_intake.sql
 npm start
 ```
 

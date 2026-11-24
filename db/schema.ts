@@ -42,3 +42,12 @@ export const orderIntake = sqliteTable("order_intake", {
   check("order_intake_accepting", sql`${t.accepting} IN (0,1)`),
   check("order_intake_revision", sql`${t.revision} > 0`),
 ]);
+
+export const tableIntake = sqliteTable("table_intake", {
+  tableNo: text("table_no").primaryKey().notNull(),
+  accepting: integer("accepting", {mode:"boolean"}).notNull(),
+  revision: integer("revision").notNull(),
+}, t => [
+  check("table_intake_accepting", sql`${t.accepting} IN (0,1)`),
+  check("table_intake_revision", sql`${t.revision} > 0`),
+]);
