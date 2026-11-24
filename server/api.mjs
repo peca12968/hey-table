@@ -13,7 +13,7 @@ import {canReschedulePickup,capacityAtPickupSlot,editablePickupSlots,orderPortio
   pickupDayPaused,pickupDaySettings,pickupSlotUsage,pickupSlots,usedAtPickupSlot} from "./pickup-slots.mjs";
 import {pickupCalendar} from "./pickup-calendar.mjs";
 import {pickupRoster} from "./pickup-roster.mjs";
-import {cashReceiptColumn,collectCash} from "./cash-receipts.mjs";
+import {cashReceiptColumn,collectCash,dailyCashReceipts} from "./cash-receipts.mjs";
 
 const json = (value, status=200) => Response.json(value,{status,headers:{"Cache-Control":"no-store"}});
 const fail = (message,status=400) => json({error:message},status);
@@ -159,6 +159,12 @@ export async function api(request, env) {
     if(row.payment_method!=="cash"||!["ready","completed"].includes(row.status))return fail("餐單目前無法登記現金收款。",409);
     if(row.total!==expectedTotal)return fail("應收金額已更新，請重新核對。",409);
     return fail("收款操作識別碼已使用，請重新核對餐單。",409);
+  }
+  if(path==="/api/kitchen/cash-close"&&method==="GET"){
+    const dates=url.searchParams.getAll("date"),[date]=dates;
+    const range=dates.length===1?businessDayRange(date):null;
+    if(!range)return fail("請選擇有效的收款登記日期。");
+    return json(await dailyCashReceipts(db,date,range,Date.now()));
   }
   if(path==="/api/kitchen/timing" && method==="GET"){
     const {results}=await db.prepare(timingRows+" LIMIT 2").all();

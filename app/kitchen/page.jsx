@@ -6,7 +6,7 @@ import {pickupChangeWindows,pickupPrepLead,pickupTime} from "../../lib/pickup-sl
 import {businessDate} from "../../lib/business-day.mjs";
 import {ItemNote} from "../item-notes";
 import ReschedulePickup from "../reschedule-pickup";
-import {usePickupToday} from "../pickup-slots";
+import {useBusinessToday} from "../use-business-today.mjs";
 import {dishes,labels,numberOf,tables,transitions} from "../../lib/menu.mjs";
 import {downloadJson} from "../../lib/download-json.mjs";
 import Timing from "./timing";
@@ -112,7 +112,7 @@ export default function Kitchen(){
   const [scope,setScope]=useState("all"),[search,setSearch]=useState("");
   const [queueAvailable,setQueueAvailable]=useState(false);
   const [pickup,setPickup]=useState(undefined),[actionMessage,setActionMessage]=useState("");
-  const today=usePickupToday();
+  const today=useBusinessToday();
   const focused=typeof pickup==="string";
   const signInTarget=pickup?"/kitchen?pickup="+pickup:"/kitchen";
   useEffect(()=>{
@@ -226,6 +226,7 @@ export default function Kitchen(){
     <div className="actions"><a className="outline" href="/kitchen/create-pickup">代建自取單</a>
       <a className="outline" href="/kitchen/prep">查看備料單</a>
       <a className="outline" href="/kitchen/daily">每日訂單摘要</a>
+      <a className="outline" href="/kitchen/cash-close">現金日結</a>
       <a className="outline" href="/kitchen/station-work">分站看板</a>
       <a className="outline" href="/kitchen/pickup-display">櫃台取餐看板</a>
       <a className="outline" href="/kitchen/pickup-roster">自取預約清單</a>

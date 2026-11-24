@@ -3,7 +3,8 @@ import {useEffect,useState} from "react";
 import {Header,Footer,PickupAppointment,request} from "../../shared";
 import {dishes,numberOf,withItemNotes} from "../../../lib/menu.mjs";
 import {ItemNotesEditor} from "../../item-notes";
-import PickupSlots,{PickupDate,usePickupToday} from "../../pickup-slots";
+import PickupSlots,{PickupDate} from "../../pickup-slots";
+import {useBusinessToday} from "../../use-business-today.mjs";
 import {pickupBookingDays} from "../../../lib/pickup-slots.mjs";
 import "./pickup.css";
 
@@ -34,7 +35,7 @@ export default function CreatePickup(){
   const [busy,setBusy]=useState(false),[denied,setDenied]=useState(false),[menuError,setMenuError]=useState("");
   const [error,setError]=useState(""),[message,setMessage]=useState("");
   const {quantities,lineNotes={},note,pickupDate="",pickupSlot=null,attempt,result}=draft??empty;
-  const today=usePickupToday();
+  const today=useBusinessToday();
   const bookingDay=pickupDate===today||(attempt&&pickupDate<today)?"":pickupDate;
   const menu=menuSnapshot?.day===bookingDay?menuSnapshot.value:null;
   useEffect(()=>{

@@ -48,6 +48,7 @@ export const cashReceipts = sqliteTable("cash_receipts", {
   collectedAt: integer("collected_at").notNull(),
 }, t => [
   check("cash_receipt_amount",sql`${t.amount} >= 0 AND ${t.tendered} >= ${t.amount}`),
+  index("cash_receipts_collected_at").on(t.collectedAt,t.orderId),
 ]);
 export const unavailable = sqliteTable("unavailable", {
   dish: text("dish").primaryKey(),

@@ -1,0 +1,1 @@
+CREATE INDEX `cash_receipts_collected_at` ON `cash_receipts` (`collected_at`,`order_id`);

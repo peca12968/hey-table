@@ -798,6 +798,53 @@ test("D1 records cash once, returns the original result on replay and protects t
   assert.equal((await receipt(online.token)).cashReceipt,undefined);
 });
 
+test("cash close uses Taipei registration dates and returns exact totals from the same ledger rows",async t=>{
+  const db=database();
+  t.after(()=>db.sqlite.close());
+  const start=Date.parse("2026-11-25T00:00:00+08:00"),end=start+86_400_000;
+  t.mock.method(Date,"now",()=>end);
+  const runtime={DB:db,STAFF_KEY:"fixture-staff"},staff={Authorization:"Bearer fixture-staff"};
+  const get=(query,headers=staff)=>api(new Request("https://order.example/api/kitchen/cash-close"+query,{headers}),runtime);
+  const order=db.sqlite.prepare(`INSERT INTO orders(token,mode,note,items,total,created,status)
+    VALUES (?,?,'private order detail','[]',1,?,'completed')`);
+  const insert=db.sqlite.prepare("INSERT INTO cash_receipts(order_id,operation_id,amount,tendered,collected_at) VALUES (?,?,?,?,?)");
+  const log=(mode,amount,tendered,at)=>{
+    const {lastInsertRowid:id}=order.run(crypto.randomUUID(),mode,start-180_000);
+    insert.run(id,"private-operation-"+id,amount,tendered,at);
+    return id;
+  };
+  const large=Number.MAX_SAFE_INTEGER;
+  log("pickup",1,2,start-1);
+  const first=log("pickup",45,large,start),second=log("table",55,large,start);
+  const last=log("table",90,90,end-1),next=log("pickup",3,3,end);
+  log("pickup",4,5,end+1);
+  order.run(crypto.randomUUID(),"pickup",start);
+  assert.equal((await get("?date=2026-11-25",{})).status,403);
+  for(const query of ["","?date=2026-02-30","?date=2026-11-25&date=2026-11-26"]){
+    assert.equal((await get(query)).status,400);
+  }
+  const response=await get("?date=2026-11-25");
+  assert.equal(response.status,200);
+  assert.equal(response.headers.get("Cache-Control"),"no-store");
+  const raw=await response.text();
+  assert.ok(!raw.includes("private"));
+  const report=JSON.parse(raw);
+  assert.deepEqual(report,{
+    format:"hey-table.daily-cash.v1",date:"2026-11-25",timeZone:"Asia/Taipei",capturedAt:end,
+    totals:{receipts:3,net:"190",tendered:String(2n*BigInt(large)+90n),change:String(2n*BigInt(large)-100n)},
+    receipts:[
+      {orderId:first,mode:"pickup",amount:45,tendered:large,change:large-45,recordedAt:start},
+      {orderId:second,mode:"table",amount:55,tendered:large,change:large-55,recordedAt:start},
+      {orderId:last,mode:"table",amount:90,tendered:90,change:0,recordedAt:end-1},
+    ],
+  });
+  const nextReport=await (await get("?date=2026-11-26")).json();
+  assert.deepEqual(nextReport.receipts,[{orderId:next,mode:"pickup",amount:3,tendered:3,change:0,recordedAt:end}]);
+  const empty=await (await get("?date=2026-11-29")).json();
+  assert.deepEqual(empty.totals,{receipts:0,net:"0",tendered:"0",change:"0"});
+  assert.deepEqual(empty.receipts,[]);
+});
+
 test("staff pickup roster groups one Taipei day and excludes private receipt and payment fields",async t=>{
   const db=database();
   t.after(()=>db.sqlite.close());

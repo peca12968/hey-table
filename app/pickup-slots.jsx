@@ -1,29 +1,12 @@
-import {useEffect,useId,useState,useSyncExternalStore} from "react";
+import {useEffect,useId,useState} from "react";
 import {pickupBookingDays,pickupWindow} from "../lib/pickup-slots.mjs";
-import {businessDate,businessDayRange} from "../lib/business-day.mjs";
+import {businessDayRange} from "../lib/business-day.mjs";
 import {request} from "./shared";
-
-const getToday=()=>businessDate(Date.now());
-const serverToday=()=>"";
-function listenForDayChange(notify){
-  let timer;
-  function refresh(){
-    clearTimeout(timer);
-    const now=Date.now(),[,end]=businessDayRange(businessDate(now));
-    timer=setTimeout(refresh,end-now);
-    notify();
-  }
-  refresh();
-  document.addEventListener("visibilitychange",refresh);
-  return ()=>{clearTimeout(timer);document.removeEventListener("visibilitychange",refresh);};
-}
-export function usePickupToday(){
-  return useSyncExternalStore(listenForDayChange,getToday,serverToday);
-}
+import {useBusinessToday} from "./use-business-today.mjs";
 
 export function PickupDate({value,disabled,onChange,label="取餐日期",paused=false}){
   const id=useId();
-  const today=usePickupToday();
+  const today=useBusinessToday();
   const future=today?pickupBookingDays(businessDayRange(today)[0]).slice(1):[];
   return <div className="pickupDate">
     <label htmlFor={id}>{label}</label>

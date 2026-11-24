@@ -2,7 +2,7 @@
 
 import {useEffect,useState} from "react";
 import {Header,Footer,request} from "../../shared";
-import {usePickupToday} from "../../pickup-slots";
+import {useBusinessToday} from "../../use-business-today.mjs";
 import {labels,numberOf} from "../../../lib/menu.mjs";
 import {methods,paymentStates} from "../../../lib/payments.mjs";
 import {pickupWindow} from "../../../lib/pickup-slots.mjs";
@@ -31,7 +31,7 @@ function RosterWindow({slot,includeCancelled}){
 }
 
 export default function PickupRoster(){
-  const today=usePickupToday();
+  const today=useBusinessToday();
   const [day,setDay]=useState(null),[revision,setRevision]=useState(0),[view,setView]=useState(null);
   const [includeCancelled,setIncludeCancelled]=useState(false);
   const date=day??today;

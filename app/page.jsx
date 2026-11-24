@@ -10,7 +10,8 @@ import CartAddOn from "./cart-add-on";
 import CartQuote from "./cart-quote";
 import Reorder from "./reorder";
 import {ItemNotesEditor} from "./item-notes";
-import PickupSlots,{PickupDate,usePickupToday} from "./pickup-slots";
+import PickupSlots,{PickupDate} from "./pickup-slots";
+import {useBusinessToday} from "./use-business-today.mjs";
 import {pickupBookingDays,pickupSlotDuration} from "../lib/pickup-slots.mjs";
 
 import {methods,environmentLabel} from "../lib/payments.mjs";
@@ -33,7 +34,7 @@ export default function Menu(){
   const [pickupSlot,setPickupSlot]=useState(null),[slotRevision,setSlotRevision]=useState(0);
   const [pickupDate,setPickupDate]=useState("");
   const [pickupPaused,setPickupPaused]=useState(false);
-  const today=usePickupToday();
+  const today=useBusinessToday();
   const bookingDay=pickupDate===today?"":pickupDate;
   const refreshMenu=useCallback(async()=>{
     activeMenuRequest.current?.abort();

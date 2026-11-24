@@ -58,6 +58,61 @@ test("mobile cash collection previews change and resumes the same operation afte
   expect(saved.cashReceipt.operationId).toBeUndefined();
 });
 
+test("mobile cash close reconciles a count and downloads the displayed snapshot before a new collection",async({page,request})=>{
+  page.setDefaultTimeout(9000);
+  const date=businessDate(Date.now()),endpoint="/api/kitchen/cash-close";
+  const collect=async tendered=>{
+    const token=randomUUID();
+    const created=await request.post("/api/orders",{data:{token,mode:"pickup",note:"日結不列訂單備註",items:[{id:"sencha",qty:1}]}});
+    expect(created.ok()).toBe(true);
+    const {id}=await created.json();
+    const move=(from,to)=>request.patch("/api/kitchen/status",{headers:staff,data:{id,from,to}});
+    expect((await move("pending","preparing")).ok()).toBe(true);
+    expect((await move("preparing","ready")).ok()).toBe(true);
+    const recorded=await request.post("/api/kitchen/cash-receipt",{
+      headers:staff,data:{id,expectedTotal:45,tendered,operationId:randomUUID()},
+    });
+    expect(recorded.ok()).toBe(true);
+    expect((await move("ready","completed")).ok()).toBe(true);
+    return id;
+  };
+  const first=await collect(100);
+  expect((await request.get(endpoint+"?date="+date)).status()).toBe(403);
+  await page.setViewportSize({width:360,height:780});
+  await page.addInitScript(()=>sessionStorage.setItem("he-ri-staff","local-test-kitchen"));
+  await page.goto("/kitchen");
+  const response=page.waitForResponse(response=>new URL(response.url()).pathname===endpoint&&response.ok());
+  await page.getByRole("link",{name:"現金日結",exact:true}).click();
+  const shown=await (await response).json();
+  expect(shown.date).toBe(date);
+  const cashRows=page.getByRole("table",{name:"現金收款明細"});
+  const row=id=>cashRows.getByRole("rowheader",{name:new RegExp("#"+String(id).padStart(4,"0"))});
+  await expect(row(first)).toContainText("自取");
+  await expect(page.getByText("日結不列訂單備註")).toHaveCount(0);
+  const opening=200n,adjustments=-20n,expected=opening+BigInt(shown.totals.net)+adjustments;
+  const counted=expected-3n;
+  await page.getByLabel("開班現金").fill(String(opening));
+  await page.getByLabel("其他現金淨額（選填）").fill(String(adjustments));
+  await page.getByLabel("實點收班現金").fill(String(counted));
+  await expect(page.getByText("盤點短少 NT$ 3")).toBeVisible();
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBe(360);
+
+  const second=await collect(50);
+  await expect(row(second)).toHaveCount(0);
+  const save=page.getByRole("button",{name:"下載現金日結 JSON"});
+  const [file]=await Promise.all([page.waitForEvent("download"),save.click()]);
+  expect(file.suggestedFilename()).toContain("hey-table-cash-close-"+date+"-");
+  const contents=JSON.parse(await readFile(await file.path(),"utf8"));
+  expect(contents).toEqual({...shown,reconciliation:{opening:String(opening),adjustments:String(adjustments),
+    expected:String(expected),counted:String(counted),difference:"-3"}});
+  await page.getByRole("button",{name:"重新擷取"}).click();
+  await expect(row(second)).toBeVisible();
+  await expect(page.getByText("盤點短少 NT$ 48")).toBeVisible();
+  await page.getByLabel("收款登記日期").fill("2001-01-01");
+  await expect(page.getByText("這天沒有已登記的現金收款。")).toBeVisible();
+  await expect(page.getByLabel("開班現金")).toHaveValue("");
+});
+
 test("mobile receipt shows the payment hold deadline and explains automatic release",async({page,request})=>{
   const token=randomUUID(),headers={"X-Ticket":token};
   const created=await request.post("/api/orders",{data:{token,mode:"pickup",note:"",items:[{id:"sencha",qty:1}],paymentMethod:"line_pay"}});

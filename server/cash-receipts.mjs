@@ -13,3 +13,20 @@ export async function collectCash(db,{id,operationId,expectedTotal,tendered},now
   ]);
   return lookup.results[0];
 }
+
+export async function dailyCashReceipts(db,date,range,capturedAt){
+  const {results}=await db.prepare(`SELECT cash_receipts.order_id AS orderId, orders.mode,
+    cash_receipts.amount,cash_receipts.tendered,cash_receipts.tendered-cash_receipts.amount AS change,
+    cash_receipts.collected_at AS recordedAt
+    FROM cash_receipts JOIN orders ON orders.id=cash_receipts.order_id
+    WHERE collected_at>=? AND collected_at<? AND collected_at<=?
+    ORDER BY collected_at,order_id`).bind(...range,capturedAt).all();
+  let net=0n,tendered=0n,change=0n;
+  for(const row of results){
+    net+=BigInt(row.amount);
+    tendered+=BigInt(row.tendered);
+    change+=BigInt(row.change);
+  }
+  return {format:"hey-table.daily-cash.v1",date,timeZone:"Asia/Taipei",capturedAt,
+    totals:{receipts:results.length,net:String(net),tendered:String(tendered),change:String(change)},receipts:results};
+}

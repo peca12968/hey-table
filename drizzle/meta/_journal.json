@@ -148,6 +148,13 @@
       "when": 1795563354819,
       "tag": "0020_cash_receipts",
       "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "6",
+      "when": 1795564068264,
+      "tag": "0021_cash_receipt_dates",
+      "breakpoints": true
     }
   ]
 }

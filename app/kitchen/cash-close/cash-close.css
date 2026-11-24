@@ -1,0 +1,18 @@
+.cashClose{max-width:52rem}
+.cashClose h1{margin-bottom:10px}
+.cashCloseControls{align-items:end;gap:8px 12px;margin-bottom:16px}
+.cashCloseControls label,.cashCountFields label{display:grid;gap:4px;font-weight:650}
+.cashCloseControls button,.cashCount button,.cashCount input{min-height:42px}
+.cashCloseSummary,.cashCount,.cashCloseReceipts{margin:14px 0}
+.cashCloseSummary p,.cashCount h2,.cashCloseReceipts h2{margin-top:0}
+.cashCloseSummary dl{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,124px),1fr));gap:10px;margin:0}
+.cashCloseSummary dt,.cashCloseReceipts small{color:var(--muted)}
+.cashCloseSummary dd{margin:4px 0 0;font-weight:700;overflow-wrap:anywhere}
+.cashCountFields{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,160px),1fr));gap:8px 12px}
+.cashCountFields input{width:100%;min-width:0}
+.cashCountResult p{margin:6px 0;font-weight:650;overflow-wrap:anywhere}
+.cashCount button{margin-top:10px}
+.cashCloseReceipts table{width:100%;border-collapse:collapse;font-variant-numeric:tabular-nums;font-size:.875rem}
+.cashCloseReceipts th,.cashCloseReceipts td{padding:8px 4px;border-bottom:1px solid var(--line);text-align:right;overflow-wrap:anywhere}
+.cashCloseReceipts th:first-child{text-align:left}
+.cashCloseReceipts small{display:block;font-weight:400}
