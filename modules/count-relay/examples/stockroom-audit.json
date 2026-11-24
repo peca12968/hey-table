@@ -1,0 +1,32 @@
+[
+  {
+    "stage": "review",
+    "capacity": 20,
+    "available": 14,
+    "counted": null,
+    "variance": null,
+    "missing_batches": ["spare-bin"],
+    "conflicted_batches": ["pallet"],
+    "unmapped_batches": ["empty-box"]
+  },
+  {
+    "stage": "variance",
+    "capacity": 20,
+    "available": 14,
+    "counted": 19,
+    "variance": -1,
+    "missing_batches": [],
+    "conflicted_batches": [],
+    "unmapped_batches": []
+  },
+  {
+    "stage": "balanced",
+    "capacity": 20,
+    "available": 14,
+    "counted": 20,
+    "variance": 0,
+    "missing_batches": [],
+    "conflicted_batches": [],
+    "unmapped_batches": []
+  }
+]

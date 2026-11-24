@@ -72,6 +72,8 @@ python stockroom_check.py counts.json inventory.json scope.json
 
 報表附盤點場次和庫存快照時間，逐項列出實盤數、帳面實體庫存 `capacity` 及差異 `counted - capacity`。例如 20 件庫存中已有 6 件被保留，可用量是 14，實盤 20 件時差異為 0。缺少讀數或出現盤點分歧的 SKU 會保留空白差異，並列出應處理的批次。若有讀數找不到對應 SKU，須先補上批次對應，報表才會計算差異。核對程式以唯讀方式處理三份檔案。結束碼 0 代表所列 SKU 均完成且吻合，1 代表有差異或仍需補件，2 代表檔案或資料格式有問題。[核對程式](stockroom_check.py) · [Stockroom 端對端測試](../stockroom-reservations/tests/test_count_relay_check.py)
 
+端對端測試也會將實際命令輸出與 [作品站的三種示範結果](examples/stockroom-audit.json) 比對，涵蓋待複點、短少一件與盤點吻合。
+
 ## 為何不同傳送順序仍能得到相同結果
 
 每筆盤點紀錄有 UUID，並記下它取代的所有已知同批次讀數。兩個快照合併時取紀錄聯集，同一 UUID 的內容必須一致。仍未被後續紀錄取代的讀數共同決定該批次的狀態。裝置時鐘快慢不影響判定。檢查審閱版本與寫入複點結果共用一筆 SQLite 寫入交易。[合併與複點實作](count_relay.py)

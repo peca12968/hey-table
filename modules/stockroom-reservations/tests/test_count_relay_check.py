@@ -29,6 +29,10 @@ def test_offline_count_against_stockroom_snapshot(tmp_path):
         return run("stockroom_check.py", "counts.json", "inventory.json", "scope.json",
                    expected_status=expected_status)
 
+    def display(stage, result):
+        return {"stage": stage, "unmapped_batches": result["unmapped_batches"],
+                **result["products"]["KIT-01"]}
+
     now = [100]
     app = create_app(tmp_path / "stock.db", ttl_seconds=2, clock=lambda: now[0])
     with TestClient(app) as client:
@@ -57,12 +61,7 @@ def test_offline_count_against_stockroom_snapshot(tmp_path):
     scope = {"session": "shift-1", "batches": {"pallet": "KIT-01", "spare-bin": "KIT-01"}}
     save("scope.json", scope)
 
-    result = check(1)
-    assert result["unmapped_batches"] == ["empty-box"]
-    assert result["products"]["KIT-01"] == {
-        "capacity": 20, "available": 14, "counted": None, "variance": None,
-        "missing_batches": ["spare-bin"], "conflicted_batches": ["pallet"],
-    }
+    review = display("review", check(1))
 
     rev = relay("status", "east.db")["batches"]["pallet"]["revision"]
     relay("record", "east.db", "pallet", "19", "--device", "lead", "--expect", rev)
@@ -75,8 +74,9 @@ def test_offline_count_against_stockroom_snapshot(tmp_path):
     result = check(1)
     assert result["session"] == "shift-1"
     assert result["captured_at_ms"] == 100_000
-    assert result["products"]["KIT-01"]["counted"] == 19
-    assert result["products"]["KIT-01"]["variance"] == -1
+    variance = display("variance", result)
 
     relay("record", "east.db", "pallet", "20", "--device", "lead")
-    assert check(0)["products"]["KIT-01"]["variance"] == 0
+    balanced = display("balanced", check(0))
+    demo = json.loads((COUNT_RELAY / "examples" / "stockroom-audit.json").read_bytes())
+    assert demo == [review, variance, balanced]
