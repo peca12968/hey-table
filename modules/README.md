@@ -41,5 +41,6 @@ python scripts/verify-operations.py cashier
 - [manifest-intake](manifest-intake/README.md)
 - [proto-relay-probe](proto-relay-probe/README.md)
 - [burn-pair](burn-pair/README.md)
+- [warehouse-pick-route](warehouse-pick-route/README.md)
 
 [整合驗證](../.github/workflows/system.yml)
