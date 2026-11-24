@@ -1,5 +1,6 @@
 import {test,expect} from "@playwright/test";
 import {randomUUID} from "node:crypto";
+import {businessDate} from "../lib/business-day.mjs";
 
 test("mobile guests recover a full pickup slot and the kitchen sees when preparation can start",async({page})=>{
   const start=Date.parse("2026-11-25T12:00:00+08:00"),duration=900_000;
@@ -115,5 +116,42 @@ test("a mobile receipt preserves its booking across a full slot and retries one 
   await expect(page.locator(".pickupSlotTime")).toContainText("12:30～12:45");
   await expect(page.getByRole("heading",{name:"取餐號碼 0231"})).toBeVisible();
   expect(new URL(page.url()).hash).toBe("#"+token);
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBe(360);
+});
+
+test("mobile staff refresh a stale slot limit, close it and restore the default",async({page,request})=>{
+  const headers={Authorization:"Bearer local-test-kitchen"};
+  const now=Date.now(),tomorrow=businessDate(now+86_400_000),yesterday=businessDate(now-86_400_000);
+  const start=Date.parse(tomorrow+"T12:00:00+08:00"),endpoint="/api/kitchen/pickup-slots";
+  await page.setViewportSize({width:360,height:780});
+  await page.addInitScript(()=>sessionStorage.setItem("he-ri-staff","local-test-kitchen"));
+  await page.goto("/kitchen");
+  await page.getByRole("link",{name:"管理預約時段"}).click();
+  const date=page.getByLabel("取餐日期");
+  await date.fill(tomorrow);
+  await expect(date).toHaveValue(tomorrow);
+  const slot=page.getByRole("article",{name:"12:00～12:15",exact:true});
+  const capacity=slot.getByLabel("份數上限"),save=slot.getByRole("button",{name:"儲存上限"});
+  await expect(slot.getByText("已占用 0 份 · 剩餘 12 份")).toBeVisible();
+  await capacity.fill("0");
+  expect((await request.patch(endpoint,{headers,data:{date:tomorrow,start,capacity:9,revision:0}})).status()).toBe(200);
+  await save.click();
+  await expect(page.getByRole("alert")).toHaveText("上限已由其他店員更新，請重新載入。");
+  await expect(capacity).toHaveValue("9");
+  await capacity.fill("0");
+  await save.click();
+  await expect(slot.getByText("已占用 0 份 · 剩餘 0 份")).toBeVisible();
+  await expect(page.getByRole("status")).toHaveText("12:00～12:15 的份數上限已儲存。");
+  await capacity.fill("");
+  await save.click();
+  await expect(slot.getByText("已占用 0 份 · 剩餘 12 份")).toBeVisible();
+  const publicSlots=await (await request.get("/api/pickup-slots")).json();
+  expect(publicSlots.slots.some(slot=>slot.start===start)).toBe(false);
+  await date.fill(yesterday);
+  await expect(date).toHaveValue(yesterday);
+  await expect(page.getByText("這天目前沒有可調整的時段。")).toBeVisible();
+  await page.getByLabel("顯示已截止時段").check();
+  await expect(slot.getByText("已停止預約 · 上限 12 份")).toBeVisible();
+  await expect(capacity).toHaveCount(0);
   expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBe(360);
 });

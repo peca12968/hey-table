@@ -120,6 +120,13 @@
       "when": 1795557274433,
       "tag": "0016_pickup_changes",
       "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "6",
+      "when": 1795558081686,
+      "tag": "0017_pickup_slot_limits",
+      "breakpoints": true
     }
   ]
 }

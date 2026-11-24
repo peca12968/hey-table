@@ -155,11 +155,13 @@ Stockroom 支援在一筆交易內保留多個 SKU。若其中一項缺貨，該
 
 ## 預約當天自取時段
 
-線上自取的購物車可展開「預約取餐時段」。示範設定為台灣時間當天 11:00 到 20:00，每 15 分鐘一個時段，需提前至少 30 分鐘。每段最多 12 份，預約單和即時單也共用餐點的每日限量。送單時會重新核對份數與時段，若時段剛滿，可以保留購物車並重選。線上付款保留到期或餐單取消時會釋放占用份數。已成立的餐單可按原資料重送找回收據。
+線上自取的購物車可展開「預約取餐時段」。示範設定為台灣時間當天 11:00 到 20:00，每 15 分鐘一個時段，需提前至少 30 分鐘。每段預設上限 12 份，預約單和即時單也共用餐點的每日限量。送單時會重新核對份數與時段，若時段剛滿，可以保留購物車並重選。線上付款保留到期或餐單取消時會釋放占用份數。已成立的餐單可按原資料重送找回收據。
 
 店員在接單台選「預約自取」可依時段查看餐單，取餐前 15 分鐘開始接單製作。收據、分站看板和交餐小票均顯示預約時段。待交餐的逾時計時最早從預約開始起算。[手機重選與接單測試](qa/pickup-slots.spec.mjs) · [容量、付款到期與時間邊界測試](qa/tappay.test.mjs)
 
 在現有餐單進入備餐窗口前，顧客可在收據選「更改取餐時段」。新時段需符合當天預約與份數規則。改期確認後，同一筆 D1 寫入會把份數從舊時段移到新時段，原餐號、金額與付款紀錄一起沿用。斷線重試會查回已成立的改期。店員接單時會核對目前的預約版本。[改期、容量及接單版本測試](qa/tappay.test.mjs) · [手機收據測試](qa/pickup-slots.spec.mjs)
+
+店員可從接單台選「管理預約時段」，按日期查看各段的已占用與剩餘份數。輸入 0 暫停該時段，留空恢復預設 12 份。可提前設定未來日期，顧客在該日可預約。上限變更會保留已成立的餐單。新單與改期會在資料庫寫入時檢查最新上限，兩台店員裝置改同一時段時會核對設定版本。已停止受理預約的時段可查看占用紀錄。[店員手機測試](qa/pickup-slots.spec.mjs) · [並行關閉與送單測試](qa/tappay.test.mjs)
 
 ## 從收據再次點餐
 
@@ -211,6 +213,7 @@ node --import ./scripts/sites-env.mjs ./node_modules/wrangler/bin/wrangler.js d1
 node --import ./scripts/sites-env.mjs ./node_modules/wrangler/bin/wrangler.js d1 execute DB --local --config dist/server/wrangler.json --persist-to .wrangler/state --file drizzle/0014_kitchen_payment_start.sql
 node --import ./scripts/sites-env.mjs ./node_modules/wrangler/bin/wrangler.js d1 execute DB --local --config dist/server/wrangler.json --persist-to .wrangler/state --file drizzle/0015_pickup_slots.sql
 node --import ./scripts/sites-env.mjs ./node_modules/wrangler/bin/wrangler.js d1 execute DB --local --config dist/server/wrangler.json --persist-to .wrangler/state --file drizzle/0016_pickup_changes.sql
+node --import ./scripts/sites-env.mjs ./node_modules/wrangler/bin/wrangler.js d1 execute DB --local --config dist/server/wrangler.json --persist-to .wrangler/state --file drizzle/0017_pickup_slot_limits.sql
 npm start
 ```
 
