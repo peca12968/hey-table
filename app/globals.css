@@ -35,3 +35,4 @@
 .cartAddOn div{min-width:0;flex:1}.cartAddOn small,.cartAddOn b{display:block}
 .cartAddOn small{color:var(--green);font-size:.875rem}.cartAddOn b{line-height:1.3}
 .cartAddOn button{display:inline-flex;align-items:center;justify-content:center;gap:.2rem;min-height:2.75rem;padding:0 .55rem;border:1px solid var(--green);border-radius:.5rem;background:white;color:var(--green);font-weight:700;white-space:nowrap}
+.intake{margin:18px 0}.intake h2{margin:0 0 10px}.intakeControls{margin-top:12px}.intakeControls>p{margin:8px 0}.intakeRow{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:9px 0;border-bottom:1px solid var(--line)}.intakeRow small{display:block;color:var(--muted);margin-top:3px}.intakeControls>button{margin-top:8px}

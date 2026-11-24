@@ -36,6 +36,13 @@
       "when": 1795467599769,
       "tag": "0004_combo_pricing",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "6",
+      "when": 1795498839715,
+      "tag": "0005_order_intake",
+      "breakpoints": true
     }
   ]
 }

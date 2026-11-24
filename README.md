@@ -42,6 +42,12 @@ Stockroom 支援在一筆交易內保留多個 SKU。若其中一項缺貨，該
 2. 加入滑蛋豬排丼 NT$190，可增減數量、加備註，再確認送單。保留收據連結即可查這張餐單；同一裝置也能從「查詢餐單」找回最近一單。
 3. 店主在 `/kitchen` 接單，依序切換製作中、可取餐、已完成。待接單時也能取消。收據每五秒更新一次，可手動更新。後台可暫停售餐，再恢復供應。
 
+### 忙碌時暫停其中一個接單管道
+
+店員在接單台開啟「管理接單管道」，可分別暫停或恢復「掃碼內用」與「線上自取」。顧客會看到暫停通知，仍可瀏覽、修改和保留購物車。恢復後可送出原購物車。暫停前已成立的餐單可重送取得原收據，也能繼續付款、製作和交餐。
+
+接單狀態與建立訂單在同一個 D1 批次內檢查。兩名店員若同時操作同一管道，舊版本會被拒絕並提示載入最新狀態。這次遷移會讓既有店家從兩個管道均開放開始。手機測試涵蓋已開啟的舊菜單、暫停後重新進站、保留備註、恢復送單，以及暫停與八筆新單在 D1 併發時的一致性。[手機與 API 測試](qa/intake.spec.mjs)
+
 ## 把量測到的工時套用到購物車
 
 在店家接單台開啟「管理出餐工時」，下載目前設定。將這份檔案交給 Batch Clock 的 `calibrate --format kitchen`，再把產出的 JSON 匯回接單台。頁面會列出有變動的餐點及新舊秒數。按「套用工時」後，下一次購物車試算就會使用新設定。可預覽並套用上一版，亦可還原示範工時。[Batch Clock 使用說明](modules/batch-clock/README.md)
@@ -116,6 +122,8 @@ node --import ./scripts/sites-env.mjs ./node_modules/wrangler/bin/wrangler.js d1
 node --import ./scripts/sites-env.mjs ./node_modules/wrangler/bin/wrangler.js d1 execute DB --local --config dist/server/wrangler.json --persist-to .wrangler/state --file drizzle/0001_online_payments.sql
 node --import ./scripts/sites-env.mjs ./node_modules/wrangler/bin/wrangler.js d1 execute DB --local --config dist/server/wrangler.json --persist-to .wrangler/state --file drizzle/0002_kitchen_queue_index.sql
 node --import ./scripts/sites-env.mjs ./node_modules/wrangler/bin/wrangler.js d1 execute DB --local --config dist/server/wrangler.json --persist-to .wrangler/state --file drizzle/0003_kitchen_timing_revisions.sql
+node --import ./scripts/sites-env.mjs ./node_modules/wrangler/bin/wrangler.js d1 execute DB --local --config dist/server/wrangler.json --persist-to .wrangler/state --file drizzle/0004_combo_pricing.sql
+node --import ./scripts/sites-env.mjs ./node_modules/wrangler/bin/wrangler.js d1 execute DB --local --config dist/server/wrangler.json --persist-to .wrangler/state --file drizzle/0005_order_intake.sql
 npm start
 ```
 

@@ -64,8 +64,16 @@ function database(beforeMigration=()=>{}){
   return d1(sqlite);
 }
 function d1(sqlite){
-  return {sqlite,prepare(sql){const stmt=sqlite.prepare(sql);return {bind(...args){return {
-    first:()=>stmt.get(...args),run:()=>({meta:stmt.run(...args)}),all:()=>({results:stmt.all(...args)})};}};}};
+  const wrap=(stmt,args=[])=>({bind:(...values)=>wrap(stmt,values),first:()=>stmt.get(...args),
+    run:()=>({meta:stmt.run(...args)}),all:()=>({results:stmt.all(...args)})});
+  return {sqlite,prepare:sql=>wrap(sqlite.prepare(sql)),batch(statements){
+    sqlite.exec("BEGIN");
+    try{
+      const results=statements.map(stmt=>stmt.all());
+      sqlite.exec("COMMIT");
+      return results;
+    }catch(e){sqlite.exec("ROLLBACK");throw e;}
+  }};
 }
 test("staff payment export matches both reconciliation tools without exporting customer fields",async t=>{
   const temp=mkdtempSync(join(tmpdir(),"hey-table-payment-snapshot-"));
@@ -149,6 +157,14 @@ test("migrate a historic price and recover accepted demo orders after a change o
   const first=await (await post("demo",deal)).json();
   assert.equal(first.total,200);
   assert.deepEqual(await (await post("production",deal)).json(),first);
+  const menu=()=>api(new Request("https://order.example/api/menu"),{DB:db});
+  assert.deepEqual((await (await menu()).json()).accepting,{pickup:true,table:true});
+  const pause=await api(new Request("https://order.example/api/kitchen/intake",{method:"PATCH",headers:{
+    Authorization:"Bearer local-test-key","Content-Type":"application/json"},
+    body:JSON.stringify({mode:"pickup",accepting:false,revision:0})}),{DB:db,STAFF_KEY:"local-test-key"});
+  assert.equal(pause.status,200);
+  assert.deepEqual((await (await menu()).json()).accepting,{pickup:false,table:true});
+  assert.deepEqual(await (await post("production",old)).json(),recovered);
 });
 for(const method of ["line_pay","px_pay_plus"]){
   test(method+" resolves a lost charge reply with the original bank reference",async t=>{

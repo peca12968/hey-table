@@ -7,6 +7,7 @@ import {downloadJson} from "../../lib/download-json.mjs";
 import Timing from "./timing";
 import ReturnReceipt from "./return-receipt";
 import PaymentSnapshot from "./payment-snapshot";
+import Intake from "./intake";
 import {methods,paymentStates,environmentLabel,canPrepare,canCancel} from "../../lib/payments.mjs";
 const action={preparing:"接單製作",ready:"完成製作",completed:"完成交餐",cancelled:"取消訂單"};
 export default function Kitchen(){
@@ -44,6 +45,7 @@ export default function Kitchen(){
     <div className="actions"><a className="outline" href="/kitchen/prep">查看備料單</a>
       <button className="outline" disabled={exporting} onClick={exportStations}>{exporting?"正在擷取訂單…":"下載分站出單檔"}</button></div>
     {exportMessage&&<p role="status">{exportMessage}</p>}
+    <Intake key={"intake-"+key} staffKey={key}/>
     <ReturnReceipt key={key} staffKey={key}/>
     <PaymentSnapshot key={"payments-"+key} staffKey={key}/>
     <nav className="tabs">{[["active","處理中"],["pending","待接單"],["ready","待交餐"],["all","含近期結單"]].map(([v,n])=><button aria-pressed={v===filter} key={v} onClick={()=>setFilter(v)}>{n}</button>)}</nav>

@@ -1,4 +1,5 @@
-import { index, integer, sqliteTable, text } from "drizzle-orm/sqlite-core";
+import { sql } from "drizzle-orm";
+import { check, index, integer, sqliteTable, text } from "drizzle-orm/sqlite-core";
 
 export const orders = sqliteTable("orders", {
   id: integer("id").primaryKey({ autoIncrement: true }),
@@ -32,3 +33,12 @@ export const kitchenTiming = sqliteTable("kitchen_timing", {
   revision: integer("revision").primaryKey(),
   config: text("config").notNull(),
 });
+export const orderIntake = sqliteTable("order_intake", {
+  mode: text("mode").primaryKey().notNull(),
+  accepting: integer("accepting", {mode:"boolean"}).notNull(),
+  revision: integer("revision").notNull(),
+}, t => [
+  check("order_intake_mode", sql`${t.mode} IN ('pickup','table')`),
+  check("order_intake_accepting", sql`${t.accepting} IN (0,1)`),
+  check("order_intake_revision", sql`${t.revision} > 0`),
+]);
