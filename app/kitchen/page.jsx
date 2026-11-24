@@ -2,9 +2,11 @@
 import {useEffect,useState} from "react";
 import {RefreshCw} from "lucide-react";
 import {Header,Footer,Mode,PickupAppointment,request} from "../shared";
-import {pickupPrepLead,pickupTime,pickupWindow} from "../../lib/pickup-slots.mjs";
+import {pickupChangeWindows,pickupPrepLead,pickupTime} from "../../lib/pickup-slots.mjs";
+import {businessDate} from "../../lib/business-day.mjs";
 import {ItemNote} from "../item-notes";
 import ReschedulePickup from "../reschedule-pickup";
+import {usePickupToday} from "../pickup-slots";
 import {dishes,labels,numberOf,tables,transitions} from "../../lib/menu.mjs";
 import {downloadJson} from "../../lib/download-json.mjs";
 import Timing from "./timing";
@@ -63,18 +65,21 @@ function TableHandoff({table,orders,busy,update}){
   </section>;
 }
 
-function KitchenTicket({order,busy,update,movePickup,refresh,showOverdue=false,handoffOnly=false}){
+function KitchenTicket({order,busy,update,movePickup,refresh,today,showOverdue=false,handoffOnly=false}){
   const {id,status,table,created,items,note,paymentMethod,paymentEnv,paymentState,total}=order;
   const actions=handoffOnly ? transitions[status].filter(next=>next==="completed") : transitions[status];
   const workingByStation=order.stationProgress&&status==="preparing";
   const tableRevision=order.tableRevision??0;
   const latestPickup=order.latestPickupChange;
+  const [previousWindow,newWindow]=latestPickup?pickupChangeWindows(latestPickup):[];
+  const prepAt=order.pickupUpcoming?order.pickupSlot-pickupPrepLead:null;
+  const prepDay=prepAt===null?"":businessDate(prepAt);
   return <article className="sheet kitchenTicket">
     <div className="menuTitle"><h2>#{numberOf(id)}</h2><Mode table={table} source={order.source}/></div>
     <p aria-live={handoffOnly?"polite":undefined}><b>{labels[status]}</b> · {new Date(created).toLocaleTimeString("zh-TW",{hour:"2-digit",minute:"2-digit",timeZone:"Asia/Taipei"})}</p>
     <PickupAppointment start={order.pickupSlot}/>
-    {latestPickup&&<p className="muted" role="status">{latestPickup.actor==="staff"?"店員":"顧客"}已將取餐時段從 {pickupWindow(latestPickup.from)} 改到 {pickupWindow(latestPickup.to)}。</p>}
-    {order.pickupUpcoming&&<p className="muted">{pickupTime(order.pickupSlot-pickupPrepLead)} 後可接單製作。</p>}
+    {latestPickup&&<p className="muted" role="status">{latestPickup.actor==="staff"?"店員":"顧客"}已將取餐時段從 {previousWindow} 改到 {newWindow}。</p>}
+    {prepAt!==null&&<p className="muted">{prepDay>today?prepDay+" ":""}{pickupTime(prepAt)} 後可接單製作。</p>}
     {showOverdue&&order.overdue&&<p className="kitchenOverdue">逾時 · {overdueStage[status]} {Math.floor(order.overdue.elapsedMs/60_000)} 分鐘</p>}
     <ul className="orderLines">{items.map(dish=><li key={dish.id}><div>{dish.name}<ItemNote note={dish.note}/></div><b>×{dish.qty}</b></li>)}</ul>
     {note&&<p>備註　{note}</p>}
@@ -104,6 +109,7 @@ export default function Kitchen(){
   const [scope,setScope]=useState("all"),[search,setSearch]=useState("");
   const [queueAvailable,setQueueAvailable]=useState(false);
   const [pickup,setPickup]=useState(undefined),[actionMessage,setActionMessage]=useState("");
+  const today=usePickupToday();
   const focused=typeof pickup==="string";
   const signInTarget=pickup?"/kitchen?pickup="+pickup:"/kitchen";
   useEffect(()=>{
@@ -240,7 +246,7 @@ export default function Kitchen(){
         <button className="outline" key={table} onClick={()=>setScope(table)}>{table} 桌 · {count} 張待交餐</button>)}
     </div>}
     {showTableHandoff&&tables.includes(scope)&&<TableHandoff key={scope} table={scope} orders={readyAt(scope)} busy={busy} update={update}/>}
-    <div className="kGrid">{filtered.map(order=><KitchenTicket key={order.id} order={order} busy={busy} update={update}
+    <div className="kGrid">{filtered.map(order=><KitchenTicket key={order.id} order={order} busy={busy} update={update} today={today}
       movePickup={movePickup} refresh={()=>setRevision(value=>value+1)} showOverdue={queueAvailable}/>)}</div>
     <section className="sheet stock"><h2>餐點供應</h2>{dishes.map(d=><div key={d.id}><span>{d.name}</span><button className="outline" disabled={busy} onClick={()=>update("availability",{id:d.id,available:sold.includes(d.id)})}>{sold.includes(d.id)?"已售完 · 恢復供應":"供應中 · 標記售完"}</button></div>)}</section>
     <Timing staffKey={key}/>

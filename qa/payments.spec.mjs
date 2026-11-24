@@ -213,7 +213,7 @@ for(const [method,label,table] of [["easy_wallet","悠遊付","A02"],["pi_wallet
     await page.getByRole("button",{name:"加入日式熱煎茶",exact:true}).click();
     await page.getByRole("button",{name:/我的餐單/}).click();
     await page.getByRole("checkbox",{name:/套用套餐優惠/}).check();
-    await page.getByRole("combobox").selectOption({label});
+    await page.getByRole("combobox",{name:"付款方式"}).selectOption({label});
     await page.getByRole("button",{name:"確認送出訂單"}).click();
     await page.waitForURL("**/ticket#*");
     await expect(page.getByRole("heading",{name:label,exact:true})).toBeVisible();

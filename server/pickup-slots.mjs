@@ -32,8 +32,8 @@ async function slotAvailability(db,starts,now){
   });
 }
 
-export async function pickupSlots(db,now){
-  const rows=await slotAvailability(db,bookablePickupSlots(now),now);
+export async function pickupSlots(db,now,day){
+  const rows=await slotAvailability(db,bookablePickupSlots(now,day),now);
   return rows.map(({start,end,remaining})=>({start,end,remaining}));
 }
 

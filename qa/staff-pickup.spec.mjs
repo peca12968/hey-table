@@ -9,6 +9,31 @@ const create=(request,data)=>request.post(endpoint,{headers,data});
 const guestOrder=(request,data)=>request.post("/api/orders",{data:{...data,mode:"pickup"}});
 const advance=(request,id,from,to)=>request.patch("/api/kitchen/status",{headers,data:{id,from,to}});
 
+test("mobile staff choose the date and book a future pickup payable at the counter",async({page,request})=>{
+  page.setDefaultTimeout(8000);
+  const tomorrow=businessDate(Date.now()+86_400_000);
+  const start=Date.parse(tomorrow+"T14:00:00+08:00");
+  let token;
+  await page.setViewportSize({width:360,height:780});
+  await page.addInitScript(()=>sessionStorage.setItem("he-ri-staff","local-test-kitchen"));
+  try{
+    await page.goto("/kitchen/create-pickup");
+    await page.getByLabel("取餐日期",{exact:true}).selectOption(tomorrow);
+    await page.getByRole("spinbutton",{name:/日式熱煎茶/}).fill("1");
+    const submit=page.getByRole("button",{name:"確認建立自取單"});
+    await expect(submit).toBeDisabled();
+    await page.getByLabel("自取時段").selectOption(String(start));
+    await submit.click();
+    const href=await page.getByRole("link",{name:"開啟顧客收據"}).getAttribute("href");
+    token=href.split("#")[1];
+    const order=await (await request.get("/api/ticket",{headers:{"X-Ticket":token}})).json();
+    expect(order).toMatchObject({source:"staff",pickupSlot:start,paymentMethod:"cash"});
+    await expect(page.locator(".pickupSlotTime time")).toHaveAttribute("datetime",new Date(start).toISOString());
+  }finally{
+    if(token)await request.post("/api/ticket/cancel",{headers:{"X-Ticket":token},data:{}});
+  }
+});
+
 test("mobile staff recover a lost pickup confirmation and share the same receipt",async({page,request})=>{
   expect((await request.get(endpoint)).status()).toBe(403);
   expect((await request.post(endpoint,{data:sencha()})).status()).toBe(403);

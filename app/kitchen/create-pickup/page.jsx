@@ -3,12 +3,13 @@ import {useEffect,useState} from "react";
 import {Header,Footer,PickupAppointment,request} from "../../shared";
 import {dishes,numberOf,withItemNotes} from "../../../lib/menu.mjs";
 import {ItemNotesEditor} from "../../item-notes";
-import PickupSlots from "../../pickup-slots";
+import PickupSlots,{PickupDate,usePickupToday} from "../../pickup-slots";
+import {pickupBookingDays} from "../../../lib/pickup-slots.mjs";
 import "./pickup.css";
 
 const endpoint="/api/kitchen/create-pickup";
 const draftKey="he-ri-staff-pickup-draft";
-const empty={quantities:{},lineNotes:{},note:"",pickupSlot:null,attempt:null,result:null};
+const empty={quantities:{},lineNotes:{},note:"",pickupDate:"",pickupSlot:null,attempt:null,result:null};
 
 function staffHeaders(){
   const key=sessionStorage.getItem("he-ri-staff");
@@ -16,7 +17,11 @@ function staffHeaders(){
 }
 
 function savedDraft(){
-  try{return JSON.parse(sessionStorage.getItem(draftKey))??empty;}
+  try{
+    const saved=JSON.parse(sessionStorage.getItem(draftKey))??empty;
+    return saved.pickupDate&&!saved.attempt&&!saved.result&&!pickupBookingDays(Date.now()).includes(saved.pickupDate)
+      ?{...saved,pickupDate:"",pickupSlot:null}:saved;
+  }
   catch{return empty;}
 }
 
@@ -25,21 +30,25 @@ function availableQuantity(menu,id){
 }
 
 export default function CreatePickup(){
-  const [draft,setDraft]=useState(null),[menu,setMenu]=useState(null),[revision,setRevision]=useState(0);
+  const [draft,setDraft]=useState(null),[menuSnapshot,setMenu]=useState(null),[revision,setRevision]=useState(0);
   const [busy,setBusy]=useState(false),[denied,setDenied]=useState(false),[menuError,setMenuError]=useState("");
   const [error,setError]=useState(""),[message,setMessage]=useState("");
+  const {quantities,lineNotes={},note,pickupDate="",pickupSlot=null,attempt,result}=draft??empty;
+  const today=usePickupToday();
+  const bookingDay=pickupDate===today||(attempt&&pickupDate<today)?"":pickupDate;
+  const menu=menuSnapshot?.day===bookingDay?menuSnapshot.value:null;
   useEffect(()=>{
     const controller=new AbortController();
-    request(endpoint,{headers:staffHeaders(),signal:controller.signal}).then(value=>{
+    request(endpoint+(bookingDay?"?date="+bookingDay:""),{headers:staffHeaders(),signal:controller.signal}).then(value=>{
       if(controller.signal.aborted)return;
-      setMenu(value);setMenuError("");setDenied(false);
+      setMenu({day:bookingDay,value});setMenuError("");setDenied(false);
       setDraft(current=>current??savedDraft());
     }).catch(failure=>{
       if(controller.signal.aborted)return;
       setMenu(null);setDenied(failure.status===403);setMenuError(failure.message);
     });
     return ()=>controller.abort();
-  },[revision]);
+  },[bookingDay,revision,today]);
 
   function saveDraft(next){
     try{sessionStorage.setItem(draftKey,JSON.stringify(next));}
@@ -48,17 +57,17 @@ export default function CreatePickup(){
     return true;
   }
 
-  const {quantities,lineNotes={},note,pickupSlot=null,attempt,result}=draft??empty;
   const lines=dishes.filter(dish=>Number(quantities[dish.id])>0);
   const count=lines.reduce((amount,dish)=>amount+Number(quantities[dish.id]),0);
   const total=lines.reduce((amount,dish)=>amount+dish.price*Number(quantities[dish.id]),0);
   const exceedsSupply=menu&&lines.some(dish=>Number(quantities[dish.id])>availableQuantity(menu,dish.id));
+  const needsPickupSlot=!!bookingDay&&pickupSlot===null;
   const locked=busy||Boolean(attempt);
   const receiptLink=result?"/ticket#"+result.token:"";
 
   async function submit(event){
     event.preventDefault();
-    if(busy||!menu||(!attempt&&(!lines.length||exceedsSupply)))return;
+    if(busy||!menu||(!attempt&&(!lines.length||exceedsSupply||needsPickupSlot)))return;
     setError("");
     const payload=attempt??{token:crypto.randomUUID(),note:note.trim(),expectedTotal:total,
       items:withItemNotes(lines.map(dish=>({id:dish.id,qty:Number(quantities[dish.id])})),lineNotes),
@@ -115,13 +124,16 @@ export default function CreatePickup(){
       </div>
       {message&&<p role="status">{message}</p>}
     </section>}
+    {draft&&!result&&!denied&&<PickupDate value={pickupDate} disabled={locked} onChange={day=>{
+      setError("");setMenuError("");setDraft({...draft,pickupDate:day,pickupSlot:null});
+    }}/>}
     {menu&&draft&&!result&&<form className="sheet pickupForm" onSubmit={submit}>
       <div className="menuTitle"><strong>現場付款</strong>
         <button type="button" className="outline" disabled={busy} onClick={()=>setRevision(value=>value+1)}>更新供應</button>
       </div>
       <ul className="orderLines">{dishes.map(dish=><li key={dish.id}>
         <label htmlFor={"qty-"+dish.id}><strong>{dish.name}</strong><small>NT$ {dish.price}{availableQuantity(menu,dish.id)===0?
-          " · 已售完":menu.remaining?.[dish.id]!==undefined?" · 今日剩餘 "+menu.remaining[dish.id]+" 份":""}</small></label>
+          " · 已售完":menu.remaining?.[dish.id]!==undefined?" · "+(bookingDay?"取餐日":"今日")+"剩餘 "+menu.remaining[dish.id]+" 份":""}</small></label>
         <input id={"qty-"+dish.id} type="number" inputMode="numeric" min="0" max="20" step="1" value={quantities[dish.id]??""}
           disabled={locked||(!quantities[dish.id]&&availableQuantity(menu,dish.id)===0)} onChange={event=>{
             const value=event.target.value,nextNotes={...lineNotes};
@@ -133,13 +145,13 @@ export default function CreatePickup(){
         onChange={(id,value)=>setDraft({...draft,lineNotes:{...lineNotes,[id]:value}})}/>}
       <label className="note">訂單備註<textarea maxLength={160} value={note} disabled={locked}
         placeholder="例如：不要餐具" onChange={event=>setDraft({...draft,note:event.target.value})}/></label>
-      {count>0&&<PickupSlots selected={attempt?attempt.pickupSlot??null:pickupSlot} count={count} disabled={locked}
+      {count>0&&<PickupSlots selected={attempt?attempt.pickupSlot??null:pickupSlot} count={count} day={bookingDay} disabled={locked}
         revision={revision} onChange={value=>{setError("");setDraft({...draft,pickupSlot:value});}}/>}
       <div className="total"><span>合計</span><b>NT$ {attempt?.expectedTotal??total}</b></div>
       {error&&<p className="error" role="alert">{error}</p>}
       {attempt&&!busy&&!error&&<p role="status">這張餐單的送單結果尚待確認。</p>}
       {exceedsSupply&&!attempt&&<p className="error" role="status">部分餐點已超過可供應份數，請調整餐單。</p>}
-      <button className="primary full" disabled={busy||(!attempt&&(!lines.length||exceedsSupply))}>
+      <button className="primary full" disabled={busy||(!attempt&&(!lines.length||exceedsSupply||needsPickupSlot))}>
         {busy?"送單中…":attempt?"重試同一張自取單":"確認建立自取單"}
       </button>
     </form>}

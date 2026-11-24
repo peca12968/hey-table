@@ -8,11 +8,10 @@ const offers = dishes.filter(dish => dish.group !== "丼飯").map(dish => dish.i
 const mains = new Set(dishes.filter(dish => dish.group === "丼飯").map(dish => dish.id));
 const menuPairings = {katsudon: ["sencha", "gyoza"], oyakodon: ["edamame", "sencha"]};
 
-export async function addOnFor(db, items) {
+export async function addOnFor(db, items, now, date=businessDate(now)) {
   const cart = items.map(item => item.id);
   const anchors = cart.filter(id => mains.has(id));
   if (!anchors.length) return null;
-  const now=Date.now(),date=businessDate(now);
   const [,stock,history,limits]=await db.batch([
     expirePaymentHolds(db,now),
     db.prepare("SELECT dish FROM unavailable"),

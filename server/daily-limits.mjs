@@ -1,17 +1,22 @@
 import {dishes} from "../lib/menu.mjs";
 import {expirePaymentHolds} from "./payment-holds.mjs";
 
+export const supplyTime="COALESCE(orders.pickup_slot,orders.created)";
+const suppliedWithin=`${supplyTime}>=? AND ${supplyTime}<? AND status<>'cancelled'`;
 const usedByDish=`SELECT json_extract(line.value,'$.id') AS dish, SUM(json_extract(line.value,'$.qty')) AS used
   FROM orders JOIN json_each(orders.items) AS line
-  WHERE created>=? AND created<? AND status<>'cancelled'
+  WHERE ${suppliedWithin}
   GROUP BY json_extract(line.value,'$.id')`;
 const usedForLimit=`COALESCE((SELECT SUM(json_extract(line.value,'$.qty'))
   FROM orders JOIN json_each(orders.items) AS line
-  WHERE created>=? AND created<? AND status<>'cancelled' AND json_extract(line.value,'$.id')=limits.dish),0)`;
+  WHERE ${suppliedWithin} AND json_extract(line.value,'$.id')=limits.dish),0)`;
 
-export const exceededPortions=`SELECT limits.dish FROM daily_portion_limits AS limits
-  JOIN json_each(?) AS requested ON json_extract(requested.value,'$.id')=limits.dish
+const excessFor=items=>`SELECT limits.dish FROM daily_portion_limits AS limits
+  JOIN json_each(${items}) AS requested ON json_extract(requested.value,'$.id')=limits.dish
   WHERE limits.date=? AND limits.capacity<json_extract(requested.value,'$.qty')+${usedForLimit}`;
+
+export const exceededPortions=excessFor("?");
+export const exceededOrderPortions=excessFor("orders.items");
 
 export function readRemaining(db,date,range) {
   return db.prepare(`SELECT dish, MAX(0,capacity-${usedForLimit}) AS remaining

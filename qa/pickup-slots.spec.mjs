@@ -4,6 +4,68 @@ import {readFile} from "node:fs/promises";
 import {businessDate} from "../lib/business-day.mjs";
 import {pickupCalendar} from "../server/pickup-calendar.mjs";
 
+test("mobile guest books a future day despite today's sellout and moves the receipt and kitchen prep to another date",async({page,request})=>{
+  page.setDefaultTimeout(8000);
+  const now=Date.now(),oneDay=86_400_000;
+  const today=businessDate(now),tomorrow=businessDate(now+oneDay),later=businessDate(now+2*oneDay);
+  const endpoint="/api/kitchen/daily-limits",staff={Authorization:"Bearer local-test-kitchen"},dish="sencha";
+  const remaining=async date=>(await (await request.get(endpoint+"?date="+date,{headers:staff})).json()).limits[dish];
+  const save=async(date,capacity)=>{
+    const {revision}=await remaining(date);
+    return request.patch(endpoint,{headers:staff,data:{date,dish,capacity,revision}});
+  };
+  const current=await remaining(today),tomorrowSupply=await remaining(tomorrow),laterSupply=await remaining(later);
+  let token;
+  try{
+    expect((await save(today,current.used)).ok()).toBe(true);
+    expect((await save(tomorrow,tomorrowSupply.used+1)).ok()).toBe(true);
+    expect((await save(later,laterSupply.used+1)).ok()).toBe(true);
+    await page.setViewportSize({width:360,height:780});
+    await page.addInitScript(()=>sessionStorage.setItem("he-ri-staff","local-test-kitchen"));
+    await page.goto("/");
+    const add=page.getByRole("button",{name:"加入日式熱煎茶"});
+    await expect(add).toHaveCount(0);
+    await page.getByLabel("取餐日期",{exact:true}).selectOption(tomorrow);
+    await expect(add).toBeEnabled();
+    await expect(page.getByText("取餐日剩餘 1 份")).toBeVisible();
+    await add.click();
+    await page.getByRole("button",{name:/我的餐單/}).click();
+    const submit=page.getByRole("button",{name:"確認送出訂單"});
+    await expect(submit).toBeDisabled();
+    const noon=Date.parse(tomorrow+"T12:00:00+08:00"),next=Date.parse(later+"T12:00:00+08:00");
+    await page.getByLabel("自取時段").selectOption(String(noon));
+    expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBe(360);
+    await submit.click();
+    await page.waitForURL("**/ticket#*");
+    token=new URL(page.url()).hash.slice(1);
+    const lookup=async()=>(await (await request.get("/api/ticket?progress=1",{headers:{"X-Ticket":token}})).json());
+    const accepted=await lookup();
+    const prep=async(date="")=>(await (await request.get("/api/kitchen/prep"+(date?"?date="+date:""),{headers:staff})).json()).orders.map(order=>order.id);
+    expect(accepted.pickupSlot).toBe(noon);
+    expect(await prep()).not.toContain(accepted.id);
+    expect(await prep(tomorrow)).toContain(accepted.id);
+    await page.getByRole("button",{name:"更改取餐時段"}).click();
+    await expect(page.getByLabel("新的取餐日期")).toHaveValue(tomorrow);
+    await page.getByLabel("新的取餐日期").selectOption(later);
+    await page.getByLabel("新的取餐時段").selectOption(String(next));
+    await page.getByRole("button",{name:"確認改期"}).click();
+    await expect(page.locator(".pickupSlotTime time")).toHaveAttribute("datetime",new Date(next).toISOString());
+    await expect(page.getByText(/取餐時段已從.*12:00～12:15.*改到.*12:00～12:15/)).toBeVisible();
+    expect((await lookup()).id).toBe(accepted.id);
+    expect(await prep(tomorrow)).not.toContain(accepted.id);
+    expect(await prep(later)).toContain(accepted.id);
+    await page.goto("/kitchen/prep");
+    await page.getByLabel("備料日期").selectOption(later);
+    await expect(page.getByText("備料日期 "+later,{exact:true})).toBeVisible();
+    await expect(page.getByRole("rowheader",{name:"日式熱煎茶"})).toBeVisible();
+  }finally{
+    if(token)await request.post("/api/ticket/cancel",{headers:{"X-Ticket":token},data:{}});
+    await save(today,current.capacity);
+    await save(tomorrow,tomorrowSupply.capacity);
+    await save(later,laterSupply.capacity);
+  }
+});
+
 test("mobile guests recover a full pickup slot and the kitchen sees when preparation can start",async({page})=>{
   const start=Date.parse("2026-11-25T12:00:00+08:00"),duration=900_000;
   const next=start+duration;

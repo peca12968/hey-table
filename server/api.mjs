@@ -4,11 +4,11 @@ import qrcode from "qrcode-generator";
 import {dishes, itemNoteLimit, numberOf, tables, transitions} from "../lib/menu.mjs";
 import {intakeLabels,intakeNotice} from "../lib/order-intake.mjs";
 import {businessDate,businessDayRange} from "../lib/business-day.mjs";
-import {dailyLimits,exceededPortions,readRemaining} from "./daily-limits.mjs";
+import {dailyLimits,exceededOrderPortions,exceededPortions,readRemaining,supplyTime} from "./daily-limits.mjs";
 import {expirePaymentHolds,noBlockingPayment,paymentHoldMs} from "./payment-holds.mjs";
 import {dailyTiming,dailyTimingRows} from "./daily-timing.mjs";
 import {kitchenOverdue} from "./kitchen-overdue.mjs";
-import {bookablePickupSlots,pickupCalendarStatus,pickupPrepLead,pickupSlotCapacity,pickupSlotsForDay} from "../lib/pickup-slots.mjs";
+import {bookedPickupDate,pickupBookingDays,pickupCalendarStatus,pickupPrepLead,pickupSlotCapacity,pickupSlotsForDay} from "../lib/pickup-slots.mjs";
 import {canReschedulePickup,capacityAtPickupSlot,editablePickupSlots,orderPortions,pickupChanges,pickupSlotLimits,
   pickupSlotUsage,pickupSlots,usedAtPickupSlot} from "./pickup-slots.mjs";
 import {pickupCalendar} from "./pickup-calendar.mjs";
@@ -214,10 +214,14 @@ export async function api(request, env) {
     return meta.changes?json({date,start,capacity,revision:revision+1}):fail("上限已由其他店員更新，請重新載入。",409);
   }
   const staffPickup=path === "/api/kitchen/create-pickup";
-  if(path === "/api/pickup-slots" && method === "GET")
-    return json({slots:await pickupSlots(db,Date.now())});
+  if(path === "/api/pickup-slots" && method === "GET") {
+    const now=Date.now(),date=url.searchParams.get("date")??businessDate(now);
+    if(!pickupBookingDays(now).includes(date))return fail("請選擇七天內的取餐日期。");
+    return json({slots:await pickupSlots(db,now,date)});
+  }
   if ((path === "/api/menu" || staffPickup) && method === "GET") {
-    const now=Date.now(),date=businessDate(now);
+    const now=Date.now(),date=url.searchParams.get("date")??businessDate(now);
+    if(!pickupBookingDays(now).includes(date))return fail("請選擇七天內的取餐日期。");
     const [,stock,modes,seats,portions]=await db.batch([expirePaymentHolds(db,now),
       db.prepare("SELECT dish FROM unavailable"),db.prepare(intakeRows),
       db.prepare(tableIntakeRows),readRemaining(db,date,businessDayRange(date))]);
@@ -229,7 +233,9 @@ export async function api(request, env) {
   if (path === "/api/add-on" && method === "POST") {
     const items = menuItems(input.items);
     if (!items) return fail("請確認餐點與數量");
-    return json({suggestion: await addOnFor(db, items)});
+    const now=Date.now(),date=input.pickupDate??businessDate(now);
+    if(!pickupBookingDays(now).includes(date))return fail("請選擇七天內的取餐日期。");
+    return json({suggestion: await addOnFor(db,items,now,date)});
   }
   if (path === "/api/quote" && method === "POST") {
     const items = menuItems(input.items);
@@ -266,9 +272,10 @@ export async function api(request, env) {
     const snapshot = quote && validPrice ? JSON.stringify({version:comboVersion,quote}) : null;
     const available=config.methods.includes(method);
     const lines = JSON.stringify(order.items);
-    const created=Date.now(),date=businessDate(created),range=businessDayRange(date);
+    const created=Date.now(),today=businessDate(created);
     const booked=order.pickupSlot!==null;
-    const validSlot=!booked||bookablePickupSlots(created).includes(order.pickupSlot);
+    const date=booked?bookedPickupDate(created,order.pickupSlot):today;
+    const range=businessDayRange(date??today);
     const portions=booked?order.items.reduce((sum,item)=>sum+item.qty,0):0;
     const slotGuard=booked?` AND ${usedAtPickupSlot}+?<=${capacityAtPickupSlot}`:"";
     const stmt = db.prepare(`INSERT INTO orders(token,mode,source,table_no,note,items,total,created,payment_method,payment_env,combo_quote,payment_due_at,pickup_slot)
@@ -279,12 +286,12 @@ export async function api(request, env) {
     const [,,savedOrder,intake,exceeded,slotUsage]=await db.batch([
       expirePaymentHolds(db,created),
       stmt.bind(order.token,order.mode,source,order.table,order.note,lines,quote?.total??order.total,created,method,method==='cash'?'cash':config.mode,snapshot,
-        method==="cash"?null:created+paymentHoldMs,order.pickupSlot,available&&validPrice&&validSlot?1:0,staffPickup?1:0,
-        order.mode,order.table,lines,lines,date,...range,...(booked?[order.pickupSlot,portions,order.pickupSlot]:[])),
+        method==="cash"?null:created+paymentHoldMs,order.pickupSlot,available&&validPrice&&date?1:0,staffPickup?1:0,
+        order.mode,order.table,lines,lines,date??today,...range,...(booked?[order.pickupSlot,portions,order.pickupSlot]:[])),
       db.prepare(selectOrders+" WHERE token=?").bind(order.token),
       db.prepare(`SELECT ${modePaused} AS mode_paused, ${tablePaused} AS table_paused`).bind(order.mode,order.table),
       db.prepare(`SELECT dish FROM (${exceededPortions}) WHERE NOT EXISTS (SELECT 1 FROM orders WHERE token=?)`)
-        .bind(lines,date,...range,order.token),
+        .bind(lines,date??today,...range,order.token),
       ...(booked?[pickupSlotUsage(db,order.pickupSlot)]:[]),
     ]);
     const row=savedOrder.results[0];
@@ -294,9 +301,10 @@ export async function api(request, env) {
       return json({error:intakeNotice(order.mode),code:"intake_paused"},409);
     if (!row && intake.results[0].table_paused)
       return json({error:intakeNotice(order.mode,order.table),code:"table_paused"},409);
+    if (!row && !date)return json({error:"這個取餐時段已停止預約，請重新選擇。",code:"pickup_slot_closed"},409);
     if (!row && exceeded.results.length)
-      return json({error:"部分餐點已超過今日剩餘份數，請調整餐單",code:"portion_limit"},409);
-    if (!row && !validSlot)return json({error:"這個取餐時段已停止預約，請重新選擇。",code:"pickup_slot_closed"},409);
+      return json({error:date===today?"部分餐點已超過今日剩餘份數，請調整餐單":
+        "部分餐點已超過取餐日的剩餘份數，請調整餐單或日期。",code:"portion_limit"},409);
     if (!row && booked && slotUsage.results[0].used+portions>slotUsage.results[0].capacity)
       return json({error:"此時段剩餘份數不足，請改選時段或調整餐點。",code:"pickup_slot_full"},409);
     if (!row) return fail("部分餐點已售完，請重新確認菜單",409);
@@ -379,7 +387,9 @@ export async function api(request, env) {
     if(!Number.isSafeInteger(from)||from<1||!Number.isSafeInteger(to)||to<1||from===to||
       !Number.isSafeInteger(revision)||revision<0||revision>=Number.MAX_SAFE_INTEGER)
       return fail("請選擇另一個有效的預約時段。");
-    const now=Date.now(),validDestination=bookablePickupSlots(now).includes(to);
+    const now=Date.now(),date=bookedPickupDate(now,to);
+    const range=businessDayRange(date??businessDate(now));
+    const changesDay=from<range[0]||from>=range[1];
     const orderKey=staffReschedule?"id":"token";
     const actor=staffReschedule?",'actor','staff'":"";
     const [,,current,target]=await db.batch([
@@ -388,9 +398,12 @@ export async function api(request, env) {
         json_object('from',pickup_slot,'to',?,'at',?${actor}))
         WHERE ${orderKey}=? AND mode='pickup' AND status='pending' AND pickup_slot=? AND pickup_slot>?
         AND COALESCE(json_array_length(pickup_changes),0)=? AND ?
-        AND ${usedAtPickupSlot}+${orderPortions}<=${capacityAtPickupSlot}`)
-        .bind(to,to,now,orderRef,from,now+pickupPrepLead,revision,validDestination?1:0,to,to),
-      db.prepare(`SELECT mode,status,pickup_slot,pickup_changes,${orderPortions} AS portions FROM orders WHERE ${orderKey}=?`).bind(orderRef),
+        AND ${usedAtPickupSlot}+${orderPortions}<=${capacityAtPickupSlot}
+        AND (?=0 OR NOT EXISTS (${exceededOrderPortions}))`)
+        .bind(to,to,now,orderRef,from,now+pickupPrepLead,revision,date?1:0,to,to,Number(changesDay),date,...range),
+      db.prepare(`SELECT mode,status,pickup_slot,pickup_changes,${orderPortions} AS portions,
+        (? AND EXISTS (${exceededOrderPortions})) AS daily_full FROM orders WHERE ${orderKey}=?`)
+        .bind(Number(changesDay),date,...range,orderRef),
       pickupSlotUsage(db,to),
     ]);
     const row=current.results[0];
@@ -402,7 +415,8 @@ export async function api(request, env) {
     if(!canReschedulePickup(row,now))return fail("這張餐單已進入備餐時間或已結單，無法更改時段。",409);
     const stale=()=>fail(staffReschedule?"取餐時段已更新，請核對接單台。":"取餐時段已更新，請先核對收據。",409);
     if(row.pickup_slot!==from||changes.length!==revision)return stale();
-    if(!validDestination)return json({error:"這個取餐時段已停止預約，請重新選擇。",code:"pickup_slot_closed"},409);
+    if(!date)return json({error:"這個取餐時段已停止預約，請重新選擇。",code:"pickup_slot_closed"},409);
+    if(row.daily_full)return json({error:"取餐日的餐點份數不足，原預約仍有效。",code:"portion_limit"},409);
     if(target.results[0].used+row.portions>target.results[0].capacity)
       return json({error:"此時段剩餘份數不足，原預約仍有效。",code:"pickup_slot_full"},409);
     return stale();
@@ -425,12 +439,17 @@ export async function api(request, env) {
       fail("餐單已開始處理或付款狀態已更新，請重新核對收據。",409);
   }
   if (path === "/api/kitchen/prep" && method === "GET") {
+    const now=Date.now(),today=businessDate(now),date=url.searchParams.get("date")??today;
+    if(!pickupBookingDays(now).includes(date))return fail("請選擇七天內的備料日期。");
+    const [start,end]=businessDayRange(date);
+    const from=date===today?"":` AND ${supplyTime}>=?`;
     const {results} = await db.prepare(`SELECT id, created, status, items FROM orders
-      WHERE status IN ('pending','preparing') AND ${payableForKitchen} ORDER BY id`).all();
+      WHERE status IN ('pending','preparing') AND ${payableForKitchen}
+      AND ${supplyTime}<?${from} ORDER BY id`).bind(end,...(from?[start]:[])).all();
     const orders = results.map(row => ({
       ...row, items: JSON.parse(row.items).map(({id, qty}) => ({id, qty}))
     }));
-    return json({capturedAt: Date.now(), orders});
+    return json({capturedAt:now,date,orders});
   }
   if(path==="/api/kitchen/station-work"&&method==="GET"){
     const station=url.searchParams.get("station");

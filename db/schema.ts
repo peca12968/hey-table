@@ -24,6 +24,7 @@ export const orders = sqliteTable("orders", {
 }, t => [
   index("orders_status_id").on(t.status,t.id),
   index("orders_created").on(t.created),
+  index("orders_supply_time").on(sql`COALESCE(${t.pickupSlot},${t.created})`),
   index("orders_pickup_slot").on(t.pickupSlot).where(sql`${t.pickupSlot} IS NOT NULL`),
   index("orders_pending_payment_due").on(t.paymentDueAt).where(sql`${t.status}='pending' AND ${t.paymentDueAt} IS NOT NULL`),
 ]);

@@ -3,6 +3,7 @@ import {useEffect,useState} from "react";
 import {Header,Footer,request} from "../../shared";
 import {dishes} from "../../../lib/menu.mjs";
 import {downloadJson} from "../../../lib/download-json.mjs";
+import {PickupDate} from "../../pickup-slots";
 import "./prep.css";
 
 const names = new Map(dishes.map(dish => [dish.id, dish.name]));
@@ -26,14 +27,15 @@ export default function Prep() {
   const [snapshot,setSnapshot] = useState(null);
   const [revision,setRevision] = useState(0);
   const [error,setError] = useState("");
+  const [day,setDay] = useState("");
   useEffect(() => {
-    let live = true;
+    const controller=new AbortController();
     const key = sessionStorage.getItem("he-ri-staff");
-    request("/api/kitchen/prep", {headers:key ? {Authorization:"Bearer " + key} : {}})
-      .then(value => {if (live) setSnapshot(value);})
-      .catch(err => {if (live) setError(err.message);});
-    return () => {live = false;};
-  }, [revision]);
+    request("/api/kitchen/prep"+(day?"?date="+day:""), {headers:key ? {Authorization:"Bearer " + key} : {},signal:controller.signal})
+      .then(value => {if (!controller.signal.aborted) setSnapshot(value);})
+      .catch(err => {if (!controller.signal.aborted) setError(err.message);});
+    return () => controller.abort();
+  }, [day,revision]);
   function refresh() {
     setError("");
     setSnapshot(null);
@@ -42,9 +44,13 @@ export default function Prep() {
   return <><Header/><main className="shell section prep">
     <a href="/kitchen" className="textLink prepControl">返回店家接單台</a>
     <h1>廚房備料單</h1>
+    <div className="prepControl"><PickupDate label="備料日期" value={day} onChange={value=>{
+      setDay(value);setError("");setSnapshot(null);
+    }}/></div>
     {error && <p role="alert" className="error">{error}</p>}
     {!error && !snapshot && <p role="status">正在讀取備料單…</p>}
     {snapshot && <>
+      <p>備料日期 {snapshot.date}</p>
       <p>擷取時間（台北）　<time dateTime={new Date(snapshot.capturedAt).toISOString()}>{taipei.format(snapshot.capturedAt)}</time></p>
       <p>待接單的餐點可用來估算備料。製作中的餐點另列，方便核對已領用的食材。</p>
       {snapshot.orders.length ? <table><caption>餐點需求（份）</caption>

@@ -14,7 +14,7 @@ import {QuoteSummary} from "../cart-quote";
 import CancelReceipt from "./cancel-receipt";
 import ReschedulePickup from "../reschedule-pickup";
 import PickupCalendar from "./pickup-calendar";
-import {pickupCalendarStatus,pickupWindow} from "../../lib/pickup-slots.mjs";
+import {pickupCalendarStatus,pickupChangeWindows} from "../../lib/pickup-slots.mjs";
 const progressLabels={
   pending:"已送單",preparing:"店家接單，開始製作",ready:"餐點已備妥",completed:"已交餐",cancelled:"店家已取消",
 };
@@ -126,6 +126,7 @@ export default function Ticket(){
   const cancellationActor=order?.statusHistory?.at(-1)?.actor;
   const latestMove=order?.tableMoves?.at(-1);
   const latestPickup=order?.pickupChanges?.at(-1);
+  const [previousWindow,newWindow]=latestPickup?pickupChangeWindows(latestPickup):[];
   const calendarStatus=order&&pickupCalendarStatus(order);
   const closedBeforePayment=Object.hasOwn(cancellationMessages,cancellationActor);
   const showHold=order?.paymentDueAt&&order.paymentMethod!=="cash"&&canCustomerCancel(order);
@@ -137,7 +138,7 @@ export default function Ticket(){
     <ReceiptHistory entries={recent} active={route?.token} open={route&&!route.direct} onRemove={forget}/>
     {error&&<p role="status">{error}</p>}{order&&<><div className="receiptMeta"><Mode table={order.table} source={order.source}/><b aria-live="polite">{order.status==='pending'&&!payable?'等待付款':labels[order.status]}</b></div>
     <PickupAppointment start={order.pickupSlot}/>
-    {latestPickup&&<p className="muted" role="status">{latestPickup.actor==="staff"?"店家已將取餐時段從":"取餐時段已從"} {pickupWindow(latestPickup.from)} 改到 {pickupWindow(latestPickup.to)}。</p>}
+    {latestPickup&&<p className="muted" role="status">{latestPickup.actor==="staff"?"店家已將取餐時段從":"取餐時段已從"} {previousWindow} 改到 {newWindow}。</p>}
     {calendarStatus&&<PickupCalendar key={"pickup-calendar-"+route.token+calendarStatus} id={order.id} token={route.token}
       status={calendarStatus} onChange={refreshReceipt}/>}
     {order.pickupSlot!=null&&<ReschedulePickup key={"pickup-reschedule-"+route.token} order={order} onChange={refreshReceipt}

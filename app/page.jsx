@@ -10,8 +10,8 @@ import CartAddOn from "./cart-add-on";
 import CartQuote from "./cart-quote";
 import Reorder from "./reorder";
 import {ItemNotesEditor} from "./item-notes";
-import PickupSlots from "./pickup-slots";
-import {pickupSlotDuration} from "../lib/pickup-slots.mjs";
+import PickupSlots,{PickupDate,usePickupToday} from "./pickup-slots";
+import {pickupBookingDays,pickupSlotDuration} from "../lib/pickup-slots.mjs";
 
 import {methods,environmentLabel} from "../lib/payments.mjs";
 const groups=["全部","丼飯","小食","飲品"];
@@ -31,12 +31,15 @@ export default function Menu(){
   const [lookup,setLookup]=useState("");
   const [repeat,setRepeat]=useState("");
   const [pickupSlot,setPickupSlot]=useState(null),[slotRevision,setSlotRevision]=useState(0);
+  const [pickupDate,setPickupDate]=useState("");
+  const today=usePickupToday();
+  const bookingDay=pickupDate===today?"":pickupDate;
   const refreshMenu=useCallback(async()=>{
     activeMenuRequest.current?.abort();
     const controller=new AbortController();
     activeMenuRequest.current=controller;
     try{
-      const data=await request("/api/menu",{signal:controller.signal});
+      const data=await request("/api/menu"+(bookingDay?"?date="+bookingDay:""),{signal:controller.signal});
       if(controller.signal.aborted)return;
       setSold(data.unavailable);
       setRemaining(data.remaining??{});
@@ -47,7 +50,7 @@ export default function Menu(){
     }catch{
       if(!controller.signal.aborted)setLoaded(false);
     }
-  },[]);
+  },[bookingDay]);
   useEffect(()=>{
     const param=new URLSearchParams(location.search).get("table"), key=cartKey(param);
     const old=read(key,{});
@@ -57,7 +60,10 @@ export default function Menu(){
     setTable(param);setScope(key);setSelection({cart,lineNotes});setUseCombo(old.useCombo===true);
     setNote(old.note??"");setDraft(old.draft??null);setMethod(old.draft?.paymentMethod??old.method??'cash');
     const savedSlot=old.draft?old.draft.pickupSlot:old.pickupSlot;
-    if(!param&&Number.isSafeInteger(savedSlot)&&savedSlot>0&&savedSlot<=8_640_000_000_000_000-pickupSlotDuration)setPickupSlot(savedSlot);
+    const days=pickupBookingDays(Date.now());
+    const validDay=!old.pickupDate||days.includes(old.pickupDate);
+    if(!param&&(validDay||old.draft)&&Number.isSafeInteger(savedSlot)&&savedSlot>0&&savedSlot<=8_640_000_000_000_000-pickupSlotDuration)setPickupSlot(savedSlot);
+    if(!param&&validDay&&old.pickupDate)setPickupDate(old.pickupDate);
     const token=new URLSearchParams(location.hash.slice(1)).get("reorder")??"";
     setRepeat(token);
     if((old.draft||token)&&window.matchMedia("(max-width: 680px)").matches) setPanel(true);
@@ -71,8 +77,8 @@ export default function Menu(){
       clearInterval(timer);
       window.removeEventListener("online",refreshMenu);
     };
-  },[refreshMenu]);
-  useEffect(()=>{if(scope)save(scope,{cart,lineNotes,note,draft,method,useCombo,pickupSlot});},[scope,cart,lineNotes,note,draft,method,useCombo,pickupSlot]);
+  },[refreshMenu,today]);
+  useEffect(()=>{if(scope)save(scope,{cart,lineNotes,note,draft,method,useCombo,pickupSlot,pickupDate});},[scope,cart,lineNotes,note,draft,method,useCombo,pickupSlot,pickupDate]);
   useEffect(()=>{
     if(!draft||busy||!scope)return;
     let current;
@@ -107,6 +113,7 @@ export default function Menu(){
   const total=applied ? draft?.expectedTotal??offer.total : subtotal;
   const maxFor=id=>Math.min(20,remaining[id]??20);
   const limitBlocked=lines.some(({id})=>cart[id]>(remaining[id]??20));
+  const needsPickupSlot=!!bookingDay&&pickupSlot===null;
   const blocked=limitBlocked||lines.some(({id})=>sold.includes(id));
   const cannotAdd=id=>sold.includes(id)||(cart[id]||0)>=maxFor(id);
   function change(id,delta){
@@ -139,12 +146,15 @@ export default function Menu(){
     setAnnouncement("先前餐點已加入餐單，請確認後送出。");
     return true;
   }
+  function selectPickupDate(day){
+    setPickupDate(day);setPickupSlot(null);setError("");setRemaining({});setLoaded(false);
+  }
   async function submit(){
-    if(sending.current||invalid||!scope||!count||(!draft&&(paused||blocked)))return;
+    if(sending.current||invalid||!scope||!count||(!draft&&(paused||blocked||needsPickupSlot||!loaded)))return;
     sending.current=true;setBusy(true);setError("");
     const payload=draft??{token:crypto.randomUUID(),...(method==='cash'?{}:{paymentMethod:method}),mode,table,note,
       items:withItemNotes(items,lineNotes),...(applied?{comboVersion,expectedTotal:total}:{}),...(pickupSlot!==null?{pickupSlot}:{})};
-    setDraft(payload);save(scope,{cart,lineNotes,note,draft:payload,method,useCombo,pickupSlot});
+    setDraft(payload);save(scope,{cart,lineNotes,note,draft:payload,method,useCombo,pickupSlot,pickupDate});
     try{
       const order=await request("/api/orders",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(payload)});
       openReceipt(scope,payload.token,order);
@@ -162,15 +172,18 @@ export default function Menu(){
   }
   const hero=dishes[0],unavailableForAddOn=dishes.filter(d=>cannotAdd(d.id)).map(d=>d.id);
   const quoteBody=JSON.stringify({items});
+  const addOnBody=bookingDay?JSON.stringify({items,pickupDate:bookingDay}):quoteBody;
+  const supplyLabel=bookingDay?"取餐日":"今日";
   function addButton(d){return <button className="add" aria-label={"加入"+d.name} disabled={!loaded||busy||!!draft||cannotAdd(d.id)||invalid} onClick={()=>change(d.id,1)}><Plus size={18}/></button>;}
   return <><Header home/><main className="shell">
     <section className="hero"><div className="heroCopy"><p className="kicker"><span/> 本日主廚推薦</p><h1>{hero.name}</h1><p>{hero.description}</p><button className="heroAction" onClick={()=>change(hero.id,1)} disabled={!loaded||busy||!!draft||cannotAdd(hero.id)||invalid}><Plus size={16}/> 加入餐單 <b>NT$ {hero.price}</b></button></div><img className="heroImg" src="/food/katsudon.webp" alt="滑蛋豬排丼"/></section>
     {invalid&&<p className="error" role="alert">桌號無效，請重新掃描桌牌。也可<a href="/">改為線上自取</a>。</p>}
     {paused&&!invalid&&<p className="error" role="status">{intakeNotice(mode,intake[mode]===false?null:pausedTable)}</p>}
     <div className="columns"><section><div className="menuTitle"><div><p className="eyebrow">OUR MENU</p><h2>點餐菜單</h2></div><Mode table={table}/></div>
+    {scope&&mode==="pickup"&&<PickupDate value={pickupDate} disabled={busy||!!draft} onChange={selectPickupDate}/>}
     <nav className="tabs" aria-label="餐點分類">{groups.map(g=><button key={g} aria-pressed={group===g} onClick={()=>setGroup(g)}>{g}</button>)}</nav>
     <div className="grid">{dishes.filter(d=>group==="全部"||d.group===group).map(d=><article className="dish" key={d.id}><img src={"/food/"+d.id+".webp"} alt={d.name} loading="lazy"/><div className="dishInfo"><small>{d.group}</small><h3>{d.name}</h3><p>{d.description}</p>
-      {!sold.includes(d.id)&&remaining[d.id]>0&&<p className="muted">今日剩餘 {remaining[d.id]} 份</p>}
+      {!sold.includes(d.id)&&remaining[d.id]>0&&<p className="muted">{supplyLabel}剩餘 {remaining[d.id]} 份</p>}
       <div className="price"><strong>NT$ {d.price}</strong>{sold.includes(d.id)||remaining[d.id]===0?<span>已售完</span>:addButton(d)}</div></div></article>)}</div></section>
     {panel&&<button className="shade" aria-label="關閉餐單" onClick={()=>setPanel(false)}/>}
     <aside className={"cart "+(panel?"opened":"")} aria-label="我的餐單"><div className="cartHead"><h2><ShoppingBag size={21}/> 我的餐單</h2><span>{count} 件</span><button className="mobileClose" aria-label="關閉" onClick={()=>setPanel(false)}><X size={19}/></button></div>
@@ -179,11 +192,11 @@ export default function Menu(){
       blocked={!!draft||busy} onAdd={addRepeat} onClose={dismissRepeat}/>}
     {!count?<div className="empty"><Utensils size={30}/><strong>餐單還是空的</strong><p>從菜單加入想吃的餐點</p></div>:<ul className="orderLines">{lines.map(d=><li key={d.id}><div><b>{d.name}{sold.includes(d.id)||remaining[d.id]===0?"（售完）":""}</b><small>NT$ {d.price*cart[d.id]}</small></div><div className="stepper"><button disabled={!!draft||busy} aria-label={"減少"+d.name} onClick={()=>change(d.id,-1)}><Minus size={14}/></button><span>{cart[d.id]}</span><button disabled={!!draft||busy||cannotAdd(d.id)} aria-label={"增加"+d.name} onClick={()=>change(d.id,1)}><Plus size={14}/></button></div></li>)}</ul>}
     {loaded&&!invalid&&!blocked&&!draft&&!busy&&lines.some(d=>d.group==="丼飯")&&
-      <CartAddOn key={quoteBody+JSON.stringify(unavailableForAddOn)} body={quoteBody} sold={unavailableForAddOn} onAdd={id=>change(id,1)}/>}
+      <CartAddOn key={addOnBody+JSON.stringify(unavailableForAddOn)} body={addOnBody} sold={unavailableForAddOn} onAdd={id=>change(id,1)}/>}
     {count>0&&<ItemNotesEditor dishes={lines} notes={lineNotes} disabled={!!draft||busy} onChange={(id,value)=>
       setSelection(current=>({...current,lineNotes:{...current.lineNotes,[id]:value}}))}/>}
     {count>0&&<label className="note">訂單備註 <small>選填</small><textarea placeholder="例如：餐具數量" value={note} maxLength={160} disabled={!!draft||busy} onChange={e=>setNote(e.target.value)}/></label>}
-    {count>0&&scope&&mode==="pickup"&&<PickupSlots selected={pickupSlot} count={count} disabled={!!draft||busy||paused}
+    {count>0&&scope&&mode==="pickup"&&<PickupSlots selected={pickupSlot} count={count} day={bookingDay} disabled={!!draft||busy||paused}
       onChange={value=>{setPickupSlot(value);setError("");}} revision={slotRevision}/>}
     {count>0&&<label className="payChoice">付款方式<select value={method} disabled={!!draft||busy} onChange={e=>setMethod(e.target.value)}>
       {payments.methods.map(m=><option key={m} value={m}>{methods[m]}</option>)}</select>
@@ -192,10 +205,10 @@ export default function Menu(){
       onChange={e=>setUseCombo(e.target.checked)}/><span>套用套餐優惠 <small>省 NT$ {offer.discount}</small></span></label>}
     <div className="total"><span>合計</span><b>NT$ {total}</b></div>
     {paused&&!invalid&&count>0&&!draft&&<p className="error">餐單已保留，恢復接單後可再送出。</p>}
-    {limitBlocked&&!draft&&!error&&<p className="error" role="status">部分餐點已超過今日剩餘份數，請調整餐單。</p>}
-    {count>0&&loaded&&!invalid&&!blocked&&!paused&&!draft&&!busy&&pickupSlot===null&&<CartQuote key={quoteBody} body={quoteBody}/>}
+    {limitBlocked&&!draft&&!error&&<p className="error" role="status">部分餐點已超過{supplyLabel}剩餘份數，請調整餐單。</p>}
+    {count>0&&loaded&&!invalid&&!blocked&&!paused&&!draft&&!busy&&!bookingDay&&pickupSlot===null&&<CartQuote key={quoteBody} body={quoteBody}/>}
     {error&&<p className="error" role="alert">{error}</p>}{draft&&!busy&&lookup&&<p role="status">{lookup}</p>}{scope&&!loaded&&<p role="status">正在確認餐點供應狀態…</p>}
-    <button className="primary full" disabled={busy||!count||invalid||(!draft&&(paused||blocked||!loaded||!payments.methods.includes(method)))} onClick={submit}><Check size={17}/>{busy?"送單中…":draft?"重試同一張訂單":paused?"暫停接單":"確認送出訂單"}</button></aside></div>
+    <button className="primary full" disabled={busy||!count||invalid||(!draft&&(paused||blocked||needsPickupSlot||!loaded||!payments.methods.includes(method)))} onClick={submit}><Check size={17}/>{busy?"送單中…":draft?"重試同一張訂單":paused?"暫停接單":"確認送出訂單"}</button></aside></div>
     <span className="sr" aria-live="polite">{announcement}</span></main><Footer/>
     <button className="mobileCart" onClick={()=>setPanel(true)}><ShoppingBag size={18}/> 我的餐單 · {count} 件 <b>NT$ {total}</b></button></>;
 }

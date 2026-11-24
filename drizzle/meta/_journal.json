@@ -127,6 +127,13 @@
       "when": 1795558081686,
       "tag": "0017_pickup_slot_limits",
       "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "6",
+      "when": 1795560948466,
+      "tag": "0018_pickup_supply_dates",
+      "breakpoints": true
     }
   ]
 }
