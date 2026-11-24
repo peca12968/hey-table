@@ -67,8 +67,8 @@ export default function Menu(){
       current=controller;
       setLookup("正在確認這張餐單是否已送達…");
       try{
-        await request("/api/ticket",{headers:{"X-Ticket":draft.token},signal:controller.signal});
-        if(!controller.signal.aborted && !sending.current) openReceipt(scope,draft.token);
+        const order=await request("/api/ticket",{headers:{"X-Ticket":draft.token},signal:controller.signal});
+        if(!controller.signal.aborted && !sending.current) openReceipt(scope,draft.token,order);
       }catch(e){
         if(controller.signal.aborted || sending.current)return;
         setLookup(e.status===404 ? "目前查無這張訂單。請重試同一張訂單以送達廚房。" :
@@ -112,8 +112,8 @@ export default function Menu(){
     const payload=draft??{token:crypto.randomUUID(),...(method==='cash'?{}:{paymentMethod:method}),mode,table,note,items,...(applied?{comboVersion,expectedTotal:total}:{})};
     setDraft(payload);save(scope,{cart,note,draft:payload,method,useCombo});
     try{
-      await request("/api/orders",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(payload)});
-      openReceipt(scope,payload.token);
+      const order=await request("/api/orders",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(payload)});
+      openReceipt(scope,payload.token,order);
     }catch(e){
       if([400,409,415].includes(e.status)){
         setDraft(null);

@@ -54,3 +54,11 @@
 .pickupCode summary{cursor:pointer;color:var(--green);font-weight:700}
 .pickupCode img{display:block;width:184px;max-width:100%;height:auto;margin:10px auto;image-rendering:pixelated}
 .pickupCode p{margin:0;text-align:center}
+.receiptHistory{margin:12px 0;border:1px solid var(--line);border-radius:8px;padding:10px 12px;background:var(--pale)}
+.receiptHistory summary{cursor:pointer;color:var(--green);font-weight:700}
+.receiptHistory summary small{margin-left:6px;color:var(--muted)}
+.receiptHistory ul{list-style:none;margin:6px 0 0;padding:0}
+.receiptHistory li{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:8px 0;border-top:1px solid var(--line)}
+.receiptHistory li a{color:var(--green);font-weight:700}
+.receiptHistory li small{display:block;color:var(--muted)}
+.receiptHistory li button{min-height:40px;flex:none}

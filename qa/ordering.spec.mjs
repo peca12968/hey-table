@@ -7,6 +7,85 @@ import {fileURLToPath} from "node:url";
 import jsQR from "jsqr";
 import {PNG} from "pngjs";
 
+test("this browser keeps separate receipt links across tabs and removes only the chosen local entry",async({context,page,request})=>{
+  const token=randomUUID();
+  const oldResponse=await request.post("/api/orders",{data:{token,mode:"pickup",note:"舊版備註",items:[{id:"sencha",qty:1}]}});
+  expect(oldResponse.ok()).toBe(true);
+  const old=await oldResponse.json();
+  await page.setViewportSize({width:360,height:780});
+  await page.goto("/");
+  await page.evaluate(token=>localStorage.setItem("he-ri-last",JSON.stringify(token)),token);
+  await page.goto("/ticket");
+  const recent=page.locator(".receiptHistory");
+  const title=id=>"取餐號碼 "+String(id).padStart(4,"0");
+  await expect(recent.getByRole("link",{name:title(old.id)})).toHaveAttribute("href","/ticket#"+token);
+  await expect(page.getByRole("heading",{name:title(old.id)})).toBeVisible();
+
+  const checkout=await context.newPage();
+  async function send(path,dish){
+    await checkout.goto(path);
+    await checkout.getByRole("button",{name:"加入"+dish,exact:true}).click();
+    await checkout.getByRole("button",{name:"確認送出訂單",exact:true}).click();
+    await checkout.waitForURL("**/ticket#*");
+    const token=new URL(checkout.url()).hash.slice(1);
+    const saved=await request.get("/api/ticket",{headers:{"X-Ticket":token}});
+    expect(saved.ok()).toBe(true);
+    const receipt=await saved.json();
+    await expect(checkout.getByRole("heading",{name:title(receipt.id)})).toBeVisible();
+    return {...receipt,token};
+  }
+  const table=await send("/?table=A03","日式唐揚雞");
+  const pickup=await send("/","鹽味毛豆");
+  await expect(recent.getByRole("link")).toHaveText([title(pickup.id),title(table.id),title(old.id)]);
+  await expect(recent.getByText(/A03 桌內用/)).toHaveCount(1);
+  await expect(recent.getByText(/線上自取/)).toHaveCount(2);
+  await expect(page.getByRole("heading",{name:title(old.id)})).toBeVisible();
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBe(360);
+  const storage=await page.evaluate(token=>JSON.parse(localStorage.getItem("he-ri-receipt-v1:"+token)),table.token);
+  expect(storage).toEqual({id:table.id,table:"A03",created:table.created});
+
+  await page.goto("/ticket");
+  await expect(page.getByRole("heading",{name:title(pickup.id)})).toBeVisible();
+  page.once("dialog",dialog=>dialog.accept());
+  await recent.getByRole("button",{name:"從本機移除 "+String(pickup.id).padStart(4,"0")}).click();
+  await expect(page.getByRole("heading",{name:title(table.id)})).toBeVisible();
+  await expect(recent.getByRole("link")).toHaveText([title(table.id),title(old.id)]);
+  await recent.getByRole("link",{name:title(old.id)}).click();
+  await expect(page.getByRole("heading",{name:title(old.id)})).toBeVisible();
+  await expect(page.getByText("舊版備註")).toBeVisible();
+  const serverReceipt=await request.get("/api/ticket",{headers:{"X-Ticket":pickup.token}});
+  expect(serverReceipt.ok()).toBe(true);
+  await page.goto("/ticket");
+  await expect(recent.getByRole("link")).toHaveCount(2);
+  for(const {id} of [old,table,pickup]){
+    const cancelled=await request.patch("/api/kitchen/status",{headers:{Authorization:"Bearer local-test-kitchen"},
+      data:{id,from:"pending",to:"cancelled"}});
+    expect(cancelled.ok()).toBe(true);
+  }
+  await checkout.close();
+});
+
+test("a new receipt trims the local history to the newest eight",async({page,request})=>{
+  await page.goto("/");
+  const entries=Array.from({length:8},(_,i)=>({token:randomUUID(),id:900000+i,table:null,created:i+1}));
+  await page.evaluate(entries=>{
+    for(const {token,...value} of entries)localStorage.setItem("he-ri-receipt-v1:"+token,JSON.stringify(value));
+  },entries);
+  await page.getByRole("button",{name:"加入日式熱煎茶",exact:true}).click();
+  await page.getByRole("button",{name:"確認送出訂單",exact:true}).click();
+  await page.waitForURL("**/ticket#*");
+  const token=new URL(page.url()).hash.slice(1);
+  await page.goto("/ticket");
+  const recent=page.locator(".receiptHistory");
+  await expect(recent.getByRole("link")).toHaveCount(8);
+  await expect(recent.getByRole("link",{name:"取餐號碼 900000"})).toHaveCount(0);
+  expect(await page.evaluate(token=>localStorage.getItem("he-ri-receipt-v1:"+token),entries[0].token)).toBeNull();
+  const {id}=await request.get("/api/ticket",{headers:{"X-Ticket":token}}).then(response=>response.json());
+  const cancelled=await request.patch("/api/kitchen/status",{headers:{Authorization:"Bearer local-test-kitchen"},
+    data:{id,from:"pending",to:"cancelled"}});
+  expect(cancelled.ok()).toBe(true);
+});
+
 test("a ready pickup QR opens the exact staff order without sharing the customer receipt",async({page,browser,request})=>{
   const headers={Authorization:"Bearer local-test-kitchen"};
   const token=randomUUID();
@@ -380,6 +459,8 @@ test("reopen a lost A03 receipt after the kitchen committed, without resubmittin
   expect(orders.filter(row=>row.note==="斷線收據回復").map(row=>row.id)).toEqual([accepted.id]);
   await reopened.goto("/?table=A03");
   await expect(reopened.getByText("餐單還是空的")).toBeVisible();
+  await reopened.goto("/ticket");
+  await expect(reopened.locator(".receiptHistory").getByRole("link")).toHaveAttribute("href","/ticket#"+attempts[0].token);
 });
 
 test("an undelivered pickup remains editable only after a definitive rejection",async({context,page,request})=>{
@@ -435,7 +516,7 @@ test("resume a saved v1 mobile cart and keep a different table's pending cart",a
   expect(posts).toEqual([]);
   await page.getByRole("button",{name:"重試同一張訂單"}).click();
   await expect(page.getByRole("heading",{name:/取餐號碼/})).toBeVisible();
-  await expect(page.getByText("A01 桌內用")).toBeVisible();
+  await expect(page.getByText("A01 桌內用",{exact:true})).toBeVisible();
   expect(posts).toEqual([chosen]);
   await page.goto("/ticket");
   await expect(page.getByRole("link",{name:"確認 A02 桌送單結果"})).toBeVisible();
@@ -458,7 +539,7 @@ test("decode the printed table card and send a mobile order to an independent ki
     await mobile.getByRole("textbox").fill("不用餐具");
     await mobile.getByRole("button",{name:"確認送出訂單"}).click();
     await expect(mobile.getByRole("heading",{name:/取餐號碼/})).toBeVisible();
-    await expect(mobile.getByText("A03 桌內用")).toBeVisible();
+    await expect(mobile.getByText("A03 桌內用",{exact:true})).toBeVisible();
     await page.goto("/kitchen");
     await page.getByText("使用自架店員金鑰").click();
     await page.getByLabel("店員金鑰",{exact:true}).fill("local-test-kitchen");
