@@ -7,11 +7,11 @@
 需要可執行 Linux 容器的 Docker、Git、Python 3.10 以上、kind 與 kubectl。CI 使用 kind 0.33.0 和 kubectl 1.37.0。在本專案的目錄中執行以下指令。
 
 ```sh
-git clone https://github.com/peca12968/stockroom-reservations.git ../stockroom-demo
+git clone https://github.com/peca12968/hey-table.git ../stockroom-demo
 python drill.py ../stockroom-demo
 ```
 
-腳本從指定提交透過 `git archive` 建置 `stockroom-drill:1bec991`，再把映像載入新叢集。每次執行使用獨立名稱和暫存 kubeconfig，結束時會移除這次建立的叢集及其中的資料。本機 Docker 會保留建置完成的應用程式映像，方便下次執行。[應用程式版本](https://github.com/peca12968/stockroom-reservations/tree/1bec99199cf0ee8ed9d9b3d34ddbaad10dc01930) · [kind 使用說明](https://kind.sigs.k8s.io/docs/user/quick-start/)
+腳本從指定提交透過 `git archive` 建置 `stockroom-drill:1bec991`，再把映像載入新叢集。每次執行使用獨立名稱和暫存 kubeconfig，結束時會移除這次建立的叢集及其中的資料。本機 Docker 會保留建置完成的應用程式映像，方便下次執行。[應用程式版本](https://github.com/peca12968/hey-table/tree/1bec99199cf0ee8ed9d9b3d34ddbaad10dc01930) · [kind 使用說明](https://kind.sigs.k8s.io/docs/user/quick-start/)
 
 | 階段 | 驗證條件 |
 | --- | --- |
