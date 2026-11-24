@@ -114,6 +114,7 @@ class DocketTests(unittest.TestCase):
         self.assertFalse(self.package.exists())
 
     def test_concurrent_writers_publish_one_complete_file(self):
+        self.package = self.root / "同班退貨.json"
         with ThreadPoolExecutor(max_workers=8) as workers:
             replies = list(workers.map(lambda _: self.pack(), range(8)))
         self.assertEqual(sorted(reply.returncode for reply in replies), [0] + [2] * 7)

@@ -1,3 +1,5 @@
+using System.ComponentModel;
+using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -103,13 +105,29 @@ static void Publish(string path, byte[] contents, bool privateFile = false)
             file.Write(contents);
             file.Flush(flushToDisk: true);
         }
-        File.Move(staged, target, overwrite: false);
+        if (OperatingSystem.IsWindows())
+        {
+            File.Move(staged, target, overwrite: false);
+        }
+        else
+        {
+            // A same-directory link publishes the complete file and tests name availability in one operation.
+            if (Link(staged, target) != 0)
+            {
+                var cause = new Win32Exception(Marshal.GetLastPInvokeError());
+                throw new IOException($"Unable to publish '{target}': {cause.Message}", cause);
+            }
+        }
     }
     finally
     {
         File.Delete(staged);
     }
 }
+
+[DllImport("libc", EntryPoint = "link", SetLastError = true)]
+static extern int Link([MarshalAs(UnmanagedType.LPUTF8Str)] string existingPath,
+                       [MarshalAs(UnmanagedType.LPUTF8Str)] string newPath);
 
 internal sealed record Box(string ReservationId, string ShipmentId, string ReturnId, int Quantity, int ReturnableAfter);
 internal sealed record Batch(string BatchId, Box[] Boxes);
