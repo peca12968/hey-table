@@ -110,6 +110,23 @@ def demonstrate_batch():
     assert (after["available"], after["capacity"]) == (before["available"]-5, before["capacity"]-5)
 
 
+def demonstrate_return_batch():
+    batch_id = uuid4().hex
+    before = call("/inventory")[1]
+    boxes = []
+    for direction in ("east", "west"):
+        order = f"{batch_id}-{direction}"
+        call("/reservations", "POST", {"sku": "KIT-01", "quantity": 1}, {"Idempotency-Key": order})
+        call(f"/reservations/{order}/fulfillments", "POST", {"quantity": 1}, {"Idempotency-Key": "box"})
+        boxes.append({"reservation_id": order, "shipment_id": "box", "quantity": 1})
+    headers = {"Idempotency-Key": batch_id}
+    code, receipt = call("/return-batches", "POST", {"boxes": boxes}, headers)
+    assert code == 201 and [box["returnable_after"] for box in receipt["boxes"]] == [0, 0]
+    assert call("/return-batches/" + batch_id) == (200, receipt)
+    assert call("/return-batches", "POST", {"boxes": boxes[::-1]}, headers) == (200, receipt)
+    assert call("/inventory")[1] == before
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     mode = parser.add_mutually_exclusive_group()
@@ -119,8 +136,11 @@ if __name__ == "__main__":
     mode.add_argument("--packing", action="store_true", help="reconcile a reservation across two boxes and a return")
     mode.add_argument("--renew", action="store_true", help="extend an active checkout hold and replay its receipt")
     mode.add_argument("--batch", action="store_true", help="dispatch three boxes from two reservations together")
+    mode.add_argument("--return-batch", action="store_true", help="inspect two returned boxes together")
     args = parser.parse_args()
-    if args.batch:
+    if args.return_batch:
+        demonstrate_return_batch()
+    elif args.batch:
         demonstrate_batch()
     elif args.renew:
         demonstrate_renewal()

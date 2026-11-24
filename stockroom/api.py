@@ -91,6 +91,11 @@ class ReturnReceipt(BaseModel):
     returnable_after: int
 
 
+class ReturnBatchReceipt(BaseModel):
+    batch_id: str
+    boxes: list[ReturnReceipt]
+
+
 class PackingStatement(BaseModel):
     reservation: Progress
     boxes: list[ShipmentBalance]
@@ -164,6 +169,19 @@ def create_app(path: Path, *, ttl_seconds=900, clock=time.time):
     @app.get("/dispatch-batches/{batch_id}", response_model=BatchReceipt)
     def dispatch_batch_receipt(batch_id: str):
         return store.dispatch_batch_receipt(batch_id)
+
+    @app.post("/return-batches", response_model=ReturnBatchReceipt, status_code=201,
+              responses={200: {"model": ReturnBatchReceipt, "description": "Original return batch receipt"}})
+    def return_batch(batch: DispatchBatch, response: Response, idempotency_key: RequestKey):
+        boxes = [(box.reservation_id, box.shipment_id, box.quantity) for box in batch.boxes]
+        receipt, created = store.return_batch(idempotency_key, boxes)
+        if not created:
+            response.status_code = 200
+        return receipt
+
+    @app.get("/return-batches/{batch_id}", response_model=ReturnBatchReceipt)
+    def return_batch_receipt(batch_id: str):
+        return store.return_batch_receipt(batch_id)
 
     @app.post("/reservations", response_model=Reservation, status_code=201,
               responses={200: {"model": Reservation, "description": "Idempotent replay"}})

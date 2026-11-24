@@ -20,6 +20,7 @@ jobs:
           python -c "import json; assert json.load(open('/tmp/stockroom-inventory.json'))[0]['available']==20"
           python demo.py
           python demo.py --renew
+          python demo.py --return-batch
           python demo.py --fulfill
           python demo.py --restock
           python demo.py --reduce

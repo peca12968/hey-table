@@ -25,10 +25,27 @@ python -m uvicorn stockroom.api:app
 | GET /dispatch-batches/{batch_id} | 用批號取回當時的整批收據，可在網路斷線後查詢 |
 | GET /reservations/{key} | 查詢原始數量、已出貨數量、尚在保留數量與已歸還數量 |
 | POST /reservations/{key}/fulfillments/{box}/returns | 以 Idempotency-Key 當作本箱的退貨單號，將驗收合格的 quantity 件商品入庫 |
+| POST /return-batches | 以驗收批號一次登記多箱退回，所有箱子共同入庫 |
+| GET /return-batches/{batch_id} | 依驗收批號查詢原始收據 |
 | GET /reservations/{key}/fulfillments/{box} | 查詢該箱實際寄出的 dispatched、已重新入庫的 restocked，以及尚可退回的 returnable |
 | GET /reservations/{key}/fulfillments | 一次查詢保留狀態、各箱出貨與退貨明細，以及全單已重新入庫和仍可退回的件數 |
 
 庫存不足、同鍵不同內容回傳 409。未知商品或保留回傳 404。輸入格式錯誤回傳 422。失敗的請求不會占用鍵。
+
+## 同車退回的多箱商品一起驗收
+
+倉庫同時收到東區和西區兩張訂單的退貨。在各箱驗收後，將可重新入庫的數量送到 `POST /return-batches`，以 `Idempotency-Key` 傳入此次驗收批號。以下範例假設兩張訂單各已有一箱出貨，箱號都叫 `box`。
+
+```json
+{"boxes":[
+  {"reservation_id":"east","shipment_id":"box","quantity":1},
+  {"reservation_id":"west","shipment_id":"box","quantity":2}
+]}
+```
+
+任一箱不存在或超過該箱可退回的數量，整批回滾，回應指出訂單與箱號。成功後，每箱收據保留當時的剩餘可退數量。網路中斷時可依驗收批號查回原收據，也可原樣重送，箱子的排列次序可以不同。同批號改動箱號或件數會回傳 409。整批與單箱驗收共用退貨帳及每箱的可退上限。若原有單箱收據在同一箱已使用此批號，需使用新批號提交整批。
+
+啟動本機服務後執行 `python demo.py --return-batch`，可重現兩張訂單各出貨一件，再一次驗收兩件。並行測試另用兩個服務實例送出 12 次請求，讓兩個驗收批和一張單箱驗收爭用同一箱，驗證只有其中一組能入庫。[跨單驗收測試](tests/test_return_batches.py)
 
 ## 兩次盤點都是 20 件，期間進出了多少貨？
 

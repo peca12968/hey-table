@@ -72,6 +72,14 @@ CREATE TABLE IF NOT EXISTS inbound_receipts (
     sku TEXT NOT NULL REFERENCES products(sku),
     quantity INTEGER NOT NULL CHECK (quantity BETWEEN 1 AND 9999)
 );
+CREATE TABLE IF NOT EXISTS return_batch_boxes (
+    batch_id TEXT NOT NULL,
+    reservation_id TEXT NOT NULL,
+    shipment_id TEXT NOT NULL,
+    PRIMARY KEY (batch_id, reservation_id, shipment_id),
+    FOREIGN KEY (reservation_id, shipment_id, batch_id)
+        REFERENCES shipment_returns(reservation_id, shipment_id, return_id)
+);
 """
 
 
@@ -368,21 +376,62 @@ class Store:
 
     def restock(self, key, shipment_id, return_id, quantity):
         with self.current_inventory() as (conn, _):
-            ids = (key, shipment_id, return_id)
-            receipt = conn.execute("""SELECT * FROM shipment_returns
-                                      WHERE reservation_id=? AND shipment_id=? AND return_id=?""", ids).fetchone()
-            if receipt:
-                if receipt["quantity"] != quantity:
-                    raise Conflict("Return key already used with different quantity")
-                return dict(receipt), False
-            balance = self.shipment_balance(conn, key, shipment_id)
-            remaining = balance["returnable"] - quantity
-            if remaining < 0:
-                raise Conflict("Return exceeds the units outstanding for this shipment")
-            conn.execute("""UPDATE products SET capacity=capacity+?, available=available+? WHERE sku=?""",
-                         (quantity, quantity, balance["sku"]))
-            conn.execute("""INSERT INTO shipment_returns(reservation_id, shipment_id, return_id, quantity,
-                                                        returnable_after) VALUES (?, ?, ?, ?, ?)""",
-                         (*ids, quantity, remaining))
-            return {"reservation_id": key, "shipment_id": shipment_id, "return_id": return_id,
-                    "quantity": quantity, "returnable_after": remaining}, True
+            return self.record_return(conn, key, shipment_id, return_id, quantity)
+
+    def record_return(self, conn, key, shipment_id, return_id, quantity):
+        ids = (key, shipment_id, return_id)
+        receipt = conn.execute("""SELECT * FROM shipment_returns
+                                  WHERE reservation_id=? AND shipment_id=? AND return_id=?""", ids).fetchone()
+        if receipt:
+            if receipt["quantity"] != quantity:
+                raise Conflict("Return key already used with different quantity")
+            return dict(receipt), False
+        balance = self.shipment_balance(conn, key, shipment_id)
+        remaining = balance["returnable"] - quantity
+        if remaining < 0:
+            raise Conflict("Return exceeds the units outstanding for this shipment")
+        updated = conn.execute("""UPDATE products SET capacity=capacity+?, available=available+?
+                                  WHERE sku=? AND capacity<=?""",
+                               (quantity, quantity, balance["sku"], 2**63 - 1 - quantity))
+        if not updated.rowcount:
+            raise Conflict("Capacity exceeds SQLite integer range")
+        conn.execute("""INSERT INTO shipment_returns(reservation_id, shipment_id, return_id, quantity,
+                                                     returnable_after) VALUES (?, ?, ?, ?, ?)""",
+                     (*ids, quantity, remaining))
+        return {"reservation_id": key, "shipment_id": shipment_id, "return_id": return_id,
+                "quantity": quantity, "returnable_after": remaining}, True
+
+    @staticmethod
+    def return_batch_rows(conn, batch_id):
+        rows = conn.execute("""SELECT r.* FROM return_batch_boxes b JOIN shipment_returns r
+                               ON r.reservation_id=b.reservation_id AND r.shipment_id=b.shipment_id
+                               AND r.return_id=b.batch_id WHERE b.batch_id=?
+                               ORDER BY b.reservation_id, b.shipment_id""", (batch_id,))
+        return [dict(row) for row in rows]
+
+    def return_batch(self, batch_id, boxes):
+        ordered = sorted(boxes)
+        with self.current_inventory() as (conn, _):
+            receipts = self.return_batch_rows(conn, batch_id)
+            if receipts:
+                prior = [(r["reservation_id"], r["shipment_id"], r["quantity"]) for r in receipts]
+                if prior != ordered:
+                    raise Conflict("Return batch key already used with different boxes")
+                return {"batch_id": batch_id, "boxes": receipts}, False
+            for key, shipment_id, quantity in ordered:
+                try:
+                    receipt, created = self.record_return(conn, key, shipment_id, batch_id, quantity)
+                    if not created:
+                        raise Conflict("Return already recorded separately")
+                except (Missing, Conflict) as exc:
+                    raise type(exc)(f"{key}/{shipment_id}: {exc}") from exc
+                conn.execute("INSERT INTO return_batch_boxes VALUES (?,?,?)", (batch_id, key, shipment_id))
+                receipts.append(receipt)
+            return {"batch_id": batch_id, "boxes": receipts}, True
+
+    def return_batch_receipt(self, batch_id):
+        with closing(self.connect()) as conn:
+            boxes = self.return_batch_rows(conn, batch_id)
+            if not boxes:
+                raise Missing("Unknown return batch")
+            return {"batch_id": batch_id, "boxes": boxes}
