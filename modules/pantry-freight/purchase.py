@@ -38,7 +38,7 @@ class Offer:
     stock: int
 
 
-def inputs(plan, catalog):
+def inputs(plan, catalog, incoming):
     needs, units, touched = {}, {}, set()
     for row in rows(plan,"lines"):
         key = string(row.get("component"),"component")
@@ -48,6 +48,7 @@ def inputs(plan, catalog):
         if row["action"]=="purchase":
             units[key] = string(row.get("unit"),"unit")
             gap = integer(row.get("needed"),"needed") - integer(row.get("available"),"available")
+            gap -= integer(incoming.get(key, 0), f"{key}: incoming")
             if gap > 0:
                 needs[key] = gap
     if not isinstance(catalog,dict) or catalog.get("currency")!="TWD":
@@ -141,8 +142,8 @@ def optimize(needs, suppliers, offers, limits):
     return min(map(final,frontier.items()))[2],None
 
 
-def purchase(plan, catalog):
-    needs,units,suppliers,offers,limits = inputs(plan,catalog)
+def purchase(plan, catalog, *, incoming=None):
+    needs,units,suppliers,offers,limits = inputs(plan,catalog,incoming if incoming is not None else {})
     capacity = defaultdict(int)
     for o in offers:
         capacity[o.component] += o.pack*o.stock

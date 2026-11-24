@@ -66,6 +66,8 @@ python lunch.py --orders examples/orders.json --recipes examples/recipes.json --
 
 範例輸出 `prep` 的備料批數與 `purchase` 的供應商包數、運費及總額，共 7 包、165 元。使用庫存帳時，可將 `--stock examples/stock.json` 換成 `--ledger kitchen.db`，試算會讀取帳上結餘並跳過已領料的訂單。指令只讀取資料。加上 `--purchase-only` 並將輸出存為 `purchase-report.json`，即可接續下方的開單與驗收。供應不足時會輸出缺口並以狀態碼 `3` 結束，輸入錯誤則回傳 `2`。
 
+已有確定會到貨的採購單時，在 `--ledger kitchen.db` 後加上 `--incoming LUNCH`。可重複指定不同單號。報告的 `incoming` 列出這些單的未收數量，新採購會扣掉這些數量。廚房備料仍依可立即使用的庫存計算。驗收入庫與待收數會從同一份 SQLite 快照讀取。
+
 ## 核對採購單與分批到貨
 
 例如午餐採購單列了兩包醬油，每包 25 ml。上午先到一包，驗收後帳上增加 25 ml，下午仍可查到另一包待收。初次開單時會在既有的庫存帳加上採購單明細，保留原有收據與餘額。

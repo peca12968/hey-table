@@ -36,6 +36,8 @@ def demo(freight):
         first = run(*receiving, "accept", "LUNCH", "market", "AM", slip)
         repeated = run(*receiving, "accept", "LUNCH", "market", "AM", slip)
         partial = run(*receiving, "status", "LUNCH")
+        physical = run(*procure)
+        covered = run(*procure, "--incoming", "LUNCH", "--incoming", "LUNCH")
         rest = {line["sku"]: line["remaining_packs"] for line in partial["lines"] if line["remaining_packs"]}
         slip.write_text(json.dumps(rest), encoding="utf-8")
         second = run(*receiving, "accept", "LUNCH", "market", "PM", slip)
@@ -46,6 +48,9 @@ def demo(freight):
         if first != repeated or first["movements"]["soy"]["delta"] != 25 or closed["state"] != "received":
             raise ValueError("Unexpected receipt or final order status")
         deltas = {k: v["delta"] for k, v in second["movements"].items()}
+        if (covered["incoming"] != deltas or covered["prep"] != physical["prep"] or
+                covered["purchase"]["total_twd"] != 0 or physical["purchase"]["total_twd"] <= 0):
+            raise ValueError("Expected only the undelivered packs to offset procurement, not prep")
         deltas["soy"] += first["movements"]["soy"]["delta"]
         if deltas != basket["quantities"] or after["purchase"]["orders"] or after["purchase"]["total_twd"] != 0:
             raise ValueError("Stock ledger did not reconcile with purchased quantities")

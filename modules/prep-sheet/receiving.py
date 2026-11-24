@@ -6,7 +6,7 @@ import json
 from pathlib import Path
 import sqlite3
 
-from ledger import connect, prior_receipt, read_json, record_movement
+from ledger import connect, prior_receipt, read_inventory, read_json, record_movement
 from prep import catalog, integer, mapping
 
 
@@ -62,6 +62,23 @@ def status(db, order_id):
     elif any(line["received_packs"] for line in items):
         state = "partial"
     return {"purchase_order": order_id, "state": state, "remaining_packs": remaining, "lines": items}
+
+
+def procurement_snapshot(path, book, order_ids):
+    incoming = Counter()
+    with closing(connect(path, "ro")) as db:
+        db.execute("BEGIN")
+        stock, issued = read_inventory(db, book)
+        for order_id in dict.fromkeys(order_ids):
+            for line in status(db, order_id)["lines"]:
+                if not line["remaining_packs"]:
+                    continue
+                component = line["component"]
+                recipe = book["components"].get(component, {})
+                if recipe.get("unit") != line["unit"] or "pack" not in recipe:
+                    raise ValueError(f"{order_id}/{component}: purchase order and recipe no longer match")
+                incoming[component] += line["remaining_packs"] * line["pack"]
+    return stock, issued, dict(incoming)
 
 
 def open_order(path, book, order_id, report):

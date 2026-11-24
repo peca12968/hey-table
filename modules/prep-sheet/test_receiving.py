@@ -3,11 +3,12 @@ from contextlib import closing
 from copy import deepcopy
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from threading import Barrier
+from threading import Barrier, Event
 import unittest
+from unittest.mock import patch
 
-from ledger import connect, initialize, inventory_snapshot, post, read_json
-from receiving import accept, open_order, status
+from ledger import connect, initialize, inventory_snapshot, post, read_inventory, read_json
+from receiving import accept, open_order, procurement_snapshot, status
 
 
 def vendor(name, *lines):
@@ -107,3 +108,26 @@ class ReceivingTests(unittest.TestCase):
         self.assertEqual(len(receipts), 1)
         self.assertEqual(self.stock(), {"soy": 50})
         self.assertEqual(self.status()["remaining_packs"], 3)
+
+    def test_procurement_uses_one_snapshot_across_a_concurrent_delivery(self):
+        self.open()
+        with closing(connect(self.path, "rw")) as db:
+            self.assertEqual(db.execute("PRAGMA journal_mode=WAL").fetchone()[0], "wal")
+        stock_read = Event()
+        delivery_posted = Event()
+
+        def pause_after_stock(db, book):
+            result = read_inventory(db, book)
+            stock_read.set()
+            self.assertTrue(delivery_posted.wait(timeout=10))
+            return result
+
+        with patch("receiving.read_inventory", side_effect=pause_after_stock), ThreadPoolExecutor() as workers:
+            before = workers.submit(procurement_snapshot, self.path, self.book, ["p"])
+            try:
+                self.assertTrue(stock_read.wait(timeout=10))
+                self.receive({"S": 1})
+            finally:
+                delivery_posted.set()
+            self.assertEqual(before.result(), ({}, {}, {"soy": 110}))
+        self.assertEqual(procurement_snapshot(self.path, self.book, ["p"]), ({"soy": 25}, {}, {"soy": 85}))

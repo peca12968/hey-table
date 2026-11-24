@@ -35,14 +35,18 @@ def connect(path, mode):
 def inventory_snapshot(path, book):
     with closing(connect(path, "ro")) as db:
         db.execute("BEGIN")
-        stock = {}
-        for key, unit, quantity in db.execute("SELECT component,unit,quantity FROM balances"):
-            if book["components"].get(key, {}).get("unit") != unit:
-                raise ValueError(f"{key}: ledger and recipe units differ")
-            stock[key] = quantity
-        issued = {int(ref): json.loads(request) for ref, request in db.execute(
-            "SELECT reference,request FROM receipts WHERE kind='issue'")}
-        return stock, issued
+        return read_inventory(db, book)
+
+
+def read_inventory(db, book):
+    stock = {}
+    for key, unit, quantity in db.execute("SELECT component,unit,quantity FROM balances"):
+        if book["components"].get(key, {}).get("unit") != unit:
+            raise ValueError(f"{key}: ledger and recipe units differ")
+        stock[key] = quantity
+    issued = {int(ref): json.loads(request) for ref, request in db.execute(
+        "SELECT reference,request FROM receipts WHERE kind='issue'")}
+    return stock, issued
 
 
 def describe(row):
