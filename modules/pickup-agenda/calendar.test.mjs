@@ -7,6 +7,35 @@ import {join, resolve} from "node:path";
 import {createInterface} from "node:readline";
 import test from "node:test";
 import ICAL from "ical.js";
+import {pickupCalendar} from "../../server/pickup-calendar.mjs";
+
+test("the Hey Table receipt file has one parseable event with a stable UID and explicit UTC end",async()=>{
+  const start=Date.parse("2026-11-25T12:00:00+08:00"),created=start-3_600_000;
+  const base={id:17,token:"fixture-secret",created,start,modified:created,revision:0,status:"CONFIRMED"};
+  const snapshots=[base,{...base,start:start+900_000,modified:created+60_000,revision:1},
+    {...base,start:start+900_000,modified:created+120_000,revision:2,status:"CANCELLED"}];
+  let uid;
+  for(const input of snapshots){
+    const raw=await pickupCalendar(input);
+    assert.ok(raw.endsWith("\r\n")&&!raw.replaceAll("\r\n","").includes("\n"));
+    assert.ok(raw.split("\r\n").every(line=>Buffer.byteLength(line,"utf8")<=75));
+    assert.ok(!raw.includes(input.token));
+    const entries=new ICAL.Component(ICAL.parse(raw)).getAllSubcomponents("vevent");
+    assert.equal(entries.length,1);
+    const field=name=>entries[0].getFirstPropertyValue(name);
+    uid??=field("uid");
+    assert.match(uid,/^[a-f0-9]{64}@hey-table\.invalid$/);
+    assert.equal(field("uid"),uid);
+    assert.equal(field("summary"),"禾日食堂 · 自取 0017");
+    assert.equal(field("status"),input.status);
+    assert.equal(field("sequence"),input.revision);
+    assert.equal(field("dtstart").toJSDate().getTime(),input.start);
+    assert.equal(field("dtend").toJSDate().getTime(),input.start+900_000);
+    assert.equal(field("dtstamp").toJSDate().getTime(),input.modified);
+  }
+  const other=new ICAL.Component(ICAL.parse(await pickupCalendar({...base,token:"other-secret"}))).getFirstSubcomponent("vevent");
+  assert.notEqual(other.getFirstPropertyValue("uid"),uid);
+});
 
 test("one live subscription follows estimate, confirmation, reschedule and cancellation", {timeout:30000}, async () => {
   const dir = await mkdtemp(join(tmpdir(),"pickup-agenda-"));

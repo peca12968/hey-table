@@ -1,16 +1,17 @@
 import {addOnFor} from "./add-ons.mjs";
 import {comboVersion,priceCombos} from "../lib/combo-pricing.mjs";
 import qrcode from "qrcode-generator";
-import {dishes, itemNoteLimit, tables, transitions} from "../lib/menu.mjs";
+import {dishes, itemNoteLimit, numberOf, tables, transitions} from "../lib/menu.mjs";
 import {intakeLabels,intakeNotice} from "../lib/order-intake.mjs";
 import {businessDate,businessDayRange} from "../lib/business-day.mjs";
 import {dailyLimits,exceededPortions,readRemaining} from "./daily-limits.mjs";
 import {expirePaymentHolds,noBlockingPayment,paymentHoldMs} from "./payment-holds.mjs";
 import {dailyTiming,dailyTimingRows} from "./daily-timing.mjs";
 import {kitchenOverdue} from "./kitchen-overdue.mjs";
-import {bookablePickupSlots,pickupPrepLead,pickupSlotCapacity,pickupSlotsForDay} from "../lib/pickup-slots.mjs";
+import {bookablePickupSlots,pickupCalendarStatus,pickupPrepLead,pickupSlotCapacity,pickupSlotsForDay} from "../lib/pickup-slots.mjs";
 import {canReschedulePickup,capacityAtPickupSlot,editablePickupSlots,orderPortions,pickupChanges,pickupSlotLimits,
   pickupSlotUsage,pickupSlots,usedAtPickupSlot} from "./pickup-slots.mjs";
+import {pickupCalendar} from "./pickup-calendar.mjs";
 
 const json = (value, status=200) => Response.json(value,{status,headers:{"Cache-Control":"no-store"}});
 const fail = (message,status=400) => json({error:message},status);
@@ -311,6 +312,21 @@ export async function api(request, env) {
         submittedSlot!==order.pickupSlot || !sameItems)
       return fail("送單識別碼已用於另一張訂單",409);
     return json(saved);
+  }
+  if(path==="/api/ticket/calendar"&&method==="GET"){
+    const token=request.headers.get("X-Ticket");
+    if(!uuid.test(token))return fail("找不到訂單",404);
+    const [,saved]=await db.batch([expirePaymentHolds(db,Date.now(),token),db.prepare(selectOrders+" WHERE token=?").bind(token)]);
+    const row=saved.results[0];
+    if(!row||row.mode!=="pickup"||row.pickup_slot==null)return fail("找不到可匯出的預約取餐時段。",404);
+    const order=receipt(row),status=pickupCalendarStatus(order);
+    if(!status)return fail("付款確認後可下載取餐行事曆。",409);
+    const changes=pickupChanges(row),cancelled=status==="CANCELLED";
+    const modified=cancelled?statusHistory(row).at(-1)?.at:null;
+    const file=await pickupCalendar({id:order.id,token,created:order.created,start:order.pickupSlot,
+      modified:modified??changes.at(-1)?.at??order.created,revision:changes.length+Number(cancelled),status});
+    return new Response(file,{headers:{"Content-Type":"text/calendar; charset=utf-8","Cache-Control":"private, no-store",
+      "Content-Disposition":`attachment; filename="hey-table-pickup-${numberOf(order.id)}.ics"`,"X-Content-Type-Options":"nosniff"}});
   }
   if (path === "/api/ticket" && method === "GET") {
     const token = request.headers.get("X-Ticket");

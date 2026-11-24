@@ -574,6 +574,68 @@ test("authorized staff can close, raise and reset an individual slot without dis
   assert.equal((await snapshot()).find(slot=>slot.start===first).editable,false);
   assert.equal((await save(first,6,3)).status,409);
 });
+test("receipt calendar hides checkout details and follows confirmed, moved and cancelled pickup windows",async t=>{
+  const db=database();
+  t.after(()=>db.sqlite.close());
+  const taipei=time=>Date.parse("2026-11-25T"+time+"+08:00");
+  let now=taipei("10:15:00");
+  t.mock.method(Date,"now",()=>now);
+  const runtime={DB:db,TAPPAY_MODE:"demo"};
+  const token=crypto.randomUUID(),wallet=crypto.randomUUID(),immediate=crypto.randomUUID();
+  const first=taipei("12:00:00"),next=taipei("12:15:00");
+  const endpoint="/api/ticket/calendar";
+  const call=(path,options={})=>api(new Request("https://order.example"+path,options),runtime);
+  const send=(path,data,ticket)=>call(path,{method:"POST",headers:{"Content-Type":"application/json",...(ticket?{"X-Ticket":ticket}:{})},body:JSON.stringify(data)});
+  const calendar=ticket=>call(endpoint,{headers:ticket?{"X-Ticket":ticket}:{}});
+  const booking=(ticket,paymentMethod="cash",pickupSlot=first)=>({token:ticket,paymentMethod,pickupSlot,mode:"pickup",
+    note:"private-order-note",items:[{id:"sencha",qty:1,note:"private-dish-note"}]});
+  assert.equal((await calendar()).status,404);
+  assert.equal((await calendar(crypto.randomUUID())).status,404);
+  assert.equal((await send("/api/orders",booking(immediate,"cash",null))).status,200);
+  assert.equal((await calendar(immediate)).status,404);
+  assert.equal((await send("/api/orders",booking(wallet,"line_pay"))).status,200);
+  assert.equal((await calendar(wallet)).status,409);
+  const {attempt}=await (await send("/api/payments/start",{},wallet)).json();
+  assert.equal((await send("/api/payments/demo",{ref:attempt.ref,outcome:"paid"},wallet)).status,200);
+  const paid=await calendar(wallet);
+  assert.equal(paid.status,200);
+  assert.match(await paid.text(),/STATUS:CONFIRMED/);
+
+  const receipt=await (await send("/api/orders",booking(token))).json();
+  const before=await calendar(token);
+  assert.equal(before.status,200);
+  assert.equal(before.headers.get("Content-Type"),"text/calendar; charset=utf-8");
+  assert.equal(before.headers.get("Cache-Control"),"private, no-store");
+  assert.equal(before.headers.get("Content-Disposition"),`attachment; filename="hey-table-pickup-${String(receipt.id).padStart(4,"0")}.ics"`);
+  const unfolded=text=>text.replace(/\r\n /g,"");
+  const field=(text,name)=>unfolded(text).split("\r\n").find(line=>line.startsWith(name+":"))?.slice(name.length+1);
+  const raw=await before.text(),uid=field(raw,"UID");
+  assert.match(uid,/^[a-f0-9]{64}@hey-table\.invalid$/);
+  for(const value of [token,"private-order-note","private-dish-note","日式熱煎茶","X-Ticket","NT$","example"])
+    assert.ok(!raw.includes(value),value);
+  assert.equal(field(raw,"DTSTART"),"20261125T040000Z");
+  assert.equal(field(raw,"DTEND"),"20261125T041500Z");
+  assert.equal(field(raw,"SEQUENCE"),"0");
+  assert.equal(field(raw,"STATUS"),"CONFIRMED");
+  assert.equal(await (await calendar(token)).text(),raw);
+
+  now+=5*60_000;
+  assert.equal((await send("/api/ticket/reschedule",{from:first,to:next,revision:0},token)).status,200);
+  const moved=await (await calendar(token)).text();
+  assert.equal(field(moved,"UID"),uid);
+  assert.equal(field(moved,"DTSTART"),"20261125T041500Z");
+  assert.equal(field(moved,"DTSTAMP"),"20261125T022000Z");
+  assert.equal(field(moved,"SEQUENCE"),"1");
+
+  now+=5*60_000;
+  assert.equal((await send("/api/ticket/cancel",{},token)).status,200);
+  const cancelled=await (await calendar(token)).text();
+  assert.equal(field(cancelled,"UID"),uid);
+  assert.equal(field(cancelled,"DTSTART"),field(moved,"DTSTART"));
+  assert.equal(field(cancelled,"DTSTAMP"),"20261125T022500Z");
+  assert.equal(field(cancelled,"SEQUENCE"),"2");
+  assert.equal(field(cancelled,"STATUS"),"CANCELLED");
+});
 test("kitchen overdue uses the current stage and starts online orders at confirmed payment",async t=>{
   const db=database();
   t.after(()=>db.sqlite.close());

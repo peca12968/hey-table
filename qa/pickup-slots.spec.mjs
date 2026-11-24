@@ -1,6 +1,8 @@
 import {test,expect} from "@playwright/test";
 import {randomUUID} from "node:crypto";
+import {readFile} from "node:fs/promises";
 import {businessDate} from "../lib/business-day.mjs";
+import {pickupCalendar} from "../server/pickup-calendar.mjs";
 
 test("mobile guests recover a full pickup slot and the kitchen sees when preparation can start",async({page})=>{
   const start=Date.parse("2026-11-25T12:00:00+08:00"),duration=900_000;
@@ -153,5 +155,42 @@ test("mobile staff refresh a stale slot limit, close it and restore the default"
   await page.getByLabel("顯示已截止時段").check();
   await expect(slot.getByText("已停止預約 · 上限 12 份")).toBeVisible();
   await expect(capacity).toHaveCount(0);
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBe(360);
+});
+
+test("a mobile pickup receipt downloads the current calendar file and its cancellation",async({page})=>{
+  const token=randomUUID(),start=Date.parse("2026-11-25T12:00:00+08:00"),created=start-3_600_000;
+  const order={id:233,mode:"pickup",table:null,pickupSlot:start,pickupChanges:[],canReschedulePickup:true,
+    note:"私人備註",items:[{id:"sencha",name:"日式熱煎茶",price:45,qty:1}],status:"pending",created,
+    paymentMethod:"cash",paymentEnv:"cash",paymentState:"unpaid",total:45};
+  let cancelled=false;
+  await page.setViewportSize({width:360,height:780});
+  await page.route(url=>url.pathname==="/api/ticket",route=>route.fulfill({json:cancelled?
+    {...order,status:"cancelled",canReschedulePickup:false}:order}));
+  await page.route("**/api/ticket/calendar",async route=>{
+    expect(route.request().method()).toBe("GET");
+    expect(route.request().headers()["x-ticket"]).toBe(token);
+    expect(new URL(route.request().url()).search).toBe("");
+    const body=await pickupCalendar({id:order.id,token,created,start,modified:created+(cancelled?60_000:0),
+      status:cancelled?"CANCELLED":"CONFIRMED",revision:cancelled?1:0});
+    await route.fulfill({status:200,contentType:"text/calendar; charset=utf-8",body});
+  });
+  await page.goto("/ticket#"+token);
+  async function download(name){
+    const started=page.waitForEvent("download");
+    await page.getByRole("button",{name}).click();
+    const file=await started;
+    expect(file.suggestedFilename()).toBe("hey-table-pickup-0233.ics");
+    return readFile(await file.path(),"utf8");
+  }
+  const first=await download("下載取餐行事曆檔");
+  expect(first).toContain("STATUS:CONFIRMED");
+  expect(first).not.toContain("私人備註");
+  expect(first).not.toContain(token);
+  cancelled=true;
+  await page.getByRole("button",{name:"更新進度"}).click();
+  const next=await download("下載取消行事曆檔");
+  expect(next).toContain("STATUS:CANCELLED");
+  expect(next).toContain("SEQUENCE:1");
   expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBe(360);
 });
