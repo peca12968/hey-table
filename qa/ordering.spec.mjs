@@ -8,6 +8,76 @@ import jsQR from "jsqr";
 import {PNG} from "pngjs";
 import {businessDate} from "../lib/business-day.mjs";
 
+test("the pickup screen follows station readiness, clears stale numbers, and hides collected orders",async({page,request})=>{
+  const headers={Authorization:"Bearer local-test-kitchen"};
+  const url="/api/kitchen/pickup-display";
+  async function create(mode,paymentMethod="cash"){
+    const response=await request.post("/api/orders",{data:{token:randomUUID(),mode,
+      table:mode==="table"?"A03":null,note:"只給廚房",items:[{id:"sencha",qty:2}],paymentMethod}});
+    expect(response.ok()).toBe(true);
+    return (await response.json()).id;
+  }
+  async function move(id,from,to){
+    const response=await request.patch("/api/kitchen/status",{headers,data:{id,from,to}});
+    expect(response.ok()).toBe(true);
+  }
+  const pickup=await create("pickup");
+  const table=await create("table");
+  const unpaid=await create("pickup","px_pay_plus");
+  await move(pickup,"pending","preparing");
+  await move(table,"pending","preparing");
+  await move(table,"preparing","ready");
+  const number=String(pickup).padStart(4,"0");
+  expect((await request.get(url)).status()).toBe(403);
+  const visible=await request.get(url,{headers});
+  expect(visible.headers()["cache-control"]).toBe("no-store");
+  const state=await visible.json();
+  expect(Object.keys(state).sort()).toEqual(["capturedAt","preparing","ready"]);
+  expect(state.preparing).toContain(pickup);
+  expect([...state.preparing,...state.ready]).not.toContain(table);
+  expect([...state.preparing,...state.ready]).not.toContain(unpaid);
+  expect(state.preparing.every(Number.isSafeInteger)).toBe(true);
+  expect(state.ready.every(Number.isSafeInteger)).toBe(true);
+
+  await page.setViewportSize({width:360,height:780});
+  await page.goto("/kitchen/pickup-display");
+  await expect(page.getByRole("alert")).toContainText("請登入店家接單台");
+  await page.addInitScript(()=>sessionStorage.setItem("he-ri-staff","local-test-kitchen"));
+  await page.goto("/kitchen");
+  await page.getByRole("link",{name:"櫃台取餐看板"}).click();
+  const preparing=page.getByRole("region",{name:"製作中"});
+  const ready=page.getByRole("region",{name:"請取餐"});
+  await expect(preparing.getByText(number,{exact:true})).toBeVisible();
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBe(360);
+  expect((await request.patch("/api/kitchen/station-work",{headers,data:{id:pickup,station:"bar"}})).ok()).toBe(true);
+  await expect(ready.getByText(number,{exact:true})).toBeVisible({timeout:8000});
+  await expect(preparing.getByText(number,{exact:true})).toHaveCount(0);
+
+  const update=page.getByRole("button",{name:"更新看板"});
+  await page.route("**/api/kitchen/pickup-display",route=>route.abort("internetdisconnected"),{times:1});
+  await update.click();
+  await expect(page.getByRole("alert")).toContainText("請向櫃台確認");
+  await expect(ready).toHaveCount(0);
+  await update.click();
+  await expect(ready.getByText(number,{exact:true})).toBeVisible();
+  await page.setViewportSize({width:1280,height:900});
+  expect((await ready.boundingBox()).x).toBeLessThan((await preparing.boundingBox()).x);
+  const fullscreen=page.getByRole("button",{name:"全螢幕",exact:true});
+  if(await fullscreen.isVisible()){
+    await fullscreen.click();
+    const exit=page.getByRole("button",{name:"離開全螢幕"});
+    await expect(exit).toBeVisible();
+    expect(await page.evaluate(()=>document.fullscreenElement?.classList.contains("pickupDisplay"))).toBe(true);
+    await exit.click();
+    await expect(fullscreen).toBeVisible();
+  }
+  await move(pickup,"ready","completed");
+  await update.click();
+  await expect(ready.getByText(number,{exact:true})).toHaveCount(0);
+  await move(table,"ready","completed");
+  await move(unpaid,"pending","cancelled");
+});
+
 test("station boards finish only their items and the last of two concurrent reports marks the order ready once",async({page,request})=>{
   const headers={Authorization:"Bearer local-test-kitchen"};
   const token=randomUUID();

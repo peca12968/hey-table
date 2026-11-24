@@ -254,6 +254,25 @@ test("receipt timing drops completed station work and legacy items still reach t
     items:[{id:"old-tofu",name:"舊菜單豆腐",qty:1}],doneAt:null,doneStations:0,stations:1}]);
   assert.equal((await (await cook(older,"other")).json()).status,"ready");
 });
+test("pickup display omits refunded orders even if their kitchen status is still ready",async t=>{
+  const db=database();
+  t.after(()=>db.sqlite.close());
+  const add=db.sqlite.prepare(`INSERT INTO orders
+    (token,mode,note,items,total,created,status,payment_method,payment_env)
+    VALUES (?,'pickup','只在店員餐單','[]',100,1,'ready','line_pay','sandbox')`);
+  const {lastInsertRowid:paid}=add.run(crypto.randomUUID());
+  const {lastInsertRowid:refunded}=add.run(crypto.randomUUID());
+  const attempt=db.sqlite.prepare("INSERT INTO payment_attempts(order_id,reference,merchant,state,created) VALUES (?,?,?,?,1)");
+  attempt.run(paid,"fixture-paid","fixture","paid");
+  attempt.run(refunded,"fixture-refunded","fixture","refunded");
+  const result=await api(new Request("https://order.example/api/kitchen/pickup-display",{
+    headers:{Authorization:"Bearer local-test-key"},
+  }),{DB:db,STAFF_KEY:"local-test-key"});
+  assert.equal(result.status,200);
+  const {capturedAt,...numbers}=await result.json();
+  assert.ok(Number.isSafeInteger(capturedAt));
+  assert.deepEqual(numbers,{ready:[paid],preparing:[]});
+});
 for(const method of ["line_pay","px_pay_plus"]){
   test(method+" resolves a lost charge reply with the original bank reference",async t=>{
     const db=database();

@@ -315,6 +315,14 @@ export async function api(request, env) {
     const row = await db.prepare(`${selectOrders} WHERE id=? AND mode='pickup'`).bind(id).first();
     return row ? json(receipt(row)) : fail("找不到這張自取餐單",404);
   }
+  if (path === "/api/kitchen/pickup-display" && method === "GET") {
+    const {results}=await db.prepare(`SELECT id,status FROM orders
+      WHERE mode='pickup' AND status IN ('preparing','ready') AND ${payableForKitchen}
+      ORDER BY id`).all();
+    const numbers={ready:[],preparing:[]};
+    for(const {id,status} of results)numbers[status].push(id);
+    return json({capturedAt:Date.now(),...numbers});
+  }
   if (path === "/api/kitchen/return-receipt" && method === "GET") {
     const id = collectionId(url);
     if (id === null) return fail("請輸入有效的取餐號碼");
