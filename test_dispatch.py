@@ -105,8 +105,14 @@ class DispatchTests(unittest.TestCase):
             lambda x: x["work"][0].update(pack_ms=True),
             lambda x: x["work"][0]["boxes"][0].update(quantity=1000001),
             lambda x: x.update(start_ms=111001),
+            lambda x: x.update(captured_at_ms=x["start_ms"] + 1),
         ]:
             document = deepcopy(self.sample)
             edit(document)
             with self.assertRaises(ValueError):
                 plan(document)
+
+    def test_snapshot_timestamp_at_or_before_planned_start(self):
+        for captured in (self.sample["start_ms"] - 1, self.sample["start_ms"]):
+            document = dict(self.sample, captured_at_ms=captured)
+            self.assertEqual(plan(document), plan(self.sample))

@@ -136,6 +136,10 @@ def optimize(jobs, start):
 
 def plan(document):
     start = integer(document["start_ms"], "start_ms")
+    if "captured_at_ms" in document:
+        captured = integer(document["captured_at_ms"], "captured_at_ms")
+        if start < captured:
+            raise ValueError("start_ms predates the packing snapshot")
     cutoff = integer(document["cutoff_ms"], "cutoff_ms", start + 1)
     jobs, omitted = collect(document, start, cutoff)
     selected = optimize(jobs, start)

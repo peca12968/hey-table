@@ -48,12 +48,16 @@ def demo(stockroom):
                     "UPDATE products SET available=available-2 WHERE sku='KIT-01'"
                 )
             clock[0] = 100.0
-            document["holds"] = [
-                client.get(
-                    "/reservations/" + item["reservation"]["id"] + "/fulfillments"
-                ).json()
-                for item in expected
-            ]
+            response = client.post(
+                "/packing-snapshots",
+                json={
+                    "reservation_ids": [item["reservation"]["id"] for item in expected]
+                },
+            )
+            assert response.status_code == 200, response.text
+            capture = response.json()
+            assert capture["captured_at_ms"] == document["start_ms"]
+            document.update(capture)
             input_file = path / "service-snapshot.json"
             input_file.write_text(json.dumps(document), encoding="utf8")
             output = subprocess.check_output(

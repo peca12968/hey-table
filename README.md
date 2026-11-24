@@ -22,7 +22,7 @@ python -m unittest -v
 
 ## 接上 Stockroom
 
-每張待排單執行 `GET /reservations/{key}/fulfillments`，將原回應放入 `holds`。同一張單在 `work` 列出訂單編號、備妥時間、總包裝工時與各箱件數。Unix 時間與工時均用毫秒。若訂單已到期、剩餘保留量不足，或計畫的箱號已用過，報表會列出原因。
+以 `POST /packing-snapshots` 傳入整批 `reservation_ids`，將回應的 `holds` 和 `captured_at_ms` 放進規劃檔。回應的 `products` 也可一起保留供人工核對。Stockroom 會在同一時點結算所有保留並讀取箱單。工作清單 `work` 為每張單提供訂單編號、備妥時間、總包裝工時與各箱件數。Unix 時間與工時均用毫秒，`start_ms` 可選快照時點或之後。若訂單已到期、剩餘保留量不足，或計畫的箱號已用過，報表會列出原因。舊規劃檔也可只提供 `holds`。
 
 每張單的規劃箱數最多 100 箱。包完該單才一次提交它的箱子。排程的 `dispatch` 欄位可傳給 `POST /dispatch-batches`，並以現場唯一批號作為 `Idempotency-Key`。出貨時由 Stockroom 再次核對當下的庫存與期限。排程假設庫存在包裝期間維持可用，若中途有取消、到期或工時變動，可重新擷取資料試算。
 
@@ -30,7 +30,7 @@ python -m unittest -v
 
 ```sh
 git clone https://github.com/peca12968/stockroom-reservations.git stockroom-upstream
-git -C stockroom-upstream checkout --detach dca1d863b07e2a14c9e79b62453886cd3c8b8866
+git -C stockroom-upstream checkout --detach 7b6a21c3e94f0ce44f9a179ea6a223150ecb7967
 python -m pip install -r stockroom-upstream/requirements-dev.txt
 python demo.py stockroom-upstream
 ```

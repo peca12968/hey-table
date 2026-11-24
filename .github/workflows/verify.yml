@@ -17,7 +17,7 @@ jobs:
       - uses: actions/checkout@v7
         with:
           repository: peca12968/stockroom-reservations
-          ref: dca1d863b07e2a14c9e79b62453886cd3c8b8866
+          ref: 7b6a21c3e94f0ce44f9a179ea6a223150ecb7967
           path: stockroom-upstream
           persist-credentials: false
       - run: python -m pip install -r stockroom-upstream/requirements-dev.txt
