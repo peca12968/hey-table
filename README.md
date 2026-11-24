@@ -121,6 +121,8 @@ Stockroom 支援在一筆交易內保留多個 SKU。若其中一項缺貨，該
 
 店家接單前，顧客可在收據確認取消現場付款單，或未付款、付款嘗試已失敗或取消的線上單。取消會寫入進度並釋回每日限量份數。付款確認中、已授權或已付款的餐單須由店家協助處理。取消與啟動付款使用同一張餐單的原子條件；取消回覆遺失時，可更新收據或重試原操作。[顧客取消、斷線與付款競爭測試](qa/payments.spec.mjs)
 
+新成立的線上單會保留 15 分鐘，收據顯示付款期限。期限到達後，菜單、查單、結帳或店家查看營運資料時，系統會取消符合條件的餐單並釋回限量份數。仍在付款確認中、已授權或已付款的餐單會保持原狀。付款嘗試晚於期限才確認失敗或取消時，後續查詢即可釋回。上線前的舊單沿用原流程。收據的 `progress=1` 會一併傳回新單的付款期限與到期取消原因。[資料庫時間邊界測試](qa/tappay.test.mjs) · [手機收據測試](qa/payments.spec.mjs)
+
 ## 同桌分帳
 
 在手機收據展開「這張餐單怎麼分帳？」，填寫用餐人稱呼，替每道菜指定分攤份數。同桌平分填 1，沒吃填 0，分食份量不同也可填 2 比 1。每道菜的小計與每人應付都以整元顯示。例如 190 元豬排丼歸小安，85 元煎餃和 55 元毛豆兩人平分，最後小安付 260 元、小岑付 70 元。
@@ -175,6 +177,7 @@ node --import ./scripts/sites-env.mjs ./node_modules/wrangler/bin/wrangler.js d1
 node --import ./scripts/sites-env.mjs ./node_modules/wrangler/bin/wrangler.js d1 execute DB --local --config dist/server/wrangler.json --persist-to .wrangler/state --file drizzle/0008_order_created_index.sql
 node --import ./scripts/sites-env.mjs ./node_modules/wrangler/bin/wrangler.js d1 execute DB --local --config dist/server/wrangler.json --persist-to .wrangler/state --file drizzle/0009_station_progress.sql
 node --import ./scripts/sites-env.mjs ./node_modules/wrangler/bin/wrangler.js d1 execute DB --local --config dist/server/wrangler.json --persist-to .wrangler/state --file drizzle/0010_daily_portion_limits.sql
+node --import ./scripts/sites-env.mjs ./node_modules/wrangler/bin/wrangler.js d1 execute DB --local --config dist/server/wrangler.json --persist-to .wrangler/state --file drizzle/0011_payment_hold_expiry.sql
 npm start
 ```
 

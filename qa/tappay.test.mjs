@@ -273,6 +273,73 @@ test("pickup display omits refunded orders even if their kitchen status is still
   assert.ok(Number.isSafeInteger(capturedAt));
   assert.deepEqual(numbers,{ready:[paid],preparing:[]});
 });
+test("unpaid holds release at the boundary but preserve active payment attempts",async t=>{
+  const db=database();
+  t.after(()=>db.sqlite.close());
+  let now=Date.parse("2026-11-25T02:00:00Z");
+  t.mock.method(Date,"now",()=>now);
+  const runtime={DB:db,STAFF_KEY:"local-test-key",TAPPAY_MODE:"demo"};
+  const call=(path,options={})=>api(new Request("https://order.example"+path,options),runtime);
+  const post=(path,data,headers={})=>call(path,{method:"POST",
+    headers:{"Content-Type":"application/json",...headers},body:JSON.stringify(data)});
+  const getTicket=token=>call("/api/ticket?progress=1",{headers:{"X-Ticket":token}}).then(response=>response.json());
+  const order=(token,paymentMethod="line_pay")=>({token,mode:"pickup",note:"",items:[{id:"sencha",qty:1}],paymentMethod});
+  const cap=db.sqlite.prepare("INSERT INTO daily_portion_limits(date,dish,capacity,revision) VALUES ('2026-11-25','sencha',1,1)");
+  cap.run();
+  const old=crypto.randomUUID(),challenger=crypto.randomUUID();
+  assert.equal((await post("/api/orders",order(old))).status,200);
+  const due=now+15*60*1000;
+  assert.equal((await getTicket(old)).paymentDueAt,due);
+  now=due-1;
+  assert.equal((await post("/api/orders",order(challenger))).status,409);
+  now=due;
+  assert.equal((await post("/api/orders",order(challenger))).status,200);
+  const expired=await getTicket(old);
+  assert.equal(expired.status,"cancelled");
+  assert.deepEqual(expired.statusHistory.at(-1),{status:"cancelled",at:due,actor:"payment_expiry"});
+  assert.equal((await post("/api/payments/start",{},{ "X-Ticket":old })).status,409);
+  assert.deepEqual((await getTicket(old)).statusHistory,expired.statusHistory);
+
+  const activeHeaders={"X-Ticket":challenger};
+  now=due+15*60*1000-1;
+  const {attempt}=await (await post("/api/payments/start",{},activeHeaders)).json();
+  assert.equal(attempt.state,"pending");
+  now+=1000;
+  const menu=await (await call("/api/menu")).json();
+  assert.equal(menu.remaining.sencha,0);
+  assert.equal((await getTicket(challenger)).status,"pending");
+  assert.equal((await (await post("/api/payments/start",{},activeHeaders)).json()).attempt.ref,attempt.ref);
+  assert.equal((await post("/api/payments/demo",{ref:attempt.ref,outcome:"failed"},activeHeaders)).status,200);
+  const cash=crypto.randomUUID();
+  assert.equal((await post("/api/orders",order(cash,"cash"))).status,200);
+  assert.equal((await getTicket(challenger)).statusHistory.at(-1).actor,"payment_expiry");
+  assert.equal((await getTicket(cash)).paymentDueAt,undefined);
+
+  const legacy=crypto.randomUUID();
+  db.sqlite.prepare(`INSERT INTO orders(token,mode,note,items,total,created,payment_method,payment_env)
+    VALUES (?,'pickup','','[]',45,1,'line_pay','demo')`).run(legacy);
+  assert.equal((await getTicket(legacy)).status,"pending");
+  assert.equal((await (await post("/api/payments/start",{},{"X-Ticket":legacy})).json()).attempt.state,"pending");
+});
+
+test("payment start cannot claim a hold that expires after it reads the order",async t=>{
+  const db=database();
+  t.after(()=>db.sqlite.close());
+  const due=Date.parse("2026-11-25T02:15:00Z"),token=crypto.randomUUID();
+  let now=due-1;
+  t.mock.method(Date,"now",()=>now);
+  db.sqlite.prepare(`INSERT INTO orders(token,mode,note,items,total,created,payment_method,payment_env,payment_due_at)
+    VALUES (?,'pickup','','[]',45,?,'line_pay','demo',?)`).run(token,due-15*60*1000,due);
+  const boundary={...db,prepare(sql){
+    if(sql.startsWith("SELECT * FROM payment_attempts WHERE order_id="))now=due;
+    return db.prepare(sql);
+  }};
+  const result=await api(new Request("https://order.example/api/payments/start",{method:"POST",
+    headers:{"Content-Type":"application/json","X-Ticket":token},body:"{}"}),{DB:boundary,TAPPAY_MODE:"demo"});
+  assert.equal(result.status,409);
+  assert.equal(db.sqlite.prepare("SELECT status FROM orders WHERE token=?").get(token).status,"cancelled");
+  assert.equal(db.sqlite.prepare("SELECT count(*) AS count FROM payment_attempts").get().count,0);
+});
 for(const method of ["line_pay","px_pay_plus"]){
   test(method+" resolves a lost charge reply with the original bank reference",async t=>{
     const db=database();

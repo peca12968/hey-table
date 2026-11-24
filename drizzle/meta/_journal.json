@@ -78,6 +78,13 @@
       "when": 1795549836112,
       "tag": "0010_daily_portion_limits",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "6",
+      "when": 1795551405890,
+      "tag": "0011_payment_hold_expiry",
+      "breakpoints": true
     }
   ]
 }

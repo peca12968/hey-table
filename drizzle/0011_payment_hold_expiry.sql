@@ -1,0 +1,2 @@
+ALTER TABLE `orders` ADD `payment_due_at` integer;--> statement-breakpoint
+CREATE INDEX `orders_pending_payment_due` ON `orders` (`payment_due_at`) WHERE "orders"."status"='pending' AND "orders"."payment_due_at" IS NOT NULL;

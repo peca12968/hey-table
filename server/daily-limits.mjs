@@ -1,4 +1,5 @@
 import {dishes} from "../lib/menu.mjs";
+import {expirePaymentHolds} from "./payment-holds.mjs";
 
 const usedByDish=`SELECT json_extract(line.value,'$.id') AS dish, SUM(json_extract(line.value,'$.qty')) AS used
   FROM orders JOIN json_each(orders.items) AS line
@@ -18,7 +19,8 @@ export function readRemaining(db,date,range) {
 }
 
 export async function dailyLimits(db,date,range) {
-  const [settings,counts]=await db.batch([
+  const [,settings,counts]=await db.batch([
+    expirePaymentHolds(db,Date.now()),
     db.prepare("SELECT dish,capacity,revision FROM daily_portion_limits WHERE date=?").bind(date),
     db.prepare(usedByDish).bind(...range),
   ]);

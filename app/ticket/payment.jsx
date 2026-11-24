@@ -86,7 +86,7 @@ export default function Payment({order,token,onChange}){
       const {attempt:a}=await send(action,body);
       receive(a);
       if(action==="start" && a?.redirect)redirect(a);
-    }catch(e){setError(e.message);}finally{lock.current=false;setBusy(false);}
+    }catch(e){setError(e.message);if(e.status===409)onChange();}finally{lock.current=false;setBusy(false);}
   }
   const name=methods[order.paymentMethod];
   return <section className="payBox" aria-label="線上付款"><h2>{name}</h2>

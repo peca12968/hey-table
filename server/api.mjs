@@ -5,6 +5,7 @@ import {dishes, tables, transitions} from "../lib/menu.mjs";
 import {intakeLabels,intakeNotice} from "../lib/order-intake.mjs";
 import {businessDate,businessDayRange} from "../lib/business-day.mjs";
 import {dailyLimits,exceededPortions,readRemaining} from "./daily-limits.mjs";
+import {expirePaymentHolds,noBlockingPayment,paymentHoldMs} from "./payment-holds.mjs";
 
 const json = (value, status=200) => Response.json(value,{status,headers:{"Cache-Control":"no-store"}});
 const fail = (message,status=400) => json({error:message},status);
@@ -47,7 +48,7 @@ function statusHistory(row) {
   const history = [{status:"pending",at:row.created}];
   for (const {from,status,at,actor} of JSON.parse(row.status_history ?? "[]")) {
     if (history.at(-1).status !== from) history.push({status:from,at:null});
-    history.push({status,at,...(actor==="customer"&&status==="cancelled"?{actor}:{})});
+    history.push({status,at,...(status==="cancelled"&&["customer","payment_expiry"].includes(actor)?{actor}:{})});
   }
   if (history.at(-1).status !== row.status) history.push({status:row.status,at:null});
   return history;
@@ -182,8 +183,9 @@ export async function api(request, env) {
       fail("供應上限已由其他店員更新，請重新載入後再儲存。",409);
   }
   if (path === "/api/menu" && method === "GET") {
-    const date=businessDate(Date.now());
-    const [stock,modes,seats,portions]=await db.batch([db.prepare("SELECT dish FROM unavailable"),db.prepare(intakeRows),
+    const now=Date.now(),date=businessDate(now);
+    const [,stock,modes,seats,portions]=await db.batch([expirePaymentHolds(db,now),
+      db.prepare("SELECT dish FROM unavailable"),db.prepare(intakeRows),
       db.prepare(tableIntakeRows),readRemaining(db,date,businessDayRange(date))]);
     const remaining=Object.fromEntries(portions.results.map(row=>[row.dish,row.remaining]));
     return json({payments:settings(env),unavailable:stock.results.map(r=>r.dish),
@@ -198,8 +200,9 @@ export async function api(request, env) {
   if (path === "/api/quote" && method === "POST") {
     const items = menuItems(input.items);
     if (!items) return fail("請確認餐點與數量");
-    const date=businessDate(Date.now());
-    const [stock, queue, timing, exceeded] = await db.batch([
+    const now=Date.now(),date=businessDate(now);
+    const [,stock,queue,timing,exceeded]=await db.batch([
+      expirePaymentHolds(db,now),
       db.prepare("SELECT dish FROM unavailable"),
       db.prepare("SELECT id,created,items,status,station_progress FROM orders WHERE status='preparing' ORDER BY id DESC"),
       db.prepare(timingRows+" LIMIT 1"),
@@ -227,13 +230,15 @@ export async function api(request, env) {
     const available=config.methods.includes(method);
     const lines = JSON.stringify(order.items);
     const created=Date.now(),date=businessDate(created),range=businessDayRange(date);
-    const stmt = db.prepare(`INSERT INTO orders(token,mode,table_no,note,items,total,created,payment_method,payment_env,combo_quote)
-      SELECT ?,?,?,?,?,?,?,?,?,? WHERE ? AND NOT ${modePaused} AND NOT ${tablePaused}
+    const stmt = db.prepare(`INSERT INTO orders(token,mode,table_no,note,items,total,created,payment_method,payment_env,combo_quote,payment_due_at)
+      SELECT ?,?,?,?,?,?,?,?,?,?,? WHERE ? AND NOT ${modePaused} AND NOT ${tablePaused}
       AND NOT EXISTS (SELECT 1 FROM unavailable u
       JOIN json_each(?) j ON u.dish=json_extract(j.value,'$.id'))
       AND NOT EXISTS (${exceededPortions}) ON CONFLICT(token) DO NOTHING`);
-    const [,savedOrder,intake,exceeded] = await db.batch([
-      stmt.bind(order.token,order.mode,order.table,order.note,lines,quote?.total??order.total,created,method,method==='cash'?'cash':config.mode,snapshot,available&&validPrice?1:0,order.mode,order.table,lines,lines,date,...range),
+    const [,,savedOrder,intake,exceeded]=await db.batch([
+      expirePaymentHolds(db,created),
+      stmt.bind(order.token,order.mode,order.table,order.note,lines,quote?.total??order.total,created,method,method==='cash'?'cash':config.mode,snapshot,
+        method==="cash"?null:created+paymentHoldMs,available&&validPrice?1:0,order.mode,order.table,lines,lines,date,...range),
       db.prepare(selectOrders+" WHERE token=?").bind(order.token),
       db.prepare(`SELECT ${modePaused} AS mode_paused, ${tablePaused} AS table_paused`).bind(order.mode,order.table),
       db.prepare(`SELECT dish FROM (${exceededPortions}) WHERE NOT EXISTS (SELECT 1 FROM orders WHERE token=?)`)
@@ -261,11 +266,12 @@ export async function api(request, env) {
     const token = request.headers.get("X-Ticket");
     if (!uuid.test(token)) return fail("找不到訂單",404);
     const lookup=db.prepare(selectOrders+" WHERE token=?").bind(token);
+    const expiry=expirePaymentHolds(db,Date.now(),token);
     const withTiming=url.searchParams.get("timing")==="1";
     let row, queue, timing;
     if(withTiming){
-      const [saved,active,settings]=await db.batch([
-        lookup,
+      const [,saved,active,settings]=await db.batch([
+        expiry,lookup,
         db.prepare(`SELECT queued.id,queued.created,queued.items,queued.status,queued.station_progress
           FROM orders AS ticket JOIN orders AS queued
           ON queued.status='preparing' AND
@@ -276,10 +282,16 @@ export async function api(request, env) {
       row=saved.results[0];
       queue=active.results;
       timing=settings.results[0];
-    }else row=await lookup.first();
+    }else{
+      const [,saved]=await db.batch([expiry,lookup]);
+      row=saved.results[0];
+    }
     if (!row) return fail("找不到訂單",404);
     const saved = receipt(row);
-    if (url.searchParams.get("progress") === "1") saved.statusHistory = statusHistory(row);
+    if (url.searchParams.get("progress") === "1") {
+      saved.statusHistory = statusHistory(row);
+      if(row.payment_due_at!==null)saved.paymentDueAt=row.payment_due_at;
+    }
     if(withTiming&&row.status==="preparing"){
       const quote=receiptTiming(row,queue,timing);
       if(quote)saved.kitchenQuote=quote;
@@ -289,13 +301,13 @@ export async function api(request, env) {
   if (path === "/api/ticket/cancel" && method === "POST") {
     const token=request.headers.get("X-Ticket");
     if(!uuid.test(token))return fail("找不到訂單",404);
-    const [,current]=await db.batch([
+    const now=Date.now();
+    const [,,current]=await db.batch([
+      expirePaymentHolds(db,now,token),
       db.prepare(`UPDATE orders SET status='cancelled',
         status_history=json_insert(COALESCE(status_history,'[]'),'$[#]',
           json_object('from',status,'status','cancelled','at',?, 'actor','customer'))
-        WHERE token=? AND status='pending' AND NOT EXISTS (
-          SELECT 1 FROM payment_attempts WHERE order_id=orders.id AND state NOT IN ('failed','cancelled')
-        )`).bind(Date.now(),token),
+        WHERE token=? AND status='pending' AND ${noBlockingPayment}`).bind(now,token),
       db.prepare("SELECT status FROM orders WHERE token=?").bind(token),
     ]);
     const row=current.results[0];
@@ -329,7 +341,8 @@ export async function api(request, env) {
     const [date] = dates;
     const range = dates.length === 1 ? businessDayRange(date) : null;
     if (!range) return fail("請選擇有效的餐單日期");
-    const [counts, portions] = await db.batch([
+    const [,counts,portions] = await db.batch([
+      expirePaymentHolds(db,Date.now()),
       db.prepare(`SELECT mode, COUNT(*) AS orders, SUM(status='pending') AS pending,
         SUM(status='preparing') AS preparing, SUM(status='ready') AS ready,
         SUM(status='completed') AS completed, SUM(status='cancelled') AS cancelled,
@@ -395,9 +408,10 @@ export async function api(request, env) {
     return json({format:"hey-table.payment-snapshot.v1", capturedAt:Date.now(), environment, attempts:results});
   }
   if ((path === "/api/kitchen" || path === "/api/kitchen/stations") && method === "GET") {
-    const {results} = await db.prepare(`${selectOrders} WHERE status NOT IN ('completed','cancelled')
+    const [,queue] = await db.batch([expirePaymentHolds(db,Date.now()),db.prepare(`${selectOrders} WHERE status NOT IN ('completed','cancelled')
         OR id IN (SELECT id FROM orders WHERE status IN ('completed','cancelled') ORDER BY id DESC LIMIT 20)
-        ORDER BY id DESC`).all();
+        ORDER BY id DESC`)]);
+    const {results}=queue;
     const orders = results.map(receipt);
     if (path === "/api/kitchen/stations") {
       return json({format:"hey-table.station-orders.v1",capturedAt:Date.now(),throughId:orders[0]?.id ?? 0,

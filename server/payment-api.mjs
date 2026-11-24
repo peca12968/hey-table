@@ -1,4 +1,5 @@
 import {charge,httpsUrl,lookup,merchantFor,settings,validBuyer} from "./tappay.mjs";
+import {expirePaymentHolds} from "./payment-holds.mjs";
 
 export const latestState = "(SELECT state FROM payment_attempts WHERE order_id=orders.id ORDER BY id DESC LIMIT 1)";
 export const payableForKitchen = "(payment_method='cash' OR "+latestState+" IN ('paid','authorized','partial'))";
@@ -46,6 +47,7 @@ export async function paymentApi(path,request,env,input) {
   }
   const token=request.headers.get("X-Ticket");
   if(!token || token.length!==36)return fail("找不到餐單",404);
+  if(path==="/api/payments/start")await expirePaymentHolds(db,Date.now(),token).run();
   const order=await db.prepare("SELECT * FROM orders WHERE token=?").bind(token).first();
   if(!order || order.payment_method==="cash")return fail("找不到線上付款餐單",404);
   let attempt=await latest(db,order.id);
@@ -67,13 +69,19 @@ export async function paymentApi(path,request,env,input) {
   if(!demo && (typeof input.prime!=="string" || !input.prime || input.prime.length>2000 || !validBuyer(input.buyer)))
     return fail("請確認付款資料",400);
   const ref="H"+crypto.randomUUID().replaceAll("-","").slice(0,18).toUpperCase();
+  const claimedAt=Date.now();
   const claimed=await db.prepare(`INSERT INTO payment_attempts(order_id,reference,merchant,created)
     SELECT id,?,?,? FROM orders WHERE id=? AND status='pending'
+    AND (payment_due_at IS NULL OR payment_due_at>?)
     AND COALESCE(${latestState},'unpaid') IN ('unpaid','failed','cancelled')`)
-    .bind(ref,demo?"demo":merchantFor(env,order.payment_method),Date.now(),order.id).run();
+    .bind(ref,demo?"demo":merchantFor(env,order.payment_method),claimedAt,order.id,claimedAt).run();
   attempt=await latest(db,order.id);
   if(!claimed.meta.changes){
-    const row=await db.prepare("SELECT status FROM orders WHERE id=?").bind(order.id).first();
+    const [,current]=await db.batch([
+      expirePaymentHolds(db,claimedAt,token),
+      db.prepare("SELECT status FROM orders WHERE id=?").bind(order.id),
+    ]);
+    const row=current.results[0];
     return row?.status==="cancelled"?fail("餐單已取消",409):result({attempt:publicAttempt(attempt)});
   }
   if(demo || !attempt || attempt.reference!==ref)return result({attempt:publicAttempt(attempt)});

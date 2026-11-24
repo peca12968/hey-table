@@ -10,13 +10,18 @@ export const orders = sqliteTable("orders", {
   items: text("items").notNull(),
   paymentMethod: text("payment_method").notNull().default("cash"),
   paymentEnv: text("payment_env").notNull().default("cash"),
+  paymentDueAt: integer("payment_due_at"),
   comboQuote: text("combo_quote"),
   total: integer("total").notNull(),
   status: text("status").notNull().default("pending"),
   statusHistory: text("status_history"),
   stationProgress: text("station_progress"),
   created: integer("created").notNull(),
-}, t => [index("orders_status_id").on(t.status,t.id), index("orders_created").on(t.created)]);
+}, t => [
+  index("orders_status_id").on(t.status,t.id),
+  index("orders_created").on(t.created),
+  index("orders_pending_payment_due").on(t.paymentDueAt).where(sql`${t.status}='pending' AND ${t.paymentDueAt} IS NOT NULL`),
+]);
 export const paymentAttempts = sqliteTable("payment_attempts", {
   id: integer("id").primaryKey({autoIncrement:true}),
   orderId: integer("order_id").notNull().references(()=>orders.id),

@@ -4,6 +4,27 @@ import {readFile} from "node:fs/promises";
 import {businessDate} from "../lib/business-day.mjs";
 const staff={Authorization:"Bearer local-test-kitchen"};
 
+test("mobile receipt shows the payment hold deadline and explains automatic release",async({page,request})=>{
+  const token=randomUUID(),headers={"X-Ticket":token};
+  const created=await request.post("/api/orders",{data:{token,mode:"pickup",note:"",items:[{id:"sencha",qty:1}],paymentMethod:"line_pay"}});
+  expect(created.ok()).toBe(true);
+  const order=await (await request.get("/api/ticket?progress=1",{headers})).json();
+  expect(order.paymentDueAt-order.created).toBe(15*60*1000);
+  await page.setViewportSize({width:360,height:780});
+  await page.goto("/ticket#"+token);
+  await expect(page.getByText(/付款保留至/).locator("time")).toHaveAttribute("datetime",new Date(order.paymentDueAt).toISOString());
+  await page.route("**/api/ticket?progress=1&timing=1",route=>route.fulfill({json:{
+    ...order,status:"cancelled",statusHistory:[...order.statusHistory,{status:"cancelled",at:order.paymentDueAt,actor:"payment_expiry"}],
+  }}));
+  await page.getByRole("button",{name:"更新進度"}).click();
+  await expect(page.getByText("付款保留已到期",{exact:true})).toBeVisible();
+  await expect(page.getByText(/餐點份數已釋回/)).toBeVisible();
+  await expect(page.getByRole("region",{name:"線上付款"})).toHaveCount(0);
+  await expect(page.getByRole("link",{name:"再次點餐"})).toBeVisible();
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBe(360);
+  expect((await request.post("/api/ticket/cancel",{headers,data:{}})).ok()).toBe(true);
+});
+
 test("customer cancellation releases daily portions and recovers when the reply was lost",async({page,request})=>{
   const date=businessDate(Date.now()),dish="gyoza",token=randomUUID();
   const limit="/api/kitchen/daily-limits",ticket={"X-Ticket":token};
