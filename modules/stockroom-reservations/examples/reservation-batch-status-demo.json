@@ -1,0 +1,160 @@
+{
+  "stages": [
+    {
+      "stage": "reserved",
+      "captured_at_ms": 100000,
+      "products": [
+        {
+          "sku": "KIT-01",
+          "capacity": 20,
+          "available": 16
+        },
+        {
+          "sku": "WRAP-01",
+          "capacity": 2,
+          "available": 0
+        }
+      ],
+      "batch_id": "order-24",
+      "initial_expires_at_ms": 103000,
+      "cancelled_at_ms": null,
+      "items": [
+        {
+          "quantity": 4,
+          "sku": "KIT-01",
+          "state": "held",
+          "expires_at_ms": 103000,
+          "shipped": 0,
+          "held": 4,
+          "returned": 0
+        },
+        {
+          "quantity": 2,
+          "sku": "WRAP-01",
+          "state": "held",
+          "expires_at_ms": 103000,
+          "shipped": 0,
+          "held": 2,
+          "returned": 0
+        }
+      ]
+    },
+    {
+      "stage": "adjusted",
+      "captured_at_ms": 101000,
+      "products": [
+        {
+          "sku": "KIT-01",
+          "capacity": 19,
+          "available": 16
+        },
+        {
+          "sku": "WRAP-01",
+          "capacity": 2,
+          "available": 0
+        }
+      ],
+      "batch_id": "order-24",
+      "initial_expires_at_ms": 103000,
+      "cancelled_at_ms": null,
+      "items": [
+        {
+          "quantity": 4,
+          "sku": "KIT-01",
+          "state": "held",
+          "expires_at_ms": 103000,
+          "shipped": 1,
+          "held": 3,
+          "returned": 0
+        },
+        {
+          "quantity": 2,
+          "sku": "WRAP-01",
+          "state": "held",
+          "expires_at_ms": 113000,
+          "shipped": 0,
+          "held": 2,
+          "returned": 0
+        }
+      ]
+    },
+    {
+      "stage": "expired",
+      "captured_at_ms": 103000,
+      "products": [
+        {
+          "sku": "KIT-01",
+          "capacity": 19,
+          "available": 19
+        },
+        {
+          "sku": "WRAP-01",
+          "capacity": 2,
+          "available": 0
+        }
+      ],
+      "batch_id": "order-24",
+      "initial_expires_at_ms": 103000,
+      "cancelled_at_ms": null,
+      "items": [
+        {
+          "quantity": 4,
+          "sku": "KIT-01",
+          "state": "expired",
+          "expires_at_ms": 103000,
+          "shipped": 1,
+          "held": 0,
+          "returned": 3
+        },
+        {
+          "quantity": 2,
+          "sku": "WRAP-01",
+          "state": "held",
+          "expires_at_ms": 113000,
+          "shipped": 0,
+          "held": 2,
+          "returned": 0
+        }
+      ]
+    },
+    {
+      "stage": "cancelled",
+      "captured_at_ms": 104000,
+      "products": [
+        {
+          "sku": "KIT-01",
+          "capacity": 19,
+          "available": 19
+        },
+        {
+          "sku": "WRAP-01",
+          "capacity": 2,
+          "available": 2
+        }
+      ],
+      "batch_id": "order-24",
+      "initial_expires_at_ms": 103000,
+      "cancelled_at_ms": 104000,
+      "items": [
+        {
+          "quantity": 4,
+          "sku": "KIT-01",
+          "state": "expired",
+          "expires_at_ms": 103000,
+          "shipped": 1,
+          "held": 0,
+          "returned": 3
+        },
+        {
+          "quantity": 2,
+          "sku": "WRAP-01",
+          "state": "released",
+          "expires_at_ms": 113000,
+          "shipped": 0,
+          "held": 0,
+          "returned": 2
+        }
+      ]
+    }
+  ]
+}

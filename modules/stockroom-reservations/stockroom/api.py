@@ -81,6 +81,13 @@ class Progress(Reservation):
     returned: int
 
 
+class ReservationBatchStatus(InventorySnapshot):
+    batch_id: str
+    initial_expires_at_ms: int
+    cancelled_at_ms: int | None
+    items: list[Progress]
+
+
 class Receipt(BaseModel):
     reservation_id: str
     shipment_id: str
@@ -258,6 +265,11 @@ def create_app(path: Path, *, ttl_seconds=900, clock=time.time):
     def reservation_batch_receipt(batch_id: str, response: Response):
         response.headers["Cache-Control"] = "no-store"
         return store.reservation_batch_receipt(batch_id)
+
+    @app.get("/reservation-batches/{batch_id}/status", response_model=ReservationBatchStatus)
+    def reservation_batch_status(batch_id: str, response: Response):
+        response.headers["Cache-Control"] = "no-store"
+        return store.reservation_batch_status(batch_id)
 
     @app.delete("/reservation-batches/{batch_id}", response_model=BatchCancellationReceipt)
     def cancel_batch(batch_id: str, response: Response):

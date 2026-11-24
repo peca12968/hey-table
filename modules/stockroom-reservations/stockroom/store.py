@@ -271,6 +271,29 @@ class Store:
             return receipt
 
     @staticmethod
+    def reservation_batch_members(conn, batch_id):
+        return conn.execute("""SELECT r.* FROM reservation_batch_items b
+                               JOIN reservations r ON r.id=b.reservation_id
+                               WHERE b.batch_id=? ORDER BY r.sku""", (batch_id,)).fetchall()
+
+    def reservation_batch_status(self, batch_id):
+        with self.current_inventory() as (conn, now):
+            receipt = self.reservation_batch(conn, batch_id)
+            if receipt is None:
+                raise Missing("Unknown reservation batch")
+            members = self.reservation_batch_members(conn, batch_id)
+            cancellation = conn.execute("""SELECT cancelled_at_ms FROM reservation_batch_cancellations
+                                           WHERE batch_id=? LIMIT 1""", (batch_id,)).fetchone()
+            return {
+                "batch_id": batch_id,
+                "captured_at_ms": now,
+                "initial_expires_at_ms": receipt["expires_at_ms"],
+                "cancelled_at_ms": cancellation["cancelled_at_ms"] if cancellation else None,
+                "items": [self.progress_row(row) for row in members],
+                "products": self.products_for(conn, (row["sku"] for row in members)),
+            }
+
+    @staticmethod
     def batch_cancellation(conn, batch_id):
         rows = conn.execute("""SELECT r.id, r.sku, c.cancelled_at_ms, c.quantity_released
                                FROM reservation_batch_cancellations c JOIN reservations r ON r.id=c.reservation_id
@@ -289,9 +312,7 @@ class Store:
             receipt = self.batch_cancellation(conn, batch_id)
             if receipt is not None:
                 return receipt
-            members = conn.execute("""SELECT r.* FROM reservation_batch_items b
-                                      JOIN reservations r ON r.id=b.reservation_id
-                                      WHERE b.batch_id=? ORDER BY r.sku""", (batch_id,)).fetchall()
+            members = self.reservation_batch_members(conn, batch_id)
             if not members:
                 raise Missing("Unknown reservation batch")
             for row in members:
@@ -469,6 +490,13 @@ class Store:
                 "restocked": sum(box["restocked"] for box in boxes),
                 "returnable": sum(box["returnable"] for box in boxes)}
 
+    @staticmethod
+    def products_for(conn, skus):
+        skus = sorted(set(skus))
+        placeholders = ",".join("?" for _ in skus)
+        return [dict(row) for row in conn.execute(
+            f"SELECT * FROM products WHERE sku IN ({placeholders}) ORDER BY sku", skus)]
+
     def packing_snapshot(self, keys):
         placeholders = ",".join("?" for _ in keys)
         with self.current_inventory() as (conn, now):
@@ -480,13 +508,10 @@ class Store:
             boxes = {key: [] for key in keys}
             for row in self.shipment_balances(conn, keys):
                 boxes[row["reservation_id"]].append(row)
-            skus = sorted({row["sku"] for row in reservations.values()})
-            products = conn.execute(
-                "SELECT * FROM products WHERE sku IN (" + ",".join("?" for _ in skus) + ") ORDER BY sku", skus)
             return {
                 "captured_at_ms": now,
                 "holds": [self.packing_row(reservations[key], boxes[key]) for key in keys],
-                "products": [dict(row) for row in products],
+                "products": self.products_for(conn, (row["sku"] for row in reservations.values())),
             }
 
     def shipment(self, key, shipment_id):

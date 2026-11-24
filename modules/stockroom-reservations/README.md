@@ -20,6 +20,7 @@ python -m uvicorn stockroom.api:app
 | POST /reservations | 傳入 sku、quantity 及 Idempotency-Key 標頭。相同鍵與內容可取得目前保留狀態 |
 | POST /reservation-batches | 以一個批號一次保留多種商品。所有品項共同提交 |
 | GET /reservation-batches/{batch_id} | 依批號查回首次建立時的品項保留編號和原始期限 |
+| GET /reservation-batches/{batch_id}/status | 依批號取得各品項的即時保留進度與同一時點的庫存 |
 | DELETE /reservation-batches/{batch_id} | 一次放回該批所有尚在保留的數量 |
 | GET /reservation-batches/{batch_id}/cancellation | 依批號查回取消時間與各品項放回數量 |
 | DELETE /reservations/{key} | 釋放保留。重複取消只會歸還一次 |
@@ -50,7 +51,13 @@ python -m uvicorn stockroom.api:app
 
 若包材只剩一件，整批回傳 409，套件依然有 20 件可用。補貨後可沿用原批號，成功回傳 201，兩種商品同時保留。遇到連線中斷時，可用 `GET /reservation-batches/order-24` 取回收據，或以任意品項順序重送取得 200。已成功的批號改用不同的品項或數量會回傳 409。
 
-收據中的商品保留編號可直接交給出貨快照，也可分別續期或放回。收據保留首次共用的到期時間，現況可按各保留編號查詢。執行 `python -m pytest -q tests/test_reservation_batches.py` 可重跑補貨後重試、兩台服務爭用最後一批存貨、續期與舊資料庫相容的案例。[作品站示範結果](examples/reservation-batch-demo.json)
+收據中的商品保留編號可直接交給出貨快照，也可分別續期或放回。執行 `python -m pytest -q tests/test_reservation_batches.py` 可重跑補貨後重試、兩台服務爭用最後一批存貨、續期與舊資料庫相容的案例。[作品站示範結果](examples/reservation-batch-demo.json)
+
+### 重新開啟批次，確認各品項的保留狀態
+
+用 `GET /reservation-batches/order-24/status` 查詢。服務取得 SQLite 寫入鎖後，以 `captured_at_ms` 結算到期，並在同一筆交易讀取各單品及對應 SKU 的實體與可用庫存。各品項依 SKU 排序，包含最新期限與已出貨、尚在保留及已釋回件數。`initial_expires_at_ms` 是首次保留時的共同期限。`cancelled_at_ms` 只有在整批取消成功後才有值。查無批號回傳 404，成功的快照禁止快取。
+
+執行 `python batch_status_demo.py` 可使用暫存資料庫產生四個實際 HTTP 快照。套件先寄出一件，包材續期十秒。到原期限時，套件尚未寄出的三件釋回，包材仍保留兩件。整批取消後，包材也放回庫存。並行測試另讓兩台服務在查詢中途競爭寫入鎖，核對取消前後的保留與可用量。[快照範例](examples/reservation-batch-status-demo.json) · [API 測試](tests/test_reservation_batches.py)
 
 ### 部分出貨後取消整批
 

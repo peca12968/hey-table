@@ -3,12 +3,13 @@ from contextlib import closing
 import json
 from pathlib import Path
 import sqlite3
-from threading import Barrier
+from threading import Barrier, Event
 from uuid import uuid4
 
 import pytest
 from fastapi.testclient import TestClient
 
+from batch_status_demo import capture
 from stockroom.api import create_app
 from stockroom.store import Store
 
@@ -107,12 +108,18 @@ def test_receipt_survives_renewal_expiry_and_restart_and_member_ids_work_with_pa
         assert fetched.headers["Cache-Control"] == "no-store"
         replay = reserve(api, "batch", items[::-1])
         assert (replay.status_code, replay.json()) == (200, receipt)
+        status = api.get(ENDPOINT + "/batch/status")
+        assert status.status_code == 200
+        assert status.headers["Cache-Control"] == "no-store"
         report = api.post("/packing-snapshots", json={"reservation_ids": [kit, wrap]})
         assert report.status_code == 200
         rows = [row["reservation"] for row in report.json()["holds"]]
         assert [(row["state"], row["held"], row["expires_at_ms"]) for row in rows] == [
             ("expired", 0, 103_000), ("held", 2, 113_000),
         ]
+        assert status.json() == {"batch_id": "batch", "captured_at_ms": 103_000,
+                                 "initial_expires_at_ms": 103_000, "cancelled_at_ms": None,
+                                 "items": rows, "products": report.json()["products"]}
         assert inventory(api) == [{"sku": "KIT-01", "available": 20}, {"sku": "WRAP-01", "available": 0}]
 
 
@@ -186,6 +193,12 @@ def test_cancellation_survives_restart_and_handles_an_older_batch_with_expired_i
     with TestClient(create_app(db, clock=lambda: 200)) as api:
         assert api.get(path).json() == receipt
         assert api.get(path + "/cancellation").json() == api.delete(path).json() == cancelled
+        status = api.get(path + "/status").json()
+        assert status["cancelled_at_ms"] == cancelled["cancelled_at_ms"]
+        assert [(row["id"], row["state"], row["returned"]) for row in status["items"]] == [
+            (kit, "expired", 4), (wrap, "released", 2),
+        ]
+        assert api.get(ENDPOINT + "/missing/status").status_code == 404
         assert inventory(api) == [{"sku": "KIT-01", "available": 20}, {"sku": "WRAP-01", "available": 2}]
 
 
@@ -240,3 +253,60 @@ def test_concurrent_dispatch_and_cancellation_have_a_single_consistent_outcome(t
         progress = left.get(f"/reservations/{kit}").json()
         assert (progress["shipped"], progress["held"]) == (shipped, 0)
         assert left.get("/inventory").json()[0] == {"sku": "KIT-01", "capacity": 20 - shipped, "available": 20 - shipped}
+
+
+def test_batch_status_never_spans_concurrent_cancellation(tmp_path, monkeypatch):
+    db = tmp_path / "status-race.db"
+    reading, writing, proceed = Event(), Event(), Event()
+    products_for, connect = Store.products_for, Store.connect
+
+    def writer_clock():
+        return 102
+
+    def connect_and_trace(store):
+        conn = connect(store)
+        if store.clock is writer_clock:
+            conn.set_trace_callback(lambda query: writing.set() if query == "BEGIN IMMEDIATE" else None)
+        return conn
+
+    def pause_before_products(conn, skus):
+        reading.set()
+        assert proceed.wait(10)
+        return products_for(conn, skus)
+
+    monkeypatch.setattr(Store, "connect", connect_and_trace)
+    monkeypatch.setattr(Store, "products_for", staticmethod(pause_before_products))
+    with TestClient(create_app(db, clock=lambda: 100)) as reader, TestClient(create_app(db, clock=writer_clock)) as writer:
+        writing.clear()
+        add_wrapping(db, 2)
+        items = [{"sku": "KIT-01", "quantity": 4}, {"sku": "WRAP-01", "quantity": 2}]
+        assert reserve(reader, "order", items).status_code == 201
+        path = ENDPOINT + "/order"
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            capture_before = pool.submit(reader.get, path + "/status")
+            try:
+                assert reading.wait(5)
+                cancel = pool.submit(writer.delete, path)
+                assert writing.wait(5)
+                assert not cancel.done()
+            finally:
+                proceed.set()
+            before = capture_before.result(timeout=10).raise_for_status().json()
+            assert cancel.result(timeout=10).status_code == 200
+        after = writer.get(path + "/status").raise_for_status().json()
+    assert (before["captured_at_ms"], before["cancelled_at_ms"]) == (100_000, None)
+    assert (after["captured_at_ms"], after["cancelled_at_ms"]) == (102_000, 102_000)
+    assert [row["held"] for row in before["items"]] == [4, 2]
+    assert [row["held"] for row in after["items"]] == [0, 0]
+    assert [row["available"] for row in before["products"]] == [16, 0]
+    assert [row["available"] for row in after["products"]] == [20, 2]
+
+
+def test_batch_status_demo_uses_current_http_snapshots(tmp_path):
+    expected = json.loads((ROOT / "examples/reservation-batch-status-demo.json").read_bytes())
+    result = capture(tmp_path / "demo.db")
+    assert result == expected
+    assert [[row["state"] for row in step["items"]] for step in result["stages"]] == [
+        ["held", "held"], ["held", "held"], ["expired", "held"], ["expired", "released"],
+    ]
+    assert [step["products"][0]["available"] for step in result["stages"]] == [16, 16, 19, 19]

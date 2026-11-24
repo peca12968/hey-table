@@ -1,0 +1,53 @@
+"""Export staged HTTP snapshots from a disposable Stockroom database."""
+from contextlib import closing
+import json
+from pathlib import Path
+import sqlite3
+from tempfile import TemporaryDirectory
+
+from fastapi.testclient import TestClient
+
+from stockroom.api import create_app
+
+
+def capture(db):
+    now = 100
+    batch_path = "/reservation-batches/order-24"
+    items = [{"sku": "KIT-01", "quantity": 4}, {"sku": "WRAP-01", "quantity": 2}]
+    stages = []
+
+    with TestClient(create_app(db, ttl_seconds=3, clock=lambda: now)) as api:
+        with closing(sqlite3.connect(db)) as conn, conn:
+            conn.execute("INSERT INTO products VALUES ('WRAP-01', 2, 2)")
+
+        def record(stage):
+            result = api.get(f"{batch_path}/status").raise_for_status().json()
+            for item in result["items"]:
+                del item["id"]
+            stages.append({"stage": stage, **result})
+
+        receipt = api.post("/reservation-batches", headers={"Idempotency-Key": "order-24"},
+                           json={"items": items}).raise_for_status().json()
+        record("reserved")
+
+        now = 101
+        kit, wrap = [f"/reservations/{item['id']}" for item in receipt["items"]]
+        api.post(f"{kit}/fulfillments", headers={"Idempotency-Key": "box"},
+                 json={"quantity": 1}).raise_for_status()
+        api.post(f"{wrap}/renewals", headers={"Idempotency-Key": "more-time"},
+                 json={"expected_expires_at_ms": receipt["expires_at_ms"], "extend_seconds": 10}).raise_for_status()
+        record("adjusted")
+
+        now = 103
+        record("expired")
+
+        now = 104
+        api.delete(batch_path).raise_for_status()
+        record("cancelled")
+
+    return {"stages": stages}
+
+
+if __name__ == "__main__":
+    with TemporaryDirectory() as folder:
+        print(json.dumps(capture(Path(folder) / "demo.db"), indent=2))
