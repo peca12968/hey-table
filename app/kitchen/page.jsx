@@ -14,6 +14,7 @@ const action={preparing:"接單製作",ready:"完成製作",completed:"完成交
 function KitchenTicket({order,busy,update,handoffOnly=false}){
   const {id,status,table,created,items,note,paymentMethod,paymentEnv,paymentState,total}=order;
   const actions=handoffOnly ? transitions[status].filter(next=>next==="completed") : transitions[status];
+  const workingByStation=order.stationProgress&&status==="preparing";
   return <article className="sheet kitchenTicket">
     <div className="menuTitle"><h2>#{numberOf(id)}</h2><Mode table={table}/></div>
     <p aria-live={handoffOnly?"polite":undefined}><b>{labels[status]}</b> · {new Date(created).toLocaleTimeString("zh-TW",{hour:"2-digit",minute:"2-digit",timeZone:"Asia/Taipei"})}</p>
@@ -23,8 +24,9 @@ function KitchenTicket({order,busy,update,handoffOnly=false}){
     <div className="total"><span>合計</span><b>NT$ {total}</b></div>
     <div className="actions">
       {["ready","completed"].includes(status)&&<a className="outline" href={"/kitchen/handoff?id="+numberOf(id)}>交餐小票</a>}
+      {workingByStation&&<a className="primary" href="/kitchen/station-work">查看分站進度</a>}
       {!handoffOnly&&["sandbox","production"].includes(paymentEnv)&&<button className="outline" disabled={busy} onClick={()=>update("payment",{id})}>查詢金流</button>}
-      {actions.map(next=><button disabled={busy||(next==="cancelled"?!canCancel(order):!canPrepare(order))} className={next==="cancelled"?"outline":"primary"} key={next}
+      {!workingByStation&&actions.map(next=><button disabled={busy||(next==="cancelled"?!canCancel(order):!canPrepare(order))} className={next==="cancelled"?"outline":"primary"} key={next}
         onClick={()=>{if(next!=="cancelled"||window.confirm("取消這張訂單？"))update("status",{id,from:status,to:next});}}>{action[next]}</button>)}
     </div>
   </article>;
@@ -117,6 +119,7 @@ export default function Kitchen(){
     content=<>
     <div className="actions"><a className="outline" href="/kitchen/prep">查看備料單</a>
       <a className="outline" href="/kitchen/daily">每日訂單摘要</a>
+      <a className="outline" href="/kitchen/station-work">分站看板</a>
       <button className="outline" disabled={exporting} onClick={exportStations}>{exporting?"正在擷取訂單…":"下載分站出單檔"}</button></div>
     {exportMessage&&<p role="status">{exportMessage}</p>}
     <Intake key={"intake-"+key} staffKey={key}/>

@@ -13,7 +13,8 @@ import {latestState,payableForKitchen,paymentApi,checkKitchenPayment} from "./pa
 import {settings} from "./tappay.mjs";
 import {methods} from "../lib/payments.mjs";
 import {estimate} from "@peca12968/pickup-window";
-import {activeKitchen,demoKitchen,importTiming,timingChanges} from "../lib/kitchen-timing.mjs";
+import {activeKitchen,demoKitchen,importTiming,stationLabels,timingChanges} from "../lib/kitchen-timing.mjs";
+import {finishStation,remainingStationItems,stationQueue} from "./station-work.mjs";
 const timingRows = "SELECT revision,config FROM kitchen_timing ORDER BY revision DESC";
 const fromTimingRow = row => ({revision:row?.revision??0, kitchen:activeKitchen(row ? JSON.parse(row.config) : null)});
 const selectOrders = "SELECT orders.*, "+latestState+" AS payment_state FROM orders";
@@ -52,7 +53,7 @@ function statusHistory(row) {
 }
 function kitchenSchedule(rows, timing, cart) {
   const capturedAt = Date.now();
-  const orders = rows.map(row => ({...row,items:JSON.parse(row.items)}));
+  const orders = rows.map(({id,created,status,...row}) => ({id,created,status,items:remainingStationItems(row)}));
   const snapshot = {format:"hey-table.station-orders.v1",capturedAt,throughId:orders[0]?.id??0,orders};
   const {kitchen}=fromTimingRow(timing);
   const plan=estimate(snapshot,kitchen,cart);
@@ -176,7 +177,7 @@ export async function api(request, env) {
     if (!items) return fail("請確認餐點與數量");
     const [stock, queue, timing] = await db.batch([
       db.prepare("SELECT dish FROM unavailable"),
-      db.prepare("SELECT id,created,items,status FROM orders WHERE status='preparing' ORDER BY id DESC"),
+      db.prepare("SELECT id,created,items,status,station_progress FROM orders WHERE status='preparing' ORDER BY id DESC"),
       db.prepare(timingRows+" LIMIT 1")
     ]);
     if (stock.results.some(row => items.some(item => item.id === row.dish)))
@@ -232,7 +233,7 @@ export async function api(request, env) {
     if(withTiming){
       const [saved,active,settings]=await db.batch([
         lookup,
-        db.prepare(`SELECT queued.id,queued.created,queued.items,queued.status
+        db.prepare(`SELECT queued.id,queued.created,queued.items,queued.status,queued.station_progress
           FROM orders AS ticket JOIN orders AS queued
           ON queued.status='preparing' AND
           (queued.created<ticket.created OR (queued.created=ticket.created AND queued.id<=ticket.id))
@@ -259,6 +260,19 @@ export async function api(request, env) {
       ...row, items: JSON.parse(row.items).map(({id, qty}) => ({id, qty}))
     }));
     return json({capturedAt: Date.now(), orders});
+  }
+  if(path==="/api/kitchen/station-work"&&method==="GET"){
+    const station=url.searchParams.get("station");
+    if(!Object.hasOwn(stationLabels,station))return fail("請選擇有效的工作站");
+    return json({station,orders:await stationQueue(db,station)});
+  }
+  if(path==="/api/kitchen/station-work"&&method==="PATCH"){
+    const {id,station}=input;
+    if(!Number.isSafeInteger(id)||id<1||typeof station!=="string"||!Object.hasOwn(stationLabels,station))
+      return fail("分站回報格式無效");
+    const result=await finishStation(db,id,station);
+    if(!result)return fail("找不到餐單",404);
+    return result.doneAt!==null ? json(result) : fail("目前無法回報這張分站餐單，請更新看板。",409);
   }
   if (path === "/api/kitchen/daily" && method === "GET") {
     const dates = url.searchParams.getAll("date");
@@ -333,17 +347,18 @@ export async function api(request, env) {
           id,created,mode,table,note,status,items:items.map(({id,name,qty}) => ({id,name,qty}))
         }))});
     }
-    return json(orders);
+    return json(orders.map((order,index)=>results[index].station_progress?{...order,stationProgress:true}:order));
   }
   if (path === "/api/kitchen/status" && method === "PATCH") {
     if (!Number.isSafeInteger(input.id) || !Object.hasOwn(transitions,input.from) ||
         !transitions[input.from].includes(input.to)) return fail("無效的訂單狀態轉換");
+    const readyGuard=input.to==="ready"?" AND station_progress IS NULL":"";
     const {meta} = await db.prepare(`UPDATE orders SET status=?,
       status_history=json_insert(COALESCE(status_history,'[]'),'$[#]',json_object('from',status,'status',?,'at',?))
       WHERE id=? AND status=? AND `+(input.to==="cancelled" ?
-      "(payment_method='cash' OR COALESCE("+latestState+",'unpaid') IN ('unpaid','failed','cancelled','refunded'))" : payableForKitchen))
+      "(payment_method='cash' OR COALESCE("+latestState+",'unpaid') IN ('unpaid','failed','cancelled','refunded'))" : payableForKitchen)+readyGuard)
       .bind(input.to,input.to,Date.now(),input.id,input.from).run();
-    return meta.changes ? json({ok:true}) : fail("訂單已更新，請重新整理",409);
+    return meta.changes ? json({ok:true}) : fail(input.to==="ready"?"訂單已更新，請重新整理或開啟分站看板":"訂單已更新，請重新整理",409);
   }
   if (path === "/api/kitchen/availability" && method === "PATCH") {
     if (!dishes.some(d=>d.id===input.id) || typeof input.available !== "boolean") return fail("餐點狀態錯誤");

@@ -137,6 +137,8 @@ Stockroom 支援在一筆交易內保留多個 SKU。若其中一項缺貨，該
 
 店員若要按工作站出單，可到接單台按「下載分站出單檔」。下載會重新擷取完整接單清單，涵蓋處理中的訂單和最近 20 張結單。檔案包含分站製作所需的桌號、品名、份數、備註與狀態，可交給 Pass Rail 匯入；只有製作中的訂單會建立分站單。接單台目前顯示的頁籤不影響匯出範圍。[Pass Rail 操作範例](modules/pass-rail/README.md)
 
+店員也可在「分站看板」選熱台、冷台或飲品台，查看本站餐點。歷史菜單中缺少分站設定的品項會列在「其他餐點」。各站按「本站已備妥」後，最後一站會在同一個資料庫交易將餐單切為「可取餐」。第一次回報會保存該單的分站，重試沿用原回報時間。開始分站回報後，請在看板完成其餘工作站。購物車與收據的出餐估算會扣除已備妥的品項。[分站看板與並行回報測試](qa/ordering.spec.mjs)
+
 從店家接單台選「查看備料單」，可分欄查看待接單與製作中的份數，列印當下的需求，或下載同一批訂單的 JSON。取消、可取餐與已完成的訂單均排除。按「重新擷取」才會更新畫面與下載內容。需要核對食材時，將下載檔交給 [Prep Sheet](modules/prep-sheet/README.md)，搭配食譜和現有備料量換算要煮幾鍋、要補幾包。下載檔只含訂單編號、時間、狀態、品項代碼與份數。
 
 ## 技術與一致性
@@ -161,6 +163,7 @@ node --import ./scripts/sites-env.mjs ./node_modules/wrangler/bin/wrangler.js d1
 node --import ./scripts/sites-env.mjs ./node_modules/wrangler/bin/wrangler.js d1 execute DB --local --config dist/server/wrangler.json --persist-to .wrangler/state --file drizzle/0006_table_intake.sql
 node --import ./scripts/sites-env.mjs ./node_modules/wrangler/bin/wrangler.js d1 execute DB --local --config dist/server/wrangler.json --persist-to .wrangler/state --file drizzle/0007_receipt_progress.sql
 node --import ./scripts/sites-env.mjs ./node_modules/wrangler/bin/wrangler.js d1 execute DB --local --config dist/server/wrangler.json --persist-to .wrangler/state --file drizzle/0008_order_created_index.sql
+node --import ./scripts/sites-env.mjs ./node_modules/wrangler/bin/wrangler.js d1 execute DB --local --config dist/server/wrangler.json --persist-to .wrangler/state --file drizzle/0009_station_progress.sql
 npm start
 ```
 

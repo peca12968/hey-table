@@ -1,0 +1,1 @@
+ALTER TABLE `orders` ADD `station_progress` text;

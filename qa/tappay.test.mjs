@@ -223,6 +223,37 @@ test("daily operations uses Taipei midnight and aggregates completed purchase sn
   assert.equal(next.channels.table.completedTotal,999);
   assert.equal(next.channels.pickup.orders,0);
 });
+test("receipt timing drops completed station work and legacy items still reach the board",async t=>{
+  const db=database();
+  t.after(()=>db.sqlite.close());
+  const token=crypto.randomUUID();
+  const items=[{id:"katsudon",name:"滑蛋豬排丼",qty:1,price:190},{id:"sencha",name:"日式熱煎茶",qty:2,price:45}];
+  const insert=db.sqlite.prepare(`INSERT INTO orders
+    (token,mode,note,items,total,created,status) VALUES (?,'pickup','',?,280,?,'preparing')`);
+  const {lastInsertRowid:id}=insert.run(token,JSON.stringify(items),Date.now()-1000);
+  const runtime={DB:db,STAFF_KEY:"local-test-key"};
+  const cook=async(order,station)=>api(new Request("https://order.example/api/kitchen/station-work",{
+    method:"PATCH",headers:{Authorization:"Bearer local-test-key","Content-Type":"application/json"},
+    body:JSON.stringify({id:order,station}),
+  }),runtime);
+  const read=async()=>api(new Request("https://order.example/api/ticket?timing=1",{
+    headers:{"X-Ticket":token},
+  }),runtime).then(response=>response.json());
+  assert.deepEqual((await read()).kitchenQuote.seconds,[300,420]);
+  assert.equal((await cook(id,"hot")).status,200);
+  assert.deepEqual((await read()).kitchenQuote.seconds,[60,90]);
+  assert.equal((await cook(id,"bar")).status,200);
+  assert.equal((await read()).status,"ready");
+  assert.equal((await read()).kitchenQuote,undefined);
+
+  const {lastInsertRowid:older}=insert.run(crypto.randomUUID(),JSON.stringify([{id:"old-tofu",name:"舊菜單豆腐",qty:1,price:60}]),1);
+  const board=await api(new Request("https://order.example/api/kitchen/station-work?station=other",{
+    headers:{Authorization:"Bearer local-test-key"},
+  }),runtime);
+  assert.deepEqual((await board.json()).orders,[{id:older,table:null,note:"",created:1,
+    items:[{id:"old-tofu",name:"舊菜單豆腐",qty:1}],doneAt:null,doneStations:0,stations:1}]);
+  assert.equal((await (await cook(older,"other")).json()).status,"ready");
+});
 for(const method of ["line_pay","px_pay_plus"]){
   test(method+" resolves a lost charge reply with the original bank reference",async t=>{
     const db=database();

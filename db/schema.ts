@@ -14,6 +14,7 @@ export const orders = sqliteTable("orders", {
   total: integer("total").notNull(),
   status: text("status").notNull().default("pending"),
   statusHistory: text("status_history"),
+  stationProgress: text("station_progress"),
   created: integer("created").notNull(),
 }, t => [index("orders_status_id").on(t.status,t.id), index("orders_created").on(t.created)]);
 export const paymentAttempts = sqliteTable("payment_attempts", {

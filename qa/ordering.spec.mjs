@@ -8,6 +8,57 @@ import jsQR from "jsqr";
 import {PNG} from "pngjs";
 import {businessDate} from "../lib/business-day.mjs";
 
+test("station boards finish only their items and the last of two concurrent reports marks the order ready once",async({page,request})=>{
+  const headers={Authorization:"Bearer local-test-kitchen"};
+  const token=randomUUID();
+  const url="/api/kitchen/station-work";
+  const created=await request.post("/api/orders",{data:{token,mode:"table",table:"A03",note:"分站核對備註",
+    items:[{id:"katsudon",qty:1},{id:"edamame",qty:1},{id:"sencha",qty:2}]}});
+  expect(created.ok()).toBe(true);
+  const {id}=await created.json();
+  const number=String(id).padStart(4,"0");
+  const finish=station=>request.patch(url,{headers,data:{id,station}});
+  const move=(from,to)=>request.patch("/api/kitchen/status",{headers,data:{id,from,to}});
+  const ticket=async()=>(await request.get("/api/ticket?progress=1",{headers:{"X-Ticket":token}})).json();
+  expect((await request.get(url+"?station=hot")).status()).toBe(403);
+  expect((await request.patch(url,{data:{id,station:"hot"}})).status()).toBe(403);
+  expect((await finish("unsupported")).status()).toBe(400);
+  expect((await finish("hot")).status()).toBe(409);
+  expect((await move("pending","preparing")).ok()).toBe(true);
+  expect((await finish("other")).status()).toBe(409);
+  await page.setViewportSize({width:360,height:780});
+  await page.addInitScript(()=>sessionStorage.setItem("he-ri-staff","local-test-kitchen"));
+  await page.goto("/kitchen");
+  await page.getByRole("link",{name:"分站看板"}).click();
+  const card=page.locator(".kitchenTicket").filter({has:page.getByRole("heading",{name:"#"+number,exact:true})});
+  await expect(card.getByText("滑蛋豬排丼")).toBeVisible();
+  await expect(card.getByText("日式熱煎茶")).toHaveCount(0);
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBe(360);
+  await card.getByRole("button",{name:"本站已備妥"}).click();
+  await expect(card.getByText("本站已備妥，等待其他工作站。")).toBeVisible();
+  expect((await ticket()).status).toBe("preparing");
+  const retry=await (await finish("hot")).json();
+  expect(retry.status).toBe("preparing");
+  expect(retry.doneAt).toEqual(expect.any(Number));
+  expect((await move("preparing","ready")).status()).toBe(409);
+  await page.getByRole("button",{name:"飲品台",exact:true}).click();
+  await expect(card.getByText("日式熱煎茶")).toBeVisible();
+  await expect(card.getByText("滑蛋豬排丼")).toHaveCount(0);
+  await expect(card.getByText("已備妥 1／3 站")).toBeVisible();
+
+  const responses=await Promise.all([finish("cold"),finish("bar")]);
+  expect(responses.every(response=>response.ok())).toBe(true);
+  expect((await Promise.all(responses.map(response=>response.json()))).map(result=>result.status).sort())
+    .toEqual(["preparing","ready"]);
+  await page.getByRole("button",{name:"更新看板"}).click();
+  await expect(card).toHaveCount(0);
+  const done=await ticket();
+  expect(done.status).toBe("ready");
+  expect(done.statusHistory.filter(step=>step.status==="ready")).toHaveLength(1);
+  expect(await (await finish("hot")).json()).toEqual({status:"ready",doneAt:retry.doneAt});
+  expect((await move("ready","completed")).ok()).toBe(true);
+});
+
 test("staff can view a Taiwan-date summary and download the displayed snapshot on mobile",async({page,request})=>{
   await page.setViewportSize({width:360,height:780});
   await page.goto("/kitchen/daily");
