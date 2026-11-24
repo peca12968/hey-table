@@ -1,6 +1,6 @@
 import {test,expect} from "@playwright/test";
 import {randomUUID} from "node:crypto";
-import {execFileSync} from "node:child_process";
+import {execFileSync,spawnSync} from "node:child_process";
 import {readFile} from "node:fs/promises";
 import {join} from "node:path";
 import {fileURLToPath} from "node:url";
@@ -177,6 +177,8 @@ test("printable kitchen snapshot exports the displayed orders to Prep Sheet",asy
   await page.addInitScript(()=>sessionStorage.setItem("he-ri-staff","local-test-kitchen"));
   await page.goto("/kitchen");
   await page.getByRole("link",{name:"查看備料單"}).click();
+  await expect(page.getByRole("link",{name:"備料與採購試算說明"})).toHaveAttribute(
+    "href","https://github.com/peca12968/hey-table/blob/main/modules/prep-sheet/README.md#從訂單匯出試算採購");
   const row=page.getByRole("row",{name:/鹽味毛豆/});
   await expect(row.getByRole("cell")).toHaveText(["4","2"]);
   await change(pending,"pending","cancelled");
@@ -196,11 +198,15 @@ test("printable kitchen snapshot exports the displayed orders to Prep Sheet",asy
   }
   {
     const root=process.env.PREP_PROJECT||fileURLToPath(new URL("../modules/prep-sheet/",import.meta.url));
-    const plan=JSON.parse(execFileSync("python",[join(root,"prep.py"),"--orders",path,
-      "--recipes",join(root,"examples","recipes.json"),"--stock",join(root,"examples","stock.json")],
-      {encoding:"utf8",env:{...process.env,PYTHONUTF8:"1"}}));
-    expect(plan.included_orders).toEqual(data.filter(order=>order.status==="pending").map(order=>order.id));
-    expect(plan.portions.find(line=>line.dish==="edamame").quantity).toBe(4);
+    const result=spawnSync("python",[join(root,"lunch.py"),"--orders",path,
+      "--recipes",join(root,"examples","recipes.json"),"--stock",join(root,"examples","stock.json"),
+      "--suppliers",join(root,"..","pantry-freight","examples","suppliers.json")],
+      {encoding:"utf8",env:{...process.env,PYTHONUTF8:"1"}});
+    expect(result.status,result.stderr).toBe(3);
+    const {prep,purchase}=JSON.parse(result.stdout);
+    expect(prep.included_orders).toEqual(data.filter(order=>order.status==="pending").map(order=>order.id));
+    expect(prep.portions.find(line=>line.dish==="edamame").quantity).toBe(4);
+    expect(purchase.shortages).toContainEqual({component:"beans",unit:"g",required:400,offered:0,uncovered:400});
   }
   await page.getByRole("button",{name:"重新擷取"}).click();
   await expect(row.getByRole("cell")).toHaveText(["0","2"]);

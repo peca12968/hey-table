@@ -1,4 +1,4 @@
-"""Exercise both public CLIs against a temporary kitchen ledger."""
+"""Exercise procurement and receiving against a temporary kitchen ledger."""
 import json
 import os
 from pathlib import Path
@@ -22,16 +22,14 @@ def demo(freight):
         temp = Path(folder)
         db = temp / "kitchen.db"
         options = ["--db", db, "--recipes", recipes]
-        plan = temp / "plan.json"
         order = temp / "order.json"
         slip = temp / "slip.json"
-        procure = [freight / "purchase.py", plan, freight / "examples/suppliers.json"]
-        prepare = [ROOT / "prep.py", "--orders", examples / "orders.json", "--recipes", recipes, "--ledger", db]
+        procure = [ROOT / "lunch.py", "--orders", examples / "orders.json", "--recipes", recipes,
+                   "--ledger", db, "--suppliers", freight / "examples/suppliers.json"]
         receiving = [ROOT / "receiving.py", *options]
         run(ROOT / "ledger.py", "--db", db, "init")
         run(ROOT / "ledger.py", *options, "receive", "opening", examples / "stock.json")
-        plan.write_text(json.dumps(run(*prepare)), encoding="utf-8")
-        basket = run(*procure)
+        basket = run(*procure, "--purchase-only")
         order.write_text(json.dumps(basket), encoding="utf-8")
         opened = run(*receiving, "open", "LUNCH", order)
         slip.write_text(json.dumps({"market-soy": 1}), encoding="utf-8")
@@ -42,7 +40,6 @@ def demo(freight):
         slip.write_text(json.dumps(rest), encoding="utf-8")
         second = run(*receiving, "accept", "LUNCH", "market", "PM", slip)
         closed = run(*receiving, "status", "LUNCH")
-        plan.write_text(json.dumps(run(*prepare)), encoding="utf-8")
         after = run(*procure)
         if (opened["remaining_packs"], partial["remaining_packs"], closed["remaining_packs"]) != (7, 6, 0):
             raise ValueError("Expected seven packs, received in two deliveries")
@@ -50,7 +47,7 @@ def demo(freight):
             raise ValueError("Unexpected receipt or final order status")
         deltas = {k: v["delta"] for k, v in second["movements"].items()}
         deltas["soy"] += first["movements"]["soy"]["delta"]
-        if deltas != basket["quantities"] or after["orders"] or after["total_twd"] != 0:
+        if deltas != basket["quantities"] or after["purchase"]["orders"] or after["purchase"]["total_twd"] != 0:
             raise ValueError("Stock ledger did not reconcile with purchased quantities")
         return {"ordered": 7, "first_delivery": 1, "second_delivery": 6, "next_total_twd": 0}
 

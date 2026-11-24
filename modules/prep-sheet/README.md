@@ -56,6 +56,16 @@ node kitchen-demo.mjs ../..
 同一演練也會讀取備料頁所用的訂單匯出 API，在本機帳本實際入庫、煮飯、領料，核對三張收據與剩餘的 40 g 白飯。另一組測試讓八個獨立 SQLite 連線競領最後一份煎茶，只有一張單成功。程式另針對 120 組庫存與相依配方，枚舉可行的批數範圍，獨立核對每項原料及半成品的最少批數。這些數字來自示範配方與合成訂單。專案以 AI 輔助開發。[批數演算法](prep.py) · [領料競爭測試](test_ledger.py) · [跨專案演練](kitchen-demo.mjs)
 
 
+## 從訂單匯出試算採購
+
+從店家接單台開啟備料單，再下載訂單 JSON。在 `modules/prep-sheet` 執行以下指令，將 `examples/orders.json` 換成下載的檔案，並提供符合實際菜單的食譜與供應商資料。
+
+```sh
+python lunch.py --orders examples/orders.json --recipes examples/recipes.json --stock examples/stock.json --suppliers ../pantry-freight/examples/suppliers.json
+```
+
+範例輸出 `prep` 的備料批數與 `purchase` 的供應商包數、運費及總額，共 7 包、165 元。使用庫存帳時，可將 `--stock examples/stock.json` 換成 `--ledger kitchen.db`，試算會讀取帳上結餘並跳過已領料的訂單。指令只讀取資料。加上 `--purchase-only` 並將輸出存為 `purchase-report.json`，即可接續下方的開單與驗收。供應不足時會輸出缺口並以狀態碼 `3` 結束，輸入錯誤則回傳 `2`。
+
 ## 核對採購單與分批到貨
 
 例如午餐採購單列了兩包醬油，每包 25 ml。上午先到一包，驗收後帳上增加 25 ml，下午仍可查到另一包待收。初次開單時會在既有的庫存帳加上採購單明細，保留原有收據與餘額。

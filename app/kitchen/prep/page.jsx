@@ -60,6 +60,6 @@ export default function Prep() {
         <button className="primary" onClick={() => downloadJson("hey-table-prep-",snapshot.capturedAt,snapshot.orders)}>下載訂單 JSON</button>
       </>}
     </div>
-    <p className="prepControl"><a className="textLink" href="https://github.com/peca12968/prep-sheet">用 Prep Sheet 換算食材與批數</a></p>
+    <p className="prepControl"><a className="textLink" href="https://github.com/peca12968/hey-table/blob/main/modules/prep-sheet/README.md#從訂單匯出試算採購">備料與採購試算說明</a></p>
   </main><Footer/></>;
 }
