@@ -223,6 +223,54 @@ test("daily operations uses Taipei midnight and aggregates completed purchase sn
   assert.equal(next.channels.table.completedTotal,999);
   assert.equal(next.channels.pickup.orders,0);
 });
+test("daily timings use visible samples and keep cross-midnight orders on their creation date",async t=>{
+  const db=database();
+  t.after(()=>db.sqlite.close());
+  const start=Date.parse("2026-11-22T16:00:00Z"),end=start+86400000;
+  const insert=db.sqlite.prepare(`INSERT INTO orders
+    (token,mode,table_no,note,items,total,created,status,status_history) VALUES (?,?,?,?,?,0,?,?,?)`);
+  const transition=(from,status,at)=>({from,status,at});
+  function add(mode,created,status,transitions){
+    insert.run(crypto.randomUUID(),mode,mode==="table"?"A03":null,"避免匯出這段備註","[]",created,status,
+      transitions===null?null:JSON.stringify(transitions));
+  }
+  function durations(mode,created,preparation,wait){
+    const accepted=created+5000,ready=accepted+preparation;
+    add(mode,created,wait===null?"ready":"completed",[
+      transition("pending","preparing",accepted),transition("preparing","ready",ready),
+      ...(wait===null?[]:[transition("ready","completed",ready+wait)]),
+    ]);
+  }
+  durations("pickup",start,60000,30000);
+  durations("pickup",start+1,120000,60000);
+  durations("pickup",start+2,300000,null);
+  add("pickup",start+3,"completed",null);
+  add("pickup",start+4,"ready",[
+    "malformed legacy event",
+    transition("pending","preparing",start+10000),transition("preparing","ready",start+5000),
+  ]);
+  durations("table",start+5,30000,null);
+  durations("table",end-1,90000,null);
+  add("table",start+6,"completed",[
+    transition("preparing","ready",start+40000),transition("ready","completed",start+95000),
+  ]);
+  durations("pickup",end,1000000,5000);
+  const call=async(date,timing="")=>api(new Request(`https://order.example/api/kitchen/daily?date=${date}${timing}`,{
+    headers:{Authorization:"Bearer local-test-key"},
+  }),{DB:db,STAFF_KEY:"local-test-key"}).then(response=>response.json());
+  const report=await call("2026-11-23","&timing=1");
+  assert.deepEqual(report.timing,{
+    pickup:{preparation:{eligible:5,samples:3,medianMs:120000,p90Ms:300000},
+      handoff:{eligible:3,samples:2,medianMs:45000,p90Ms:60000}},
+    table:{preparation:{eligible:3,samples:2,medianMs:60000,p90Ms:90000},
+      handoff:{eligible:1,samples:1,medianMs:55000,p90Ms:55000}},
+  });
+  assert.ok(!JSON.stringify(report).includes("避免匯出"));
+  assert.equal((await call("2026-11-23")).timing,undefined);
+  const following=await call("2026-11-24","&timing=1");
+  assert.deepEqual(following.timing.table.preparation,{eligible:0,samples:0,medianMs:null,p90Ms:null});
+  assert.equal(following.timing.pickup.preparation.medianMs,1000000);
+});
 test("receipt timing drops completed station work and legacy items still reach the board",async t=>{
   const db=database();
   t.after(()=>db.sqlite.close());

@@ -13,3 +13,13 @@
 .dailyDishes table{border-collapse:collapse;width:100%;text-align:left}
 .dailyDishes th,.dailyDishes td{border-bottom:1px solid var(--line);padding:7px 0}
 .dailyDishes td,.dailyDishes thead th:last-child{text-align:right}
+.dailyTiming{margin-top:16px}
+.dailyTiming h2,.dailyTiming h3{margin:0}
+.dailyTiming>p{color:var(--muted);margin:6px 0 14px}
+.dailyTimingGrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,260px),1fr));gap:12px}
+.dailyTimingGrid article{border:1px solid var(--line);border-radius:8px;padding:12px}
+.dailyTiming dl,.dailyTiming dd{margin:0}
+.dailyTiming dl div{border-top:1px solid var(--line);padding:8px 0;margin-top:8px}
+.dailyTiming dt{font-weight:650}
+.dailyTiming dd>*{display:block;font-variant-numeric:tabular-nums}
+.dailyTiming dd small{color:var(--muted)}

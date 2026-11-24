@@ -23,6 +23,32 @@ function ChannelSummary({name,summary}) {
   </section>;
 }
 
+function formatDuration(ms) {
+  const seconds=Math.ceil(ms/1000);
+  const minutes=Math.floor(seconds/60);
+  return minutes?minutes+" 分 "+seconds%60+" 秒":seconds+" 秒";
+}
+
+function DurationSummary({timing}) {
+  return <section className="sheet dailyTiming" aria-labelledby="daily-timing-title">
+    <h2 id="daily-timing-title">製作與交餐耗時</h2>
+    <p>製作從接單到備妥，交餐從備妥到交付。樣本數只計入兩端都有時間的餐單。</p>
+    <div className="dailyTimingGrid">
+      {[["pickup","線上自取"],["table","掃碼內用"]].map(([mode,name])=><article key={mode} aria-label={name+"耗時"}>
+        <h3>{name}</h3>
+        <dl>{[["preparation","製作"],["handoff","交餐等候"]].map(([key,label])=>{
+          const stage=timing[mode][key];
+          return <div key={key}><dt>{label}</dt><dd>
+            {stage.samples>0?<><strong>中位數 {formatDuration(stage.medianMs)}</strong>
+              <span>第 90 百分位數 {formatDuration(stage.p90Ms)}</span></>:<span>目前無可用時間紀錄</span>}
+            <small>可用紀錄 {stage.samples}／{stage.eligible} 張</small>
+          </dd></div>;
+        })}</dl>
+      </article>)}
+    </div>
+  </section>;
+}
+
 export default function DailyOperations() {
   const [date,setDate]=useState(""),[query,setQuery]=useState(null);
   const [report,setReport]=useState(null),[error,setError]=useState("");
@@ -35,7 +61,7 @@ export default function DailyOperations() {
     if(!query)return;
     const controller=new AbortController();
     const key=sessionStorage.getItem("he-ri-staff");
-    request("/api/kitchen/daily?date="+encodeURIComponent(query.date),{
+    request("/api/kitchen/daily?date="+encodeURIComponent(query.date)+"&timing=1",{
       signal:controller.signal,headers:key?{Authorization:"Bearer "+key}:{},
     }).then(value=>{
       if(!controller.signal.aborted)setReport(value);
@@ -70,6 +96,7 @@ export default function DailyOperations() {
         <ChannelSummary name="線上自取" summary={report.channels.pickup}/>
         <ChannelSummary name="掃碼內用" summary={report.channels.table}/>
       </div>
+      {report.timing&&<DurationSummary timing={report.timing}/>}
       <section className="sheet dailyDishes">
         <h2>已交餐品項</h2>
         {report.items.length?<table aria-label="已交餐份數"><thead><tr><th scope="col">餐點</th><th scope="col">份數</th></tr></thead>

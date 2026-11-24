@@ -154,6 +154,13 @@ test("staff can view a Taiwan-date summary and download the displayed snapshot o
   await expect(page.locator(".dailyCapture time")).toHaveAttribute("datetime",new Date(report.capturedAt).toISOString());
   await expect(page.getByRole("heading",{name:"每日訂單摘要"})).toBeVisible();
   await expect(page.getByRole("row",{name:/日式熱煎茶/})).toBeVisible();
+  const timing=page.getByRole("region",{name:"製作與交餐耗時"});
+  const pickup=timing.getByRole("article",{name:"線上自取耗時"});
+  expect(report.timing.pickup.preparation.samples).toBeGreaterThan(0);
+  expect(report.timing.pickup.handoff.samples).toBeGreaterThan(0);
+  await expect(pickup.getByText(/中位數/)).toHaveCount(2);
+  const {samples,eligible}=report.timing.pickup.preparation;
+  await expect(pickup.locator("dl > div").first()).toContainText("可用紀錄 "+samples+"／"+eligible+" 張");
   expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBe(360);
   const pending=page.waitForEvent("download");
   await download.click();
@@ -165,6 +172,7 @@ test("staff can view a Taiwan-date summary and download the displayed snapshot o
   await expect(download).toHaveCount(0);
   await query.click();
   await expect(page.getByText("這一天沒有已交餐品項。")).toBeVisible();
+  await expect(timing.getByText("目前無可用時間紀錄")).toHaveCount(4);
 });
 
 test("this browser keeps separate receipt links across tabs and removes only the chosen local entry",async({context,page,request})=>{
