@@ -33,6 +33,7 @@ export const paymentAttempts = sqliteTable("payment_attempts", {
   tradeId: text("trade_id").unique(),
   redirectUrl: text("redirect_url"),
   created: integer("created").notNull(),
+  kitchenPayableAt: integer("kitchen_payable_at"),
   checked: integer("checked").notNull().default(0),
 }, t => [index("attempt_order").on(t.orderId,t.id)]);
 export const unavailable = sqliteTable("unavailable", {

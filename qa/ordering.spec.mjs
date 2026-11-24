@@ -8,6 +8,40 @@ import jsQR from "jsqr";
 import {PNG} from "pngjs";
 import {businessDate} from "../lib/business-day.mjs";
 
+test("mobile kitchen sorts overdue tickets and suppresses stale reminders until the next snapshot",async({page})=>{
+  await page.setViewportSize({width:360,height:780});
+  await page.addInitScript(()=>sessionStorage.setItem("he-ri-staff","local-test-kitchen"));
+  const card=(id,status,table,overdue)=>({id,status,table,overdue,mode:table?"table":"pickup",created:Date.now()-3_600_000,
+    paymentMethod:"cash",paymentState:"unpaid",paymentEnv:"cash",total:45,items:[{id:"sencha",name:"日式熱煎茶",qty:1}]});
+  let rows=[card(23,"pending",null),card(22,"pending","A03",{elapsedMs:360_000,overByMs:60_000}),
+    card(21,"ready",null,{elapsedMs:900_000,overByMs:300_000})];
+  let stale=false;
+  await page.route("**/api/kitchen",route=>stale?
+    route.fulfill({status:503,json:{error:"暫時無法讀取餐單"}}):route.fulfill({json:rows}));
+  await page.goto("/kitchen");
+  await page.getByRole("button",{name:"逾時 (2)",exact:true}).click();
+  const tickets=page.locator(".kitchenTicket");
+  await expect(tickets.getByRole("heading")).toHaveText(["#0021","#0022"]);
+  await expect(tickets.first().getByText("逾時 · 待交餐 15 分鐘")).toBeVisible();
+  await expect(tickets.last().getByText("逾時 · 待接單 6 分鐘")).toBeVisible();
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBe(360);
+  await page.getByLabel("管道或桌號").selectOption("A03");
+  await expect(tickets.getByRole("heading")).toHaveText(["#0022"]);
+  await page.getByRole("button",{name:"清除搜尋條件"}).click();
+
+  stale=true;
+  const refresh=page.getByRole("button",{name:"更新",exact:true});
+  await refresh.click();
+  await expect(page.getByText("暫時無法更新逾時狀態。")).toBeVisible();
+  await expect(tickets).toHaveCount(0);
+  stale=false;
+  rows=[card(23,"pending",null),card(22,"preparing","A03"),card(21,"completed",null)];
+  await refresh.click();
+  await expect(page.getByText("目前沒有符合條件的訂單。")).toBeVisible();
+  await expect(page.getByRole("alert")).toHaveCount(0);
+  await expect(tickets).toHaveCount(0);
+});
+
 test("staff recheck a changed table and complete its reviewed orders together",async({page,request})=>{
   const headers={Authorization:"Bearer local-test-kitchen"};
   const path="/api/kitchen/table-handoff";

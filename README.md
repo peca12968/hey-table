@@ -135,6 +135,8 @@ Stockroom 支援在一筆交易內保留多個 SKU。若其中一項缺貨，該
 
 切到「待交餐」後，可選線上自取、全部內用，或指定桌號。取餐號碼會精確比對，例如輸入 0007、#0007 或全形數字皆可找到同一張餐單。管道、桌號與取餐號碼會和狀態分頁一起篩選，店員完成交餐後可切到「含近期結單」核對結果。[手機接單台測試](qa/ordering.spec.mjs)
 
+「逾時」會列出等候時間已達門檻的餐單，依超過門檻的時間排序。待接單為 5 分鐘、製作為 15 分鐘、待交餐為 10 分鐘。現場付款單從成立時開始等候接單，線上單從系統第一次查證可接單的付款狀態起算。製作及待交餐各用實際狀態變更時間。無可用時間紀錄的舊單只顯示一般餐單狀態。讀取失敗時，接單台會收起逾時提示並顯示連線狀態。[門檻與付款時間測試](qa/tappay.test.mjs) · [手機排序與斷線測試](qa/ordering.spec.mjs)
+
 店員可在進行中的內用餐單選「更換桌號」，核對後確認。換桌會保留餐單編號及原送單識別碼，並同步到分站、顧客收據和交餐小票。顧客查看收據時，本機查單紀錄也會更新桌號。店員確認換桌與交餐時會核對桌號版本。小票開啟後若遇換桌，按列印會先更新桌號，待再次確認後才列印。[換桌、原單重試與並行版本測試](qa/ordering.spec.mjs)
 
 「待交餐」會顯示有兩張以上餐單備妥的桌號捷徑。選一桌，核對每張餐單的號碼、餐點份數與備註，再一次確認交餐。餐單會在同一筆 D1 寫入完成。如果期間加了一張備妥餐單、有人換桌或先完成交餐，或任何一張單的付款狀態已無法交餐，系統會請店員再核對整桌。顧客收據各自保留原單號，並顯示同一個交餐時間。[手機與併發測試](qa/ordering.spec.mjs) · [退款阻擋測試](qa/tappay.test.mjs)
@@ -192,6 +194,7 @@ node --import ./scripts/sites-env.mjs ./node_modules/wrangler/bin/wrangler.js d1
 node --import ./scripts/sites-env.mjs ./node_modules/wrangler/bin/wrangler.js d1 execute DB --local --config dist/server/wrangler.json --persist-to .wrangler/state --file drizzle/0011_payment_hold_expiry.sql
 node --import ./scripts/sites-env.mjs ./node_modules/wrangler/bin/wrangler.js d1 execute DB --local --config dist/server/wrangler.json --persist-to .wrangler/state --file drizzle/0012_table_moves.sql
 node --import ./scripts/sites-env.mjs ./node_modules/wrangler/bin/wrangler.js d1 execute DB --local --config dist/server/wrangler.json --persist-to .wrangler/state --file drizzle/0013_staff_pickup_source.sql
+node --import ./scripts/sites-env.mjs ./node_modules/wrangler/bin/wrangler.js d1 execute DB --local --config dist/server/wrangler.json --persist-to .wrangler/state --file drizzle/0014_kitchen_payment_start.sql
 npm start
 ```
 

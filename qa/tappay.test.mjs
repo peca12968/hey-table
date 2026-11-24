@@ -342,6 +342,64 @@ test("a payment refund blocks the entire reviewed table handoff",async t=>{
   assert.equal((await handoff()).status,200);
   assert.deepEqual(statuses(),["completed","completed"]);
 });
+test("kitchen overdue uses the current stage and starts online orders at confirmed payment",async t=>{
+  const db=database();
+  t.after(()=>db.sqlite.close());
+  const minute=60_000,initial=Date.parse("2026-11-25T02:00:00Z");
+  let now=initial;
+  t.mock.method(Date,"now",()=>now);
+  const runtime={DB:db,STAFF_KEY:"fixture-staff",TAPPAY_MODE:"demo"};
+  const staff={Authorization:"Bearer fixture-staff"};
+  const call=(path,options={})=>api(new Request("https://order.example"+path,options),runtime);
+  const send=(method,path,data,headers={})=>call(path,{method,headers:{"Content-Type":"application/json",...headers},body:JSON.stringify(data)});
+  const queue=async()=>{
+    const response=await call("/api/kitchen",{headers:staff});
+    assert.equal(response.status,200);
+    return new Map((await response.json()).map(row=>[row.id,row.overdue]));
+  };
+  const add=db.sqlite.prepare(`INSERT INTO orders(token,mode,note,items,total,created,status,status_history,payment_method,payment_env)
+    VALUES (?,'pickup','','[]',45,?,?,?,?,?)`);
+  const fixture=(at,status="pending",history=null,payment="cash")=>add.run(crypto.randomUUID(),at,status,history,payment,payment==="cash"?"cash":"sandbox").lastInsertRowid;
+  const event=(from,status,at)=>JSON.stringify([{from,status,at}]);
+  const justDue=fixture(now-5*minute),early=fixture(now-5*minute+1);
+  const cooking=fixture(now-28*minute,"preparing",event("pending","preparing",now-15*minute-1));
+  const ready=fixture(now-35*minute,"ready",event("preparing","ready",now-10*minute));
+  const oldCooking=fixture(now-90*minute,"preparing"),badReady=fixture(now-19*minute,"ready","broken-history");
+  const afterOrder=fixture(now-9*minute,"ready",event("preparing","ready",now-11*minute));
+  const closed=fixture(now-90*minute,"completed",event("ready","completed",now-33*minute));
+  const oldPaid=fixture(now-30*minute,"pending",null,"line_pay");
+  db.sqlite.prepare(`INSERT INTO payment_attempts(order_id,reference,merchant,state,created,checked)
+    VALUES (?,'legacy-payment','fixture','paid',?,?)`).run(oldPaid,now-29*minute,now-25*minute);
+  const token=crypto.randomUUID(),guest={"X-Ticket":token};
+  const open=await send("POST","/api/orders",{token,mode:"pickup",note:"",items:[{id:"sencha",qty:1}],paymentMethod:"line_pay"});
+  assert.equal(open.status,200);
+  const {id}=await open.json();
+
+  assert.equal((await call("/api/kitchen")).status,403);
+  const boundary=await queue();
+  assert.deepEqual(boundary.get(justDue),{elapsedMs:5*minute,overByMs:0});
+  assert.deepEqual(boundary.get(cooking),{elapsedMs:15*minute+1,overByMs:1});
+  assert.deepEqual(boundary.get(ready),{elapsedMs:10*minute,overByMs:0});
+  for(const ignored of [early,oldCooking,badReady,afterOrder,closed,oldPaid,id]){
+    assert.ok(boundary.has(ignored));
+    assert.equal(boundary.get(ignored),undefined);
+  }
+  now=initial+8*minute;
+  assert.equal((await queue()).get(id),undefined);
+  const {attempt}=await (await send("POST","/api/payments/start",{},guest)).json();
+  now=initial+11*minute;
+  assert.equal((await queue()).get(id),undefined);
+  assert.equal((await send("POST","/api/payments/demo",{ref:attempt.ref,outcome:"paid"},guest)).status,200);
+  now=initial+16*minute-1;
+  assert.equal((await queue()).get(id),undefined);
+  now++;
+  assert.deepEqual((await queue()).get(id),{elapsedMs:5*minute,overByMs:0});
+  const receipt=await (await call("/api/ticket?progress=1",{headers:guest})).json();
+  assert.equal(receipt.overdue,undefined);
+  assert.equal(receipt.kitchen_payable_at,undefined);
+  assert.equal((await send("PATCH","/api/kitchen/status",{id,from:"pending",to:"preparing"},staff)).status,200);
+  assert.equal((await queue()).get(id),undefined);
+});
 test("unpaid holds release at the boundary but preserve active payment attempts",async t=>{
   const db=database();
   t.after(()=>db.sqlite.close());
@@ -453,6 +511,8 @@ for(const method of ["line_pay","px_pay_plus"]){
 for(const method of ["line_pay","px_pay_plus","jko_pay","easy_wallet","pi_wallet","plus_pay","card"]){
   test(method+" follows sandbox charge, verified notification and out-of-order result",async t=>{
     const db=database();t.after(()=>db.sqlite.close());
+    let now=Date.now();
+    t.mock.method(Date,"now",()=>now);
     const runtime={...env,DB:db,["TAPPAY_MERCHANT_"+method.toUpperCase()]:"fixture"};
     const token=crypto.randomUUID();
     async function post(path,body){
@@ -500,7 +560,15 @@ for(const method of ["line_pay","px_pay_plus","jko_pay","easy_wallet","pi_wallet
     reportedMethod=method==="px_pay_plus"?"plus_pay":"px_pay_plus";
     assert.equal(await check(1),"pending");
     reportedMethod=gatewayMethod;
-    assert.equal(await check(4),"pending");assert.equal(await check(0),"authorized");
+    const payableAt=()=>db.sqlite.prepare("SELECT kitchen_payable_at FROM payment_attempts WHERE order_id=?").get(ticket.id).kitchen_payable_at;
+    assert.equal(await check(4),"pending");
+    assert.equal(payableAt(),null);
+    now+=6000;
+    assert.equal(await check(0),"authorized");
+    const firstConfirmed=now;
+    assert.equal(payableAt(),firstConfirmed);
+    now+=6000;
     assert.equal(await check(1),"paid");assert.equal(await check(4),"paid");assert.equal(await check(3),"refunded");
+    assert.equal(payableAt(),firstConfirmed);
   });
 }

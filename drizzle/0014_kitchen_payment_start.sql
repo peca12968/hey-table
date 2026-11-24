@@ -1,0 +1,1 @@
+ALTER TABLE `payment_attempts` ADD `kitchen_payable_at` integer;

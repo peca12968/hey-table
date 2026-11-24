@@ -7,6 +7,7 @@ import {businessDate,businessDayRange} from "../lib/business-day.mjs";
 import {dailyLimits,exceededPortions,readRemaining} from "./daily-limits.mjs";
 import {expirePaymentHolds,noBlockingPayment,paymentHoldMs} from "./payment-holds.mjs";
 import {dailyTiming,dailyTimingRows} from "./daily-timing.mjs";
+import {kitchenOverdue} from "./kitchen-overdue.mjs";
 
 const json = (value, status=200) => Response.json(value,{status,headers:{"Cache-Control":"no-store"}});
 const fail = (message,status=400) => json({error:message},status);
@@ -20,7 +21,8 @@ import {activeKitchen,demoKitchen,importTiming,stationLabels,timingChanges} from
 import {finishStation,remainingStationItems,stationQueue} from "./station-work.mjs";
 const timingRows = "SELECT revision,config FROM kitchen_timing ORDER BY revision DESC";
 const fromTimingRow = row => ({revision:row?.revision??0, kitchen:activeKitchen(row ? JSON.parse(row.config) : null)});
-const selectOrders = "SELECT orders.*, "+latestState+" AS payment_state FROM orders";
+const orderColumns = "SELECT orders.*, "+latestState+" AS payment_state";
+const selectOrders = orderColumns+" FROM orders";
 const intakeRows = "SELECT mode,accepting,revision FROM order_intake";
 const tableIntakeRows = "SELECT table_no,accepting,revision FROM table_intake";
 const modePaused = "EXISTS (SELECT 1 FROM order_intake WHERE mode=? AND accepting=0)";
@@ -421,7 +423,11 @@ export async function api(request, env) {
     return json({format:"hey-table.payment-snapshot.v1", capturedAt:Date.now(), environment, attempts:results});
   }
   if ((path === "/api/kitchen" || path === "/api/kitchen/stations") && method === "GET") {
-    const [,queue] = await db.batch([expirePaymentHolds(db,Date.now()),db.prepare(`${selectOrders} WHERE status NOT IN ('completed','cancelled')
+    const forBoard=path==="/api/kitchen";
+    const payableAt=forBoard?`, CASE WHEN orders.status='pending' AND orders.payment_method<>'cash'
+      THEN (SELECT kitchen_payable_at FROM payment_attempts WHERE order_id=orders.id ORDER BY id DESC LIMIT 1) END AS kitchen_payable_at`:"";
+    const capturedAt=Date.now();
+    const [,queue] = await db.batch([expirePaymentHolds(db,capturedAt),db.prepare(`${orderColumns}${payableAt} FROM orders WHERE status NOT IN ('completed','cancelled')
         OR id IN (SELECT id FROM orders WHERE status IN ('completed','cancelled') ORDER BY id DESC LIMIT 20)
         ORDER BY id DESC`)]);
     const {results}=queue;
@@ -434,7 +440,9 @@ export async function api(request, env) {
     }
     return json(orders.map((order,index)=>{
       const row=results[index];
+      const overdue=kitchenOverdue(row,order,capturedAt);
       return {...order,...(row.station_progress?{stationProgress:true}:{}),
+        ...(overdue?{overdue}:{}),
         ...(row.table_moves?{tableRevision:JSON.parse(row.table_moves).length}:{})};
     }));
   }

@@ -1,8 +1,9 @@
 import {charge,httpsUrl,lookup,merchantFor,settings,validBuyer} from "./tappay.mjs";
 import {expirePaymentHolds} from "./payment-holds.mjs";
+import {kitchenPaymentStates} from "../lib/payments.mjs";
 
 export const latestState = "(SELECT state FROM payment_attempts WHERE order_id=orders.id ORDER BY id DESC LIMIT 1)";
-export const payableForKitchen = "(payment_method='cash' OR "+latestState+" IN ('paid','authorized','partial'))";
+export const payableForKitchen = "(payment_method='cash' OR "+latestState+" IN ("+kitchenPaymentStates.map(state=>"'"+state+"'").join(",")+"))";
 const result=(data,status=200)=>Response.json(data,{status,headers:{"Cache-Control":"no-store"}});
 const fail=(msg,status)=>result({error:msg},status);
 const publicAttempt=a=>a&&({ref:a.reference,state:a.state,redirect:a.state==="pending"?a.redirect_url:null});
@@ -15,9 +16,13 @@ async function reconcile(env,order,a) {
     .bind(Date.now(),a.id,Date.now()-5000).run();
   if(!updated.meta.changes)return;
   const verified=await lookup(env,order,a);
-  if(verified && transitions[a.state].includes(verified.state))
-    await env.DB.prepare("UPDATE payment_attempts SET state=?, trade_id=?, redirect_url=CASE WHEN ?='pending' THEN redirect_url ELSE NULL END WHERE id=? AND state=?")
-      .bind(verified.state,verified.trade,verified.state,a.id,a.state).run();
+  if(verified && transitions[a.state].includes(verified.state)){
+    const firstPayable=!kitchenPaymentStates.includes(a.state)&&kitchenPaymentStates.includes(verified.state);
+    await env.DB.prepare(`UPDATE payment_attempts SET state=?, trade_id=?,
+      redirect_url=CASE WHEN ?='pending' THEN redirect_url ELSE NULL END,
+      kitchen_payable_at=COALESCE(kitchen_payable_at,?) WHERE id=? AND state=?`)
+      .bind(verified.state,verified.trade,verified.state,firstPayable?Date.now():null,a.id,a.state).run();
+  }
 }
 export async function checkKitchenPayment(env,id) {
   if(!Number.isSafeInteger(id))return fail("訂單編號無效",400);
@@ -59,7 +64,8 @@ export async function paymentApi(path,request,env,input) {
   if(path==="/api/payments/demo"){
     if(order.payment_env!=="demo" || settings(env).mode!=="demo" || !attempt || input.ref!==attempt.reference ||
       !["paid","failed","cancelled"].includes(input.outcome))return fail("無法模擬此付款",403);
-    const res=await db.prepare("UPDATE payment_attempts SET state=? WHERE id=? AND state='pending'").bind(input.outcome,attempt.id).run();
+    const res=await db.prepare("UPDATE payment_attempts SET state=?, kitchen_payable_at=? WHERE id=? AND state='pending'")
+      .bind(input.outcome,input.outcome==="paid"?Date.now():null,attempt.id).run();
     return res.meta.changes ? result({attempt:publicAttempt(await latest(db,order.id))}) : fail("付款已更新",409);
   }
   if(path!=="/api/payments/start")return fail("找不到此操作",404);
