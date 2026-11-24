@@ -72,7 +72,11 @@ export async function paymentApi(path,request,env,input) {
     AND COALESCE(${latestState},'unpaid') IN ('unpaid','failed','cancelled')`)
     .bind(ref,demo?"demo":merchantFor(env,order.payment_method),Date.now(),order.id).run();
   attempt=await latest(db,order.id);
-  if(!claimed.meta.changes || demo || !attempt || attempt.reference!==ref)return result({attempt:publicAttempt(attempt)});
+  if(!claimed.meta.changes){
+    const row=await db.prepare("SELECT status FROM orders WHERE id=?").bind(order.id).first();
+    return row?.status==="cancelled"?fail("餐單已取消",409):result({attempt:publicAttempt(attempt)});
+  }
+  if(demo || !attempt || attempt.reference!==ref)return result({attempt:publicAttempt(attempt)});
   try{
     const reply=await charge(env,order,attempt,input.prime,input.buyer);
     if([10002,10003,10007,10008,10009,10012,10014].includes(reply.status)){

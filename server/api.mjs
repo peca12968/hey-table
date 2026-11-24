@@ -45,9 +45,9 @@ function receipt(row) {
 }
 function statusHistory(row) {
   const history = [{status:"pending",at:row.created}];
-  for (const {from,status,at} of JSON.parse(row.status_history ?? "[]")) {
+  for (const {from,status,at,actor} of JSON.parse(row.status_history ?? "[]")) {
     if (history.at(-1).status !== from) history.push({status:from,at:null});
-    history.push({status,at});
+    history.push({status,at,...(actor==="customer"&&status==="cancelled"?{actor}:{})});
   }
   if (history.at(-1).status !== row.status) history.push({status:row.status,at:null});
   return history;
@@ -285,6 +285,23 @@ export async function api(request, env) {
       if(quote)saved.kitchenQuote=quote;
     }
     return json(saved);
+  }
+  if (path === "/api/ticket/cancel" && method === "POST") {
+    const token=request.headers.get("X-Ticket");
+    if(!uuid.test(token))return fail("找不到訂單",404);
+    const [,current]=await db.batch([
+      db.prepare(`UPDATE orders SET status='cancelled',
+        status_history=json_insert(COALESCE(status_history,'[]'),'$[#]',
+          json_object('from',status,'status','cancelled','at',?, 'actor','customer'))
+        WHERE token=? AND status='pending' AND NOT EXISTS (
+          SELECT 1 FROM payment_attempts WHERE order_id=orders.id AND state NOT IN ('failed','cancelled')
+        )`).bind(Date.now(),token),
+      db.prepare("SELECT status FROM orders WHERE token=?").bind(token),
+    ]);
+    const row=current.results[0];
+    if(!row)return fail("找不到訂單",404);
+    return row.status==="cancelled" ? json({status:row.status}) :
+      fail("餐單已開始處理或付款狀態已更新，請重新核對收據。",409);
   }
   if (path === "/api/kitchen/prep" && method === "GET") {
     const {results} = await db.prepare(`SELECT id, created, status, items FROM orders

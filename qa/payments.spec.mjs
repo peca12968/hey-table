@@ -1,7 +1,101 @@
 import {test,expect} from "@playwright/test";
 import {randomUUID} from "node:crypto";
 import {readFile} from "node:fs/promises";
+import {businessDate} from "../lib/business-day.mjs";
 const staff={Authorization:"Bearer local-test-kitchen"};
+
+test("customer cancellation releases daily portions and recovers when the reply was lost",async({page,request})=>{
+  const date=businessDate(Date.now()),dish="gyoza",token=randomUUID();
+  const limit="/api/kitchen/daily-limits",ticket={"X-Ticket":token};
+  const data={token,mode:"pickup",note:"",items:[{id:dish,qty:1}],paymentMethod:"line_pay"};
+  const config=async()=>(await (await request.get(limit+"?date="+date,{headers:staff})).json()).limits[dish];
+  const save=(capacity,revision)=>request.patch(limit,{headers:staff,data:{date,dish,capacity,revision}});
+  const initial=await config();
+  expect((await save(initial.used+1,initial.revision)).ok()).toBe(true);
+  try{
+    const created=await request.post("/api/orders",{data});
+    expect(created.ok()).toBe(true);
+    expect((await request.post("/api/ticket/cancel",{headers:{"X-Ticket":randomUUID()},data:{}})).status()).toBe(404);
+    expect((await (await request.get("/api/menu")).json()).remaining[dish]).toBe(0);
+    await page.setViewportSize({width:360,height:780});
+    await page.goto("/ticket#"+token);
+    const cancel=page.getByRole("button",{name:"取消這張餐單"});
+    await cancel.click();
+    await page.getByRole("button",{name:"保留餐單"}).click();
+    await expect(page.getByRole("button",{name:"確認取消餐單"})).toHaveCount(0);
+    expect((await config()).used).toBe(initial.used+1);
+    await cancel.click();
+    let posted=0;
+    await page.route("**/api/ticket/cancel",async route=>{
+      posted++;
+      const result=await route.fetch();
+      expect(result.ok()).toBe(true);
+      await route.abort("connectionreset");
+    },{times:1});
+    await page.getByRole("button",{name:"確認取消餐單"}).click();
+    await expect(page.getByText("這張餐單已由顧客取消。")).toBeVisible();
+    await expect(page.getByText("顧客已取消",{exact:true})).toBeVisible();
+    await expect(page.getByRole("region",{name:"線上付款"})).toHaveCount(0);
+    expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBe(360);
+    expect(posted).toBe(1);
+    expect((await request.post("/api/ticket/cancel",{headers:ticket,data:{}})).ok()).toBe(true);
+    const receipt=await (await request.get("/api/ticket?progress=1",{headers:ticket})).json();
+    expect(receipt.statusHistory.filter(event=>event.status==="cancelled")).toEqual([
+      {status:"cancelled",at:expect.any(Number),actor:"customer"},
+    ]);
+    expect((await request.post("/api/payments/start",{headers:ticket,data:{}})).status()).toBe(409);
+    expect((await config()).used).toBe(initial.used);
+    expect((await (await request.get("/api/menu")).json()).remaining[dish]).toBe(1);
+  }finally{
+    await save(initial.capacity,(await config()).revision);
+  }
+});
+
+test("payment claim and customer cancellation have a single winner",async({request})=>{
+  async function create(paymentMethod="line_pay"){
+    const token=randomUUID(),headers={"X-Ticket":token};
+    const created=await request.post("/api/orders",{data:{token,mode:"pickup",note:"",items:[{id:"sencha",qty:1}],paymentMethod}});
+    expect(created.ok()).toBe(true);
+    return {headers,id:(await created.json()).id};
+  }
+  const cancel=headers=>request.post("/api/ticket/cancel",{headers,data:{}});
+  const start=headers=>request.post("/api/payments/start",{headers,data:{}});
+  const demo=(headers,ref,outcome)=>request.post("/api/payments/demo",{headers,data:{ref,outcome}});
+  const status=headers=>request.get("/api/ticket?progress=1",{headers}).then(response=>response.json());
+  const active=await create();
+  const {attempt}=await (await start(active.headers)).json();
+  expect((await cancel(active.headers)).status()).toBe(409);
+  expect((await status(active.headers)).status).toBe("pending");
+  expect((await demo(active.headers,attempt.ref,"failed")).ok()).toBe(true);
+  expect((await cancel(active.headers)).status()).toBe(200);
+
+  const paid=await create("px_pay_plus");
+  const paidAttempt=(await (await start(paid.headers)).json()).attempt;
+  expect((await demo(paid.headers,paidAttempt.ref,"paid")).ok()).toBe(true);
+  expect((await cancel(paid.headers)).status()).toBe(409);
+  for(const [from,to] of [["pending","preparing"],["preparing","ready"],["ready","completed"]])
+    expect((await request.patch("/api/kitchen/status",{headers:staff,data:{id:paid.id,from,to}})).ok()).toBe(true);
+
+  const cash=await create("cash");
+  const move=(from,to)=>request.patch("/api/kitchen/status",{headers:staff,data:{id:cash.id,from,to}});
+  expect((await move("pending","preparing")).ok()).toBe(true);
+  expect((await cancel(cash.headers)).status()).toBe(409);
+  expect((await move("preparing","ready")).ok()).toBe(true);
+  expect((await move("ready","completed")).ok()).toBe(true);
+
+  const race=await create();
+  const [claimed,withdrawn]=await Promise.all([start(race.headers),cancel(race.headers)]);
+  expect([claimed.status(),withdrawn.status()].sort()).toEqual([200,409]);
+  const final=await status(race.headers);
+  if(claimed.ok()){
+    expect(final).toMatchObject({status:"pending",paymentState:"pending"});
+    const {attempt}=await claimed.json();
+    expect((await demo(race.headers,attempt.ref,"cancelled")).ok()).toBe(true);
+    expect((await cancel(race.headers)).ok()).toBe(true);
+  }else{
+    expect(final).toMatchObject({status:"cancelled",paymentState:"unpaid"});
+  }
+});
 
 test("staff can download a sandbox reconciliation snapshot on mobile",async({page})=>{
   await page.setViewportSize({width:390,height:844});

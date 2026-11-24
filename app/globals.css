@@ -62,3 +62,6 @@
 .receiptHistory li a{color:var(--green);font-weight:700}
 .receiptHistory li small{display:block;color:var(--muted)}
 .receiptHistory li button{min-height:40px;flex:none}
+.cancelReceipt{margin-block:12px}
+.cancelReceipt p{margin:0 0 8px}
+.cancelReceipt button{min-height:40px}
