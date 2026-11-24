@@ -169,7 +169,7 @@ python -m stockroom.import_receipts ../dock-outbox/.dock-data/receipts.sqlite3 d
 要在暫存資料庫重現並行與失敗情境，需要 Python 3.12 和 Node.js 24 以上。
 
 ```sh
-git clone https://github.com/peca12968/dock-outbox.git ../dock-outbox
+git clone https://github.com/peca12968/hey-table.git ../dock-outbox
 git -C ../dock-outbox checkout --detach 4da92c62b158b80f09f09285ce8e9a68e68d757a
 python dock_drill.py ../dock-outbox
 ```
@@ -198,13 +198,13 @@ docker run --rm -p 127.0.0.1:8000:8000 -v stockroom-data:/app/data stockroom
 
 `GET /metrics` 提供 Prometheus 文字格式的 `http_requests_total{status}`。狀態碼按回應開始時計數；回應開始前的未處理例外計入 500。讀取指標本身會略過計數。每個服務程序有自己的 registry，請在抓取設定加上穩定的 `service` 與各程序的 `instance` 標籤，依部署目標清單另外提供 `slo_target_expected`。
 
-演練用兩個 FastAPI 實例實際處理 842 個應用程式請求，從指標端點讀回計數器。暫存 SQLite 裡的測試觸發器讓其中 8 次保留交易失敗，逐筆回傳 HTTP 500，交易回滾後資料庫裡沒有留下訂單。將取樣對應到每分鐘一點的模擬時間線後，promtool 確認第 388 分鐘只剩慢速條件成立，410 分鐘檢查時告警已解除。稍後停抓其中一個實例，該實例單獨出現遙測缺口警告。這是加速重播，沒有等候七小時，也沒有對外發送通知。[重現程式](monitoring_drill.py) · [Burn Pair](https://github.com/peca12968/burn-pair)
+演練用兩個 FastAPI 實例實際處理 842 個應用程式請求，從指標端點讀回計數器。暫存 SQLite 裡的測試觸發器讓其中 8 次保留交易失敗，逐筆回傳 HTTP 500，交易回滾後資料庫裡沒有留下訂單。將取樣對應到每分鐘一點的模擬時間線後，promtool 確認第 388 分鐘只剩慢速條件成立，410 分鐘檢查時告警已解除。稍後停抓其中一個實例，該實例單獨出現遙測缺口警告。這是加速重播，沒有等候七小時，也沒有對外發送通知。[重現程式](monitoring_drill.py) · [Burn Pair](https://github.com/peca12968/hey-table/tree/main/modules/burn-pair)
 
 ## 把結單明細交給收貨端
 
 `GET /reservations/{key}/dispatch-manifest.csv` 會輸出 `box_id,units` 兩欄，表頭 `X-Box-Count` 提供接收端應收到的箱數。只要訂單仍保留庫存、或整張訂單都沒有寄出箱件，端點就回覆 409。最後一件出貨、取消或到期之後，可取得按箱號排序的原始出貨明細。日後退貨會更新裝箱對帳表，原始出貨 CSV 則可再次傳給收貨端核對。
 
-跨專案演練保留 8 件，分兩箱寄出 2、3 件，取消其餘 3 件，再將 CSV 實際上傳至 gRPC 服務。之後一件退回庫房，裝箱對帳可查得客戶仍持有 4 件。此時重送出貨明細，收貨端仍辨識為原來的 2 箱、5 件並回傳相同摘要。CI 另外驗證部分出貨後剛好到期以及資料庫重開時，匯出仍一致。[交接演練](manifest_drill.py) · [Manifest Intake](https://github.com/peca12968/manifest-intake)
+跨專案演練保留 8 件，分兩箱寄出 2、3 件，取消其餘 3 件，再將 CSV 實際上傳至 gRPC 服務。之後一件退回庫房，裝箱對帳可查得客戶仍持有 4 件。此時重送出貨明細，收貨端仍辨識為原來的 2 箱、5 件並回傳相同摘要。CI 另外驗證部分出貨後剛好到期以及資料庫重開時，匯出仍一致。[交接演練](manifest_drill.py) · [Manifest Intake](https://github.com/peca12968/hey-table/tree/main/modules/manifest-intake)
 
 **履歷用語**　以 FastAPI 與 SQLite 實作庫存保留、分批出貨及到期回收。用共用同一資料庫的兩個服務實例驗證重送只出貨一次，並注入收據寫入錯誤，確認出貨進度與實體庫存一起回滾。
 

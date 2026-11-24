@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#153335"><title>收貨工作臺 · Dock Outbox</title>
+  <link rel="stylesheet" href="/desk.css">
+</head>
+<body>
+  <header><div class="bar"><strong lang="en">Dock Outbox</strong><span id="network">連線狀態讀取中</span></div></header>
+  <main>
+    <h1>收貨工作臺</h1>
+    <p class="intro">先將到貨存到本機，確認明細後再送往收貨站。</p>
+    <div class="layout">
+      <section class="entry" aria-labelledby="entry-heading">
+        <h2 id="entry-heading">登記到貨</h2>
+        <form id="form">
+          <label for="sku">料號</label><input id="sku" required maxlength="32" placeholder="例如 BX-19" autocapitalize="characters" autocomplete="off">
+          <label for="quantity">收貨數量</label><div class="unit"><input id="quantity" type="number" required min="1" max="9999" value="1"><span>件</span></div>
+          <button id="save" disabled>加入待送清單</button>
+        </form>
+        <p class="offline" id="offline-ready">正在準備離線頁面…</p>
+      </section>
+      <section class="queue" aria-labelledby="queue-heading">
+        <div class="heading"><h2 id="queue-heading">待送清單</h2><span id="count">0 筆</span></div>
+        <div id="empty">清單目前是空的</div>
+        <table hidden id="table"><thead><tr><th scope="col">料號</th><th scope="col">數量</th></tr></thead><tbody></tbody></table>
+        <div class="foot"><button id="sync" disabled>送出收貨</button></div>
+        <p role="status" id="status"></p>
+        <section id="review" hidden aria-labelledby="review-heading"><h3 id="review-heading">核對已入帳內容</h3>
+          <p id="comparison" tabindex="-1"></p><button id="accept">採用已入帳資料並移除此待送項目</button>
+        </section>
+      </section>
+    </div>
+  </main>
+  <script type="module" src="/desk.js"></script>
+</body>
+</html>

@@ -1,0 +1,8 @@
+syntax = "proto3";
+package parcel;
+
+message Item { string sku = 1; }
+message Receipt {
+  string id = 1;
+  repeated Item items = 2;
+}

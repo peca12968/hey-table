@@ -1,0 +1,9 @@
+[
+  {"id":"small-hold","method":"POST","path":"/reservations","body":{"sku":"KIT-01","quantity":2},"count":40},
+  {"id":"six-unit-hold","method":"POST","path":"/reservations","body":{"sku":"KIT-01","quantity":6},"count":12},
+  {"id":"ten-unit-hold","method":"POST","path":"/reservations","body":{"sku":"KIT-01","quantity":10},"count":3},
+  {"id":"ship","method":"POST","path":"/reservations/demo/fulfillments","body":{"quantity":3},"count":8},
+  {"id":"return","method":"POST","path":"/reservations/demo/fulfillments/packed/returns","body":{"quantity":1},"count":5},
+  {"id":"release","method":"POST","path":"/reservations/demo/releases","body":{"quantity":2},"count":4},
+  {"id":"renew","method":"POST","path":"/reservations/demo/renewals","body":{"expected_expires_at_ms":1000000,"extend_seconds":30},"count":3}
+]

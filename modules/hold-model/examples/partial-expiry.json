@@ -1,0 +1,12 @@
+{
+  "actions": [
+    {"op": "restart"},
+    {"op": "cancel", "key": "unknown"},
+    {"op": "reserve", "key": "lunch", "qty": 8},
+    {"op": "reserve", "key": "lunch", "qty": 8},
+    {"op": "ship", "key": "lunch", "receipt": "box", "qty": 3},
+    {"op": "ship", "key": "lunch", "receipt": "box", "qty": 3},
+    {"op": "restart"},
+    {"op": "advance", "seconds": 5}
+  ]
+}

@@ -27,3 +27,19 @@ python scripts/verify-operations.py cashier
 ```
 
 中央 CI 亦在 Chromium 驗證手機點餐、示範付款、店員接單與桌牌 PDF。所有測試使用合成資料及本機服務。[共同驗證流程](../.github/workflows/test.yml)
+
+## 同庫模組
+
+- [body-replay](body-replay/README.md)
+- [commit-gap](commit-gap/README.md)
+- [hold-model](hold-model/README.md)
+- [stockroom-k8s-drill](stockroom-k8s-drill/README.md)
+- [sqlite-recovery-drill](sqlite-recovery-drill/README.md)
+- [shift-vault](shift-vault/README.md)
+- [wal-lantern](wal-lantern/README.md)
+- [dock-outbox](dock-outbox/README.md)
+- [manifest-intake](manifest-intake/README.md)
+- [proto-relay-probe](proto-relay-probe/README.md)
+- [burn-pair](burn-pair/README.md)
+
+[整合驗證](../.github/workflows/system.yml)

@@ -1,0 +1,12 @@
+syntax = "proto3";
+package parcel;
+
+message Item {
+  string sku = 1;
+  optional uint32 checked_units = 2;
+}
+message Receipt {
+  string id = 1;
+  repeated Item items = 2;
+  optional bool reviewed = 3;
+}

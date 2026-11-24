@@ -1,0 +1,35 @@
+syntax = "proto3";
+package intake.v1;
+
+service ManifestIntake {
+  rpc Upload(stream Part) returns (Receipt);
+  rpc Lookup(ManifestKey) returns (Receipt);
+}
+
+message Header {
+  string manifest_id = 1;
+  uint32 expected_boxes = 2;
+}
+
+message Box {
+  string box_id = 1;
+  uint32 units = 2;
+}
+
+message Part {
+  oneof value {
+    Header header = 1;
+    Box box = 2;
+  }
+}
+
+message ManifestKey { string manifest_id = 1; }
+
+message Receipt {
+  string manifest_id = 1;
+  uint32 boxes = 2;
+  uint64 units = 3;
+  string sha256 = 4;
+  bool replayed = 5;
+  optional bool uniform_box_units = 6;
+}

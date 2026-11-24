@@ -1,0 +1,6 @@
+__pycache__/
+manifest_pb2.py
+manifest_pb2_grpc.py
+*.db
+*.db-wal
+*.db-shm
