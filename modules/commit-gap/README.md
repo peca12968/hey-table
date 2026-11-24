@@ -20,10 +20,9 @@
 需要 Git 與 Python 3.12。以下從本專案根目錄執行，建議使用虛擬環境。Stockroom checkout 需含初版的 Git 歷史。
 
 ```sh
-git clone https://github.com/peca12968/hey-table ../stockroom-reservations
-git -C ../stockroom-reservations checkout 34165f1adceb2baceaa53997b7a79a86656e959b
-python -m pip install -r ../stockroom-reservations/requirements.txt
-python drill.py ../stockroom-reservations
+git worktree add --detach ../stockroom-reservations-verified 34165f1adceb2baceaa53997b7a79a86656e959b
+python -m pip install -r ../stockroom-reservations-verified/requirements.txt
+python drill.py ../stockroom-reservations-verified
 ```
 
 每次執行建立四個獨立的暫存資料庫。輸出 JSON 中，`beforeRestart` 是故障後、重啟前的唯讀資料庫觀測值；`replayStatuses` 是用戶端實際收到的 HTTP 狀態碼筆數；`final` 是核對完 API 後的資料庫結果。可加上 `--workers 1` 重現單一用戶端重送，或指定 1 到 32 個並行用戶端。

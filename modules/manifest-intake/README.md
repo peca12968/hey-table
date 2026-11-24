@@ -30,9 +30,8 @@ python client.py morning 2 examples/boxes.csv
 
 ```sh
 git worktree add --detach ../manifest-legacy 3ba0fc554334ed236300b66423e7c6301eb8fabd
-git clone https://github.com/peca12968/hey-table.git ../proto-relay-probe
-git -C ../proto-relay-probe checkout a757e62362a9bab547c94fad8b5609be5adb8a37
-python upgrade_demo.py ../manifest-legacy ../proto-relay-probe/probe.py
+git worktree add --detach ../proto-relay-probe-verified a757e62362a9bab547c94fad8b5609be5adb8a37
+python upgrade_demo.py ../manifest-legacy ../proto-relay-probe-verified/probe.py
 ```
 
 ### 上傳與重送

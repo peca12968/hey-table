@@ -7,9 +7,9 @@
 使用 Python 3.12 虛擬環境，在此專案目錄執行下列命令。工具預設從相鄰的 Stockroom 目錄載入服務，其他位置可用 `STOCKROOM_SOURCE` 指定。
 
 ```sh
-git clone https://github.com/peca12968/hey-table ../stockroom-reservations
-git -C ../stockroom-reservations checkout 34165f1adceb2baceaa53997b7a79a86656e959b
-python -m pip install -r ../stockroom-reservations/requirements-dev.txt
+git worktree add --detach ../stockroom-reservations-verified 34165f1adceb2baceaa53997b7a79a86656e959b
+python -m pip install -r ../stockroom-reservations-verified/requirements-dev.txt
+export STOCKROOM_SOURCE=../stockroom-reservations-verified
 python check.py --seed 1 --runs 24 --steps 48
 python -m unittest -v
 ```

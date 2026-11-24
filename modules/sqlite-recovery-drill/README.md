@@ -7,9 +7,8 @@
 在本專案目錄執行以下指令。演練將合成資料放在暫存目錄，使用和 CI 相同版本的 Stockroom。
 
 ```sh
-git clone https://github.com/peca12968/hey-table.git ../stockroom-demo
-git -C ../stockroom-demo checkout --detach 1bec99199cf0ee8ed9d9b3d34ddbaad10dc01930
-python stockroom_drill.py ../stockroom-demo
+git worktree add --detach ../stockroom-demo-verified 1bec99199cf0ee8ed9d9b3d34ddbaad10dc01930
+python stockroom_drill.py ../stockroom-demo-verified
 python -m unittest -v
 ```
 
@@ -35,9 +34,8 @@ python recovery.py restore backup.db restored.db --sha256 <備份時輸出的64�
 若需保存同一資料庫的多個版本，可以讓 Shift Vault 共用版本之間的區塊。從本專案根目錄下載 CI 使用的版本，然後執行演練。
 
 ```sh
-git clone https://github.com/peca12968/hey-table.git ../shift-vault
-git -C ../shift-vault checkout --detach 9e09bbd0e92ee666c4007f3a6fcfaae1b0bf9598
-python vault_drill.py ../shift-vault
+git worktree add --detach ../shift-vault-verified 9e09bbd0e92ee666c4007f3a6fcfaae1b0bf9598
+python vault_drill.py ../shift-vault-verified
 ```
 
 要備份自己的資料庫，可在服務仍開啟時執行以下命令。將第一行輸出的 JSON 收據獨立保存，還原時以收據裡的 `sha256` 取代第二行的 `SNAPSHOT_ID`。目的檔請指定新路徑。若 Shift Vault 放在其他目錄，在任一命令後加上 `--shift-vault 路徑`。

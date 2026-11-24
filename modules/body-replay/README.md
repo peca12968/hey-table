@@ -27,10 +27,9 @@ python replay.py old-openapi.json new-openapi.json requests.json
 若要從 Stockroom 的 Git 歷史實際產生規格與回應紀錄，在新虛擬環境執行下列命令。若已有相鄰的完整 checkout，可直接使用。演練在暫存目錄載入兩版來源，合成的限制變更也只寫入該目錄。
 
 ```sh
-git clone https://github.com/peca12968/hey-table ../stockroom-reservations
-git -C ../stockroom-reservations checkout d6d5139e2b4413fea49f83d15b3928c7e97be6da
-python -m pip install -r requirements.txt -r ../stockroom-reservations/requirements-dev.txt
-python demo.py ../stockroom-reservations results
+git worktree add --detach ../stockroom-reservations-verified d6d5139e2b4413fea49f83d15b3928c7e97be6da
+python -m pip install -r requirements.txt -r ../stockroom-reservations-verified/requirements-dev.txt
+python demo.py ../stockroom-reservations-verified results
 python replay.py results/published.json results/rehearsal.json examples/requests.json
 python -m unittest -v
 ```

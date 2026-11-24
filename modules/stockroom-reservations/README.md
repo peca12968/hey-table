@@ -169,9 +169,8 @@ python -m stockroom.import_receipts ../dock-outbox/.dock-data/receipts.sqlite3 d
 要在暫存資料庫重現並行與失敗情境，需要 Python 3.12 和 Node.js 24 以上。
 
 ```sh
-git clone https://github.com/peca12968/hey-table.git ../dock-outbox
-git -C ../dock-outbox checkout --detach 4da92c62b158b80f09f09285ce8e9a68e68d757a
-python dock_drill.py ../dock-outbox
+git worktree add --detach ../dock-outbox-verified 4da92c62b158b80f09f09285ce8e9a68e68d757a
+python dock_drill.py ../dock-outbox-verified
 ```
 
 | 操作 | KIT-01 實體庫存 | KIT-01 可用庫存 |
