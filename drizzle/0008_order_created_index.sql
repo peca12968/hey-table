@@ -1,0 +1,1 @@
+CREATE INDEX `orders_created` ON `orders` (`created`);

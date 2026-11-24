@@ -1,0 +1,15 @@
+.dailyOperations{max-width:800px}
+.dailyDate{align-items:flex-end;gap:12px}
+.dailyDate label{display:grid;gap:4px;font-weight:650}
+.dailyDate input{box-sizing:border-box;min-width:0}
+.dailyDate button,.dailyCapture button{min-height:40px}
+.dailyCapture{justify-content:space-between;gap:8px;margin-block:16px}
+.dailyCapture p{margin:0;font-size:.9rem;color:var(--muted)}
+.dailyChannel h2,.dailyDishes h2{margin-top:0}
+.dailyChannel dl{margin:0;font-variant-numeric:tabular-nums}
+.dailyChannel dl div{display:flex;justify-content:space-between;gap:8px;padding:6px 0;border-bottom:1px solid var(--line)}
+.dailyChannel dd{margin:0;font-weight:650}
+.dailyDishes{margin-top:16px}
+.dailyDishes table{border-collapse:collapse;width:100%;text-align:left}
+.dailyDishes th,.dailyDishes td{border-bottom:1px solid var(--line);padding:7px 0}
+.dailyDishes td,.dailyDishes thead th:last-child{text-align:right}

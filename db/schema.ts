@@ -15,7 +15,7 @@ export const orders = sqliteTable("orders", {
   status: text("status").notNull().default("pending"),
   statusHistory: text("status_history"),
   created: integer("created").notNull(),
-}, t => [index("orders_status_id").on(t.status,t.id)]);
+}, t => [index("orders_status_id").on(t.status,t.id), index("orders_created").on(t.created)]);
 export const paymentAttempts = sqliteTable("payment_attempts", {
   id: integer("id").primaryKey({autoIncrement:true}),
   orderId: integer("order_id").notNull().references(()=>orders.id),

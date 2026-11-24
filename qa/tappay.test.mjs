@@ -186,6 +186,43 @@ test("upgrade old receipt progress without making up transition times",async t=>
   const milestones=history=>history.map(({status,at})=>[status,at===null]);
   assert.deepEqual(milestones(statusHistory),milestones(sample.find(row=>row.scenario==="legacy").statusHistory));
 });
+test("daily operations uses Taipei midnight and aggregates completed purchase snapshots",async t=>{
+  const db=database();
+  t.after(()=>db.sqlite.close());
+  const start=Date.parse("2026-11-24T16:00:00Z"),end=Date.parse("2026-11-25T16:00:00Z");
+  const insert=db.sqlite.prepare(`INSERT INTO orders
+    (token,mode,table_no,note,items,total,created,status,combo_quote) VALUES (?,?,?,?,?,?,?,?,?)`);
+  function add(when,mode,status,total,items,discount=null){
+    insert.run(crypto.randomUUID(),mode,mode==="table"?"A03":null,"僅廚房閱讀",JSON.stringify(items),total,when,status,discount);
+  }
+  const tea=qty=>({id:"sencha",name:"舊名煎茶",qty,price:45});
+  add(start-1,"pickup","completed",999,[tea(10)]);
+  add(start,"pickup","completed",80,[tea(2)],'{"version":"fixture"}');
+  add(start+1,"pickup","pending",90,[tea(2)]);
+  add(start+2,"pickup","preparing",90,[tea(2)]);
+  add(start+3,"table","ready",90,[tea(2)]);
+  add(start+4,"table","cancelled",90,[tea(2)]);
+  add(end-1,"table","completed",220,[tea(1),{id:"old-tofu",name:"舊菜單豆腐",qty:4,price:45}]);
+  add(end,"table","completed",999,[tea(10)]);
+  const query=(params,staff=true)=>api(new Request("https://order.example/api/kitchen/daily?"+params,{
+    headers:staff?{Authorization:"Bearer local-test-key"}:{},
+  }),{DB:db,STAFF_KEY:"local-test-key"});
+  assert.equal((await query("date=2026-11-25",false)).status,403);
+  for(const invalid of ["","date=2026-02-29","date=2026-11-25&date=2026-11-26"])
+    assert.equal((await query(invalid)).status,400);
+  const response=await query("date=2026-11-25");
+  assert.equal(response.status,200);
+  assert.equal(response.headers.get("cache-control"),"no-store");
+  const {capturedAt,...report}=await response.json();
+  assert.ok(Number.isSafeInteger(capturedAt));
+  assert.deepEqual(report,{format:"hey-table.daily-operations.v1",date:"2026-11-25",timeZone:"Asia/Taipei",channels:{
+    pickup:{orders:3,pending:1,preparing:1,ready:0,completed:1,cancelled:0,completedTotal:80},
+    table:{orders:3,pending:0,preparing:0,ready:1,completed:1,cancelled:1,completedTotal:220},
+  },items:[{id:"old-tofu",name:"舊菜單豆腐",qty:4},{id:"sencha",name:"日式熱煎茶",qty:3}]});
+  const next=await (await query("date=2026-11-26")).json();
+  assert.equal(next.channels.table.completedTotal,999);
+  assert.equal(next.channels.pickup.orders,0);
+});
 for(const method of ["line_pay","px_pay_plus"]){
   test(method+" resolves a lost charge reply with the original bank reference",async t=>{
     const db=database();

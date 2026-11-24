@@ -6,6 +6,45 @@ import {join} from "node:path";
 import {fileURLToPath} from "node:url";
 import jsQR from "jsqr";
 import {PNG} from "pngjs";
+import {businessDate} from "../lib/business-day.mjs";
+
+test("staff can view a Taiwan-date summary and download the displayed snapshot on mobile",async({page,request})=>{
+  await page.setViewportSize({width:360,height:780});
+  await page.goto("/kitchen/daily");
+  await expect(page.getByRole("alert")).toContainText("請以店主管理帳號登入");
+  await expect(page.getByRole("button",{name:"下載摘要 JSON"})).toHaveCount(0);
+  await page.addInitScript(()=>sessionStorage.setItem("he-ri-staff","local-test-kitchen"));
+  const headers={Authorization:"Bearer local-test-kitchen"};
+  const response=await request.post("/api/orders",{data:{token:randomUUID(),mode:"pickup",note:"交班測試備註",items:[{id:"sencha",qty:2}]}});
+  expect(response.ok()).toBe(true);
+  const {id,created}=await response.json();
+  for(const [from,to] of [["pending","preparing"],["preparing","ready"],["ready","completed"]])
+    expect((await request.patch("/api/kitchen/status",{headers,data:{id,from,to}})).ok()).toBe(true);
+  await page.goto("/kitchen");
+  await page.getByRole("link",{name:"每日訂單摘要"}).click();
+  const date=page.getByLabel("餐單日期");
+  const query=page.getByRole("button",{name:"查詢摘要"});
+  const download=page.getByRole("button",{name:"下載摘要 JSON"});
+  await expect(download).toBeVisible();
+  await date.fill(businessDate(created));
+  const read=page.waitForResponse(response=>new URL(response.url()).pathname==="/api/kitchen/daily");
+  await query.click();
+  const report=await (await read).json();
+  await expect(page.locator(".dailyCapture time")).toHaveAttribute("datetime",new Date(report.capturedAt).toISOString());
+  await expect(page.getByRole("heading",{name:"每日訂單摘要"})).toBeVisible();
+  await expect(page.getByRole("row",{name:/日式熱煎茶/})).toBeVisible();
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBe(360);
+  const pending=page.waitForEvent("download");
+  await download.click();
+  const file=await pending;
+  expect(file.suggestedFilename()).toContain("hey-table-daily-"+report.date);
+  expect(JSON.parse(await readFile(await file.path(),"utf8"))).toEqual(report);
+  expect(JSON.stringify(report)).not.toContain("交班測試備註");
+  await date.fill("2001-03-05");
+  await expect(download).toHaveCount(0);
+  await query.click();
+  await expect(page.getByText("這一天沒有已交餐品項。")).toBeVisible();
+});
 
 test("this browser keeps separate receipt links across tabs and removes only the chosen local entry",async({context,page,request})=>{
   const token=randomUUID();

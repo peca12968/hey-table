@@ -116,6 +116,7 @@ export default function Kitchen(){
   }else{
     content=<>
     <div className="actions"><a className="outline" href="/kitchen/prep">查看備料單</a>
+      <a className="outline" href="/kitchen/daily">每日訂單摘要</a>
       <button className="outline" disabled={exporting} onClick={exportStations}>{exporting?"正在擷取訂單…":"下載分站出單檔"}</button></div>
     {exportMessage&&<p role="status">{exportMessage}</p>}
     <Intake key={"intake-"+key} staffKey={key}/>

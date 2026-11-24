@@ -3,6 +3,7 @@ import {comboVersion,priceCombos} from "../lib/combo-pricing.mjs";
 import qrcode from "qrcode-generator";
 import {dishes, tables, transitions} from "../lib/menu.mjs";
 import {intakeLabels,intakeNotice} from "../lib/order-intake.mjs";
+import {businessDayRange} from "../lib/business-day.mjs";
 
 const json = (value, status=200) => Response.json(value,{status,headers:{"Cache-Control":"no-store"}});
 const fail = (message,status=400) => json({error:message},status);
@@ -258,6 +259,32 @@ export async function api(request, env) {
       ...row, items: JSON.parse(row.items).map(({id, qty}) => ({id, qty}))
     }));
     return json({capturedAt: Date.now(), orders});
+  }
+  if (path === "/api/kitchen/daily" && method === "GET") {
+    const dates = url.searchParams.getAll("date");
+    const [date] = dates;
+    const range = dates.length === 1 ? businessDayRange(date) : null;
+    if (!range) return fail("請選擇有效的餐單日期");
+    const [counts, portions] = await db.batch([
+      db.prepare(`SELECT mode, COUNT(*) AS orders, SUM(status='pending') AS pending,
+        SUM(status='preparing') AS preparing, SUM(status='ready') AS ready,
+        SUM(status='completed') AS completed, SUM(status='cancelled') AS cancelled,
+        SUM(CASE WHEN status='completed' THEN total ELSE 0 END) AS completedTotal
+        FROM orders WHERE created>=? AND created<? GROUP BY mode`).bind(...range),
+      db.prepare(`SELECT json_extract(line.value,'$.id') AS id,
+        MIN(json_extract(line.value,'$.name')) AS name, SUM(json_extract(line.value,'$.qty')) AS qty
+        FROM orders JOIN json_each(orders.items) AS line
+        WHERE created>=? AND created<? AND status='completed'
+        GROUP BY json_extract(line.value,'$.id') ORDER BY qty DESC, id`).bind(...range),
+    ]);
+    const empty={orders:0,pending:0,preparing:0,ready:0,completed:0,cancelled:0,completedTotal:0};
+    const channels={pickup:empty,table:empty};
+    for(const {mode,...count} of counts.results) {
+      if(Object.hasOwn(channels,mode)) channels[mode]=count;
+    }
+    const names=new Map(dishes.map(({id,name})=>[id,name]));
+    const items=portions.results.map(({id,name,qty})=>({id,name:names.get(id)??name??id,qty}));
+    return json({format:"hey-table.daily-operations.v1",date,timeZone:"Asia/Taipei",capturedAt:Date.now(),channels,items});
   }
   if (path === "/api/kitchen/handoff" && method === "GET") {
     const id = collectionId(url);
