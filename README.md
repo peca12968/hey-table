@@ -20,7 +20,7 @@
 需要 Git 與 Python 3.12。以下從本專案根目錄執行，建議使用虛擬環境。Stockroom checkout 需含初版的 Git 歷史。
 
 ```sh
-git clone https://github.com/peca12968/stockroom-reservations ../stockroom-reservations
+git clone https://github.com/peca12968/hey-table ../stockroom-reservations
 git -C ../stockroom-reservations checkout 34165f1adceb2baceaa53997b7a79a86656e959b
 python -m pip install -r ../stockroom-reservations/requirements.txt
 python drill.py ../stockroom-reservations
@@ -30,7 +30,7 @@ python drill.py ../stockroom-reservations
 
 ## 如何定位中斷位置
 
-- 先取出 Stockroom 初版的儲存程式建立舊保留，再讓固定版本的服務執行自己的遷移。測試時鐘固定於三個時刻，跨越到期邊界可重跑。[初版儲存程式](https://github.com/peca12968/stockroom-reservations/blob/ce5bf2d652d6c77f5018a50aca80a5ae5fcf7644/stockroom/store.py)
+- 先取出 Stockroom 初版的儲存程式建立舊保留，再讓固定版本的服務執行自己的遷移。測試時鐘固定於三個時刻，跨越到期邊界可重跑。[初版儲存程式](https://github.com/peca12968/hey-table/blob/ce5bf2d652d6c77f5018a50aca80a5ae5fcf7644/stockroom/store.py)
 - 提交前案例在出貨收據的 INSERT 後，於同一條 SQLite 連線即將執行 COMMIT 時立即退出程序。回應前案例則在出貨端點即將送出 201 標頭時立即退出。兩者都檢查子程序結束碼，以及用戶端是否確實未收到回應。[演練子程序](server.py)
 - 每次重啟都用新的本機 HTTP 服務程序連回原資料庫。用戶端同步開始重送，核對每張回覆，接著讀取整單、箱號與庫存。故障後和重送後也執行 SQLite 完整性與外鍵檢查。演練模擬服務程序中止，觀察範圍止於系統的出貨登記；硬體斷電和物流端實際交寄需各自驗證。[HTTP 重播與資料核對](drill.py)
 
