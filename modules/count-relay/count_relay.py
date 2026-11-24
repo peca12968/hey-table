@@ -128,7 +128,10 @@ def delta(path, basis):
 
 
 def report(path):
-    data = snapshot(path)
+    return summarize(snapshot(path))
+
+
+def summarize(data):
     batches = {}
     confirmed = 0
     conflicts = 0

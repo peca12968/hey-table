@@ -16,6 +16,7 @@ python -m uvicorn stockroom.api:app
 | 操作 | 語意 |
 | --- | --- |
 | GET /inventory | 讀取商品總量與可用量 |
+| GET /inventory-snapshot | 回傳商品總量、可用量，以及同一交易的結算時間 |
 | POST /reservations | 傳入 sku、quantity 及 Idempotency-Key 標頭。相同鍵與內容可取得目前保留狀態 |
 | DELETE /reservations/{key} | 釋放保留。重複取消只會歸還一次 |
 | POST /reservations/{key}/renewals | 依目前期限延長仍有效的保留，以 Idempotency-Key 識別這次續期 |
@@ -32,6 +33,8 @@ python -m uvicorn stockroom.api:app
 | POST /packing-snapshots | 一次查詢多張訂單，從同一時點取得各單的箱單和對應商品庫存 |
 
 庫存不足、同鍵不同內容回傳 409。未知商品或保留回傳 404。輸入格式錯誤回傳 422。失敗的請求不會占用鍵。
+
+`GET /inventory-snapshot` 回傳 `captured_at_ms` 和依 SKU 排序的 `products`，兩者取自同一筆會結算到期保留的交易。結果包含全庫商品，可直接儲存為 JSON，當作 [Count Relay 實物盤點核對](../count-relay/README.md#核對實物盤點與-stockroom-庫存) 的帳面庫存依據。
 
 ## 一次擷取多張訂單給出貨排程
 

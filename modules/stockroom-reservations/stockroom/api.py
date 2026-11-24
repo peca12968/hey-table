@@ -36,6 +36,11 @@ class Product(BaseModel):
     available: int
 
 
+class InventorySnapshot(BaseModel):
+    captured_at_ms: int
+    products: list[Product]
+
+
 class Progress(Reservation):
     shipped: int
     held: int
@@ -174,6 +179,11 @@ def create_app(path: Path, *, ttl_seconds=900, clock=time.time):
     @app.get("/inventory", response_model=list[Product])
     def inventory():
         return store.inventory()
+
+    @app.get("/inventory-snapshot", response_model=InventorySnapshot)
+    def inventory_snapshot(response: Response):
+        response.headers["Cache-Control"] = "no-store"
+        return store.inventory_snapshot()
 
     @app.post("/dispatch-batches", response_model=BatchReceipt, status_code=201,
               responses={200: {"model": BatchReceipt, "description": "Original dispatch batch receipt"}})

@@ -55,6 +55,23 @@ python count_relay.py merge west.db east-reply.json
 
 以上是含換行的 UTF-8、LF 格式，沒有壓縮。清單大小會隨已知紀錄數增加，首次交換可直接使用完整快照。西站產生清單時，同一筆交易會在資料庫留下清單摘要。若回覆送到未產生該清單的資料庫，或接收端還原到產生清單前的備份，匯入會失敗。此時可重建清單或交換完整快照。接收端會以本機與封包的合併歷史檢查缺少前序、跨批次引用與循環。摘要用於核對內容，交換對象應為可信裝置。
 
+## 核對實物盤點與 Stockroom 庫存
+
+全數同步後，匯出盤點紀錄和同一盤點時點的 Stockroom 庫存。先登記截止時間前的收貨與出貨，盤點和匯出期間暫停這些商品的進出貨。建立 `scope.json`，以批次識別碼對應 Stockroom 的 SKU。同一 SKU 可以有多個批次，清單應涵蓋該 SKU 的所有實體庫存。
+
+```json
+{"session":"spring-count","batches":{"pallet-A":"KIT-01","pallet-B":"KIT-01"}}
+```
+
+```sh
+python count_relay.py record west.db pallet-B 8 --device west
+python count_relay.py export west.db > counts.json
+curl -fsS http://127.0.0.1:8000/inventory-snapshot -o inventory.json
+python stockroom_check.py counts.json inventory.json scope.json
+```
+
+報表附盤點場次和庫存快照時間，逐項列出實盤數、帳面實體庫存 `capacity` 及差異 `counted - capacity`。例如 20 件庫存中已有 6 件被保留，可用量是 14，實盤 20 件時差異為 0。缺少讀數或出現盤點分歧的 SKU 會保留空白差異，並列出應處理的批次。若有讀數找不到對應 SKU，須先補上批次對應，報表才會計算差異。核對程式以唯讀方式處理三份檔案。結束碼 0 代表所列 SKU 均完成且吻合，1 代表有差異或仍需補件，2 代表檔案或資料格式有問題。[核對程式](stockroom_check.py) · [Stockroom 端對端測試](../stockroom-reservations/tests/test_count_relay_check.py)
+
 ## 為何不同傳送順序仍能得到相同結果
 
 每筆盤點紀錄有 UUID，並記下它取代的所有已知同批次讀數。兩個快照合併時取紀錄聯集，同一 UUID 的內容必須一致。仍未被後續紀錄取代的讀數共同決定該批次的狀態。裝置時鐘快慢不影響判定。檢查審閱版本與寫入複點結果共用一筆 SQLite 寫入交易。[合併與複點實作](count_relay.py)

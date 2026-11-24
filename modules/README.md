@@ -43,7 +43,7 @@ python scripts/verify-operations.py cashier
 - [burn-pair](burn-pair/README.md)
 - [warehouse-pick-route](warehouse-pick-route/README.md)
 - [coldroom-inbox](coldroom-inbox/README.md)
-- [count-relay](count-relay/README.md)
+- [count-relay](count-relay/README.md)｜離線盤點、複點與 Stockroom 實物庫存核對
 - [bay-signal](bay-signal/README.md)
 - [delivery-archive](delivery-archive/README.md)
 - [parcel-event-windows](parcel-event-windows/README.md)

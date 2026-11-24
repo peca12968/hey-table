@@ -158,8 +158,12 @@ class Store:
         return row
 
     def inventory(self):
-        with self.current_inventory() as (conn, _):
-            return [dict(row) for row in conn.execute("SELECT * FROM products ORDER BY sku")]
+        return self.inventory_snapshot()["products"]
+
+    def inventory_snapshot(self):
+        with self.current_inventory() as (conn, now):
+            products = [dict(row) for row in conn.execute("SELECT * FROM products ORDER BY sku")]
+            return {"captured_at_ms": now, "products": products}
 
     def apply_receipts(self, records):
         applied = replayed = units = 0
