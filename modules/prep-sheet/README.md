@@ -80,7 +80,13 @@ python receiving.py --db kitchen.db status LUNCH
 
 `purchase-report.json` 使用 Pantry Freight 的完整 JSON 採購結果。`morning.json` 填寫實際收到的供應商 SKU 與整包數，例如 `{"market-soy": 1}`。同張採購單、供應商及送貨單號可安全重送，內容相同時會取回原收據。若任一品項超收，整張送貨單都會回滾。狀態輸出的每一列包含供應商、包裝規格、已收與待收包數。帳本追蹤實物數量，售價、運費和付款另由採購系統管理。
 
-以下演練會建立暫存庫存帳，從五碗丼飯的原料缺口產生採購單，先收一包醬油，再收剩下六包，最後重新詢價。驗收完成後的追加採購金額為 0 元。
+若供應商確認少供一包生米，將 `{"market-grain": 1}` 存成 `short-shipment.json`，再登記取消。採購單會保留取消單號、時間和各品項包數，試算會從待收數扣除已取消量。庫存與入庫收據維持原數量。已全部處理的訂單會依結果顯示 `received`（全數驗收）、`closed`（部分驗收、其餘取消）或 `cancelled`（全數取消）。
+
+```sh
+python receiving.py --db kitchen.db cancel LUNCH market OUT-OF-STOCK short-shipment.json
+```
+
+以下演練從五碗丼飯的原料缺口產生採購單，先收一包醬油，再取消一包生米、補買缺口，最後分別驗收剩餘五包與補買的一包。再次試算時，追加採購金額為 0 元。
 
 ```sh
 python receiving_demo.py ../pantry-freight

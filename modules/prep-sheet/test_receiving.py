@@ -8,7 +8,7 @@ import unittest
 from unittest.mock import patch
 
 from ledger import connect, initialize, inventory_snapshot, post, read_inventory, read_json
-from receiving import accept, open_order, procurement_snapshot, status
+from receiving import accept, cancel, open_order, procurement_snapshot, status
 
 
 def vendor(name, *lines):
@@ -131,3 +131,47 @@ class ReceivingTests(unittest.TestCase):
                 delivery_posted.set()
             self.assertEqual(before.result(), ({}, {}, {"soy": 110}))
         self.assertEqual(procurement_snapshot(self.path, self.book, ["p"]), ({"soy": 25}, {}, {"soy": 85}))
+
+    def test_supplier_cancellation_replays_and_frees_only_its_undelivered_packs(self):
+        initial = self.open()
+        self.assertEqual(initial["cancellations"], [])
+        self.receive({"S": 1})
+        with self.assertRaisesRegex(ValueError, "only 1 packs outstanding"):
+            cancel(self.path, "p", "market", "change-1", {"L": 1, "S": 2})
+        self.assertEqual(self.status()["cancellations"], [])
+        cancelled = cancel(self.path, "p", "market", "change-1", {"L": 1, "S": 1})
+        self.assertEqual(cancel(self.path, "p", "market", "change-1", {"S": 1, "L": 1}), cancelled)
+        with self.assertRaisesRegex(ValueError, "reference already used"):
+            cancel(self.path, "p", "market", "change-1", {"S": 1})
+        self.assertEqual(procurement_snapshot(self.path, self.book, ["p"]), ({"soy": 25}, {}, {"soy": 10}))
+        with self.assertRaisesRegex(ValueError, "only 0 packs outstanding"):
+            self.receive({"S": 1}, slip="late")
+        self.assertEqual(self.receive({"S": 1})["receipt"], 1)
+        cancel(self.path, "p", "depot", "change-1", {"S": 1})
+        final = self.status()
+        self.assertEqual((final["state"], final["remaining_packs"]), ("closed", 0))
+        self.assertEqual([row["cancelled_packs"] for row in final["lines"]], [1, 1, 1])
+        self.assertEqual(self.stock(), {"soy": 25})
+        with closing(connect(self.path, "ro")) as db:
+            self.assertEqual(db.execute("SELECT kind FROM receipts").fetchall(), [("purchase_receive",)])
+
+    def test_cancel_and_receive_cannot_both_use_last_outstanding_pack(self):
+        self.open(report={"status": "ok", "orders": [vendor("market", ("L", 50, 1))]})
+        start = Barrier(2)
+
+        def attempt(operation, *args):
+            start.wait(timeout=10)
+            try:
+                return operation(*args) is not None
+            except ValueError as error:
+                self.assertIn("only 0 packs outstanding", str(error))
+                return False
+
+        with ThreadPoolExecutor(max_workers=2) as workers:
+            delivered = workers.submit(attempt, self.receive, {"L": 1})
+            cancelled = workers.submit(attempt, cancel, self.path, "p", "market", "supplier-change", {"L": 1})
+            self.assertNotEqual(delivered.result(), cancelled.result())
+        final = self.status()
+        self.assertEqual((final["state"], final["remaining_packs"]),
+                         ("received" if delivered.result() else "cancelled", 0))
+        self.assertEqual(self.stock(), {"soy": 50} if delivered.result() else {})

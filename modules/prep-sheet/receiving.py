@@ -1,4 +1,4 @@
-"""Import a Pantry Freight purchase order and receive supplier shipments by pack."""
+"""Open Pantry Freight orders and record deliveries or supplier cancellations by pack."""
 import argparse
 from collections import Counter
 from contextlib import closing
@@ -44,24 +44,44 @@ def ordered_lines(report, components):
 
 
 def status(db, order_id):
-    if not db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='purchase_lines'").fetchone():
+    tables = {name for (name,) in db.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name IN ('purchase_lines','purchase_cancellations')")}
+    if "purchase_lines" not in tables:
         raise ValueError(f"Unknown purchase order {order_id}")
+    cancellations = []
+    cancelled_by_line = Counter()
+    if "purchase_cancellations" in tables:
+        for supplier, reference, request, cancelled_at in db.execute(
+                """SELECT supplier,reference,packs,cancelled_at FROM purchase_cancellations
+                   WHERE po=? ORDER BY id""", (order_id,)):
+            packs = json.loads(request)
+            cancellations.append({"supplier": supplier, "reference": reference,
+                                  "packs": packs, "cancelled_at": cancelled_at})
+            for sku, count in packs.items():
+                cancelled_by_line[supplier, sku] += count
     items = []
     for supplier, sku, component, unit, size, ordered, received in db.execute(
             """SELECT supplier,sku,component,unit,pack_size,ordered,received FROM purchase_lines
                WHERE po=? ORDER BY supplier,sku""", (order_id,)):
+        cancelled = cancelled_by_line[supplier, sku]
         items.append({"supplier": supplier, "sku": sku, "component": component, "unit": unit,
                       "pack": size, "ordered_packs": ordered, "received_packs": received,
-                      "remaining_packs": ordered - received})
+                      "cancelled_packs": cancelled, "remaining_packs": ordered - received - cancelled})
     if not items:
         raise ValueError(f"Unknown purchase order {order_id}")
     remaining = sum(line["remaining_packs"] for line in items)
-    state = "open"
+    received = sum(line["received_packs"] for line in items)
     if remaining == 0:
-        state = "received"
-    elif any(line["received_packs"] for line in items):
+        if cancellations:
+            state = "closed" if received else "cancelled"
+        else:
+            state = "received"
+    elif received or cancellations:
         state = "partial"
-    return {"purchase_order": order_id, "state": state, "remaining_packs": remaining, "lines": items}
+    else:
+        state = "open"
+    return {"purchase_order": order_id, "state": state, "remaining_packs": remaining, "lines": items,
+            "cancellations": cancellations}
 
 
 def procurement_snapshot(path, book, order_ids):
@@ -106,29 +126,40 @@ def open_order(path, book, order_id, report):
         return status(db, order_id)
 
 
+def pack_request(packs):
+    if not mapping(packs, "packs by SKU"):
+        raise ValueError("At least one SKU is required")
+    for sku, count in packs.items():
+        integer(count, 1, sku)
+    return json.dumps(packs, sort_keys=True)
+
+
+def outstanding_lines(db, order_id, supplier, packs):
+    lines = {line["sku"]: line for line in status(db, order_id)["lines"] if line["supplier"] == supplier}
+    for sku, count in packs.items():
+        if sku not in lines:
+            raise ValueError(f"{supplier}/{sku}: SKU is absent from this purchase order")
+        remaining = lines[sku]["remaining_packs"]
+        if count > remaining:
+            raise ValueError(f"{sku}: only {remaining} packs outstanding")
+    return lines
+
+
 def accept(path, book, order_id, supplier, slip, packs):
     components, _, _ = catalog(book)
     reference = json.dumps([identifier(value, label) for value, label in
                             [(order_id, "purchase order ID"), (supplier, "supplier"), (slip, "delivery ID")]],
                            ensure_ascii=False)
-    if not mapping(packs, "received packs"):
-        raise ValueError("An empty delivery cannot be posted")
-    for sku, count in packs.items():
-        integer(count, 1, sku)
-    request = json.dumps(packs, sort_keys=True)
+    request = pack_request(packs)
     with closing(connect(path, "rw")) as db, db:
         db.execute("BEGIN IMMEDIATE")
         previous = prior_receipt(db, "purchase_receive", reference, request)
         if previous:
             return previous
-        lines = {line["sku"]: line for line in status(db, order_id)["lines"] if line["supplier"] == supplier}
+        lines = outstanding_lines(db, order_id, supplier, packs)
         changes = Counter()
         for sku, count in packs.items():
-            if sku not in lines:
-                raise ValueError(f"{supplier}/{sku}: SKU is absent from this purchase order")
             line = lines[sku]
-            if count > line["remaining_packs"]:
-                raise ValueError(f"{sku}: only {line['remaining_packs']} packs outstanding")
             component = line["component"]
             recipe = components.get(component, {})
             if recipe.get("unit") != line["unit"] or "pack" not in recipe:
@@ -139,6 +170,32 @@ def accept(path, book, order_id, supplier, slip, packs):
         return record_movement(db, components, "purchase_receive", reference, request, changes)
 
 
+def cancel(path, order_id, supplier, reference, packs):
+    identifier(order_id, "purchase order ID")
+    identifier(supplier, "supplier")
+    identifier(reference, "cancellation ID")
+    request = pack_request(packs)
+    key = (order_id, supplier, reference)
+    with closing(connect(path, "rw")) as db, db:
+        db.execute("BEGIN IMMEDIATE")
+        db.execute("""CREATE TABLE IF NOT EXISTS purchase_cancellations (
+            id INTEGER PRIMARY KEY, po TEXT NOT NULL, supplier TEXT NOT NULL, reference TEXT NOT NULL,
+            packs TEXT NOT NULL, cancelled_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+            UNIQUE(po,supplier,reference))""")
+        existing = db.execute("""SELECT packs,cancelled_at FROM purchase_cancellations
+                                 WHERE po=? AND supplier=? AND reference=?""", key).fetchone()
+        if existing:
+            if existing[0] != request:
+                raise ValueError(f"{reference}: cancellation reference already used with different quantities")
+            cancelled_at = existing[1]
+        else:
+            outstanding_lines(db, order_id, supplier, packs)
+            cancelled_at, = db.execute("""INSERT INTO purchase_cancellations(po,supplier,reference,packs)
+                                          VALUES(?,?,?,?) RETURNING cancelled_at""", (*key, request)).fetchone()
+        return {"purchase_order": order_id, "supplier": supplier, "reference": reference,
+                "packs": packs, "cancelled_at": cancelled_at}
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--db", type=Path, required=True)
@@ -147,11 +204,12 @@ def main():
     opening = commands.add_parser("open")
     opening.add_argument("order_id")
     opening.add_argument("report", type=Path)
-    delivery = commands.add_parser("accept")
-    delivery.add_argument("order_id")
-    delivery.add_argument("supplier")
-    delivery.add_argument("slip")
-    delivery.add_argument("packs", type=Path)
+    for name in ("accept", "cancel"):
+        operation = commands.add_parser(name)
+        operation.add_argument("order_id")
+        operation.add_argument("supplier")
+        operation.add_argument("reference")
+        operation.add_argument("packs", type=Path)
     commands.add_parser("status").add_argument("order_id")
     args = parser.parse_args()
     try:
@@ -159,6 +217,8 @@ def main():
             with closing(connect(args.db, "ro")) as db:
                 db.execute("BEGIN")
                 result = status(db, args.order_id)
+        elif args.command == "cancel":
+            result = cancel(args.db, args.order_id, args.supplier, args.reference, read_json(args.packs))
         else:
             if not args.recipes:
                 parser.error("open and accept require --recipes")
@@ -166,7 +226,7 @@ def main():
             if args.command == "open":
                 result = open_order(args.db, book, args.order_id, read_json(args.report))
             else:
-                result = accept(args.db, book, args.order_id, args.supplier, args.slip, read_json(args.packs))
+                result = accept(args.db, book, args.order_id, args.supplier, args.reference, read_json(args.packs))
         print(json.dumps(result, ensure_ascii=False, indent=2))
     except (OSError, sqlite3.Error, KeyError, TypeError, ValueError) as error:
         parser.exit(2, f"{error}\n")

@@ -1,4 +1,5 @@
 """Exercise procurement and receiving against a temporary kitchen ledger."""
+from collections import Counter
 import json
 import os
 from pathlib import Path
@@ -38,23 +39,40 @@ def demo(freight):
         partial = run(*receiving, "status", "LUNCH")
         physical = run(*procure)
         covered = run(*procure, "--incoming", "LUNCH", "--incoming", "LUNCH")
-        rest = {line["sku"]: line["remaining_packs"] for line in partial["lines"] if line["remaining_packs"]}
+        slip.write_text(json.dumps({"market-grain": 1}), encoding="utf-8")
+        cancel = [ROOT / "receiving.py", "--db", db, "cancel", "LUNCH", "market", "OUT-OF-STOCK", slip]
+        cancellation = run(*cancel)
+        if run(*cancel) != cancellation:
+            raise ValueError("Supplier cancellation did not replay its original receipt")
+        replacement = run(*procure, "--incoming", "LUNCH")
+        if (replacement["prep"] != covered["prep"] or "grain" in replacement["incoming"] or
+                replacement["purchase"]["quantities"] != {"grain": 400}):
+            raise ValueError("Expected a replacement for only the cancelled grain pack")
+        reduced = run(*receiving, "status", "LUNCH")
+        rest = {line["sku"]: line["remaining_packs"] for line in reduced["lines"] if line["remaining_packs"]}
         slip.write_text(json.dumps(rest), encoding="utf-8")
         second = run(*receiving, "accept", "LUNCH", "market", "PM", slip)
         closed = run(*receiving, "status", "LUNCH")
+        order.write_text(json.dumps(replacement["purchase"]), encoding="utf-8")
+        run(*receiving, "open", "REPLACEMENT", order)
+        vendor, = replacement["purchase"]["orders"]
+        slip.write_text(json.dumps({line["sku"]: line["packs"] for line in vendor["lines"]}), encoding="utf-8")
+        last = run(*receiving, "accept", "REPLACEMENT", vendor["supplier"], "PM", slip)
         after = run(*procure)
-        if (opened["remaining_packs"], partial["remaining_packs"], closed["remaining_packs"]) != (7, 6, 0):
-            raise ValueError("Expected seven packs, received in two deliveries")
-        if first != repeated or first["movements"]["soy"]["delta"] != 25 or closed["state"] != "received":
+        if tuple(item["remaining_packs"] for item in (opened, partial, reduced, closed)) != (7, 6, 5, 0):
+            raise ValueError("Expected seven packs, one cancelled after the first delivery")
+        if first != repeated or first["movements"]["soy"]["delta"] != 25 or closed["state"] != "closed":
             raise ValueError("Unexpected receipt or final order status")
-        deltas = {k: v["delta"] for k, v in second["movements"].items()}
-        if (covered["incoming"] != deltas or covered["prep"] != physical["prep"] or
+        late_deliveries = Counter({k: v["delta"] for k, v in second["movements"].items()})
+        late_deliveries.update({k: v["delta"] for k, v in last["movements"].items()})
+        if (covered["incoming"] != late_deliveries or covered["prep"] != physical["prep"] or
                 covered["purchase"]["total_twd"] != 0 or physical["purchase"]["total_twd"] <= 0):
             raise ValueError("Expected only the undelivered packs to offset procurement, not prep")
-        deltas["soy"] += first["movements"]["soy"]["delta"]
+        deltas = late_deliveries + Counter({"soy": first["movements"]["soy"]["delta"]})
         if deltas != basket["quantities"] or after["purchase"]["orders"] or after["purchase"]["total_twd"] != 0:
             raise ValueError("Stock ledger did not reconcile with purchased quantities")
-        return {"ordered": 7, "first_delivery": 1, "second_delivery": 6, "next_total_twd": 0}
+        return {"ordered": 7, "first_delivery": 1, "cancelled": 1, "second_delivery": 5,
+                "replacement_delivery": 1, "next_total_twd": 0}
 
 
 if __name__ == "__main__":
