@@ -1,0 +1,19 @@
+{
+  "capturedAt": 1795406400000,
+  "lines": [
+    {
+      "orderId": 17,
+      "dishId": "oyakodon",
+      "doneQty": 1,
+      "inFlight": [
+        {
+          "qty": 1,
+          "remainingSeconds": [
+            45,
+            60
+          ]
+        }
+      ]
+    }
+  ]
+}

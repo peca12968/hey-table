@@ -1,4 +1,4 @@
-name: Check pickup and QR table ordering
+name: Verify Hei Ri restaurant and operations
 on: [push, pull_request]
 permissions:
   contents: read
@@ -11,38 +11,49 @@ jobs:
         with:
           node-version: '24'
           cache: npm
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
       - run: npm ci --include=optional
       - run: node --test qa/tappay.test.mjs
       - run: npm run build
       - run: npm ci --prefix qa
       - run: npx playwright install --with-deps chromium
         working-directory: qa
-      - uses: actions/checkout@v7
-        with:
-          repository: peca12968/prep-sheet
-          ref: f31533e5b5fe9cef010c479771d4124d308eebac
-          path: prep-sheet
-      - uses: actions/checkout@v7
-        with:
-          repository: peca12968/pass-rail
-          ref: e52bdb1468117899cf0b5c91d871208ae5ef6264
-          path: pass-rail
-      - uses: actions/checkout@v7
-        with:
-          repository: peca12968/batch-clock
-          ref: b7802ce073aca960aa5c5b81de40a1c81b9e83ba
-          path: batch-clock
-          persist-credentials: false
-      - uses: actions/checkout@v7
-        with:
-          repository: peca12968/receipt-returns
-          ref: d6dc1490e568ced896b62f7adfb56b3ba1714cb6
-          path: receipt-returns
-          persist-credentials: false
       - run: npx playwright test
         working-directory: qa
-        env:
-          PREP_PROJECT: ${{ github.workspace }}/prep-sheet
-          RAIL_PROJECT: ${{ github.workspace }}/pass-rail
-          BATCH_CLOCK_PROJECT: ${{ github.workspace }}/batch-clock
-          RECEIPT_RETURNS_PROJECT: ${{ github.workspace }}/receipt-returns
+      - run: python -m pip install -r modules/table-scan-check/requirements.txt
+      - run: python scripts/verify-operations.py tables
+  operations:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+          cache: npm
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: '10.0.x'
+      - run: npm ci --include=optional
+      - run: npm ci --prefix modules/pickup-agenda
+      - run: python -m pip install -r modules/stockroom-reservations/requirements-dev.txt -r modules/pickup-agenda/requirements.txt
+      - run: python scripts/verify-operations.py operations
+  cashier:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: '10.0.x'
+      - run: python -m pip install -r modules/float-plan/requirements.txt
+      - run: python scripts/verify-operations.py cashier

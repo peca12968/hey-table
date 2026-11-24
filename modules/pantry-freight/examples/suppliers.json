@@ -1,0 +1,125 @@
+{
+  "currency": "TWD",
+  "suppliers": [
+    {
+      "id": "market",
+      "shipping": 35,
+      "free_at": 165
+    },
+    {
+      "id": "depot",
+      "shipping": 29,
+      "free_at": null
+    }
+  ],
+  "offers": [
+    {
+      "sku": "market-cutlet",
+      "supplier": "market",
+      "component": "cutlet",
+      "unit": "片",
+      "pack": 2,
+      "price": 58,
+      "stock": 3
+    },
+    {
+      "sku": "market-chicken",
+      "supplier": "market",
+      "component": "chicken",
+      "unit": "g",
+      "pack": 300,
+      "price": 45,
+      "stock": 3
+    },
+    {
+      "sku": "market-eggs",
+      "supplier": "market",
+      "component": "eggs",
+      "unit": "顆",
+      "pack": 3,
+      "price": 15,
+      "stock": 3
+    },
+    {
+      "sku": "market-grain",
+      "supplier": "market",
+      "component": "grain",
+      "unit": "g",
+      "pack": 400,
+      "price": 25,
+      "stock": 3
+    },
+    {
+      "sku": "market-soy",
+      "supplier": "market",
+      "component": "soy",
+      "unit": "ml",
+      "pack": 25,
+      "price": 7,
+      "stock": 3
+    },
+    {
+      "sku": "market-kombu",
+      "supplier": "market",
+      "component": "kombu",
+      "unit": "g",
+      "pack": 5,
+      "price": 8,
+      "stock": 3
+    },
+    {
+      "sku": "depot-cutlet",
+      "supplier": "depot",
+      "component": "cutlet",
+      "unit": "片",
+      "pack": 2,
+      "price": 53,
+      "stock": 3
+    },
+    {
+      "sku": "depot-chicken",
+      "supplier": "depot",
+      "component": "chicken",
+      "unit": "g",
+      "pack": 300,
+      "price": 41,
+      "stock": 3
+    },
+    {
+      "sku": "depot-eggs",
+      "supplier": "depot",
+      "component": "eggs",
+      "unit": "顆",
+      "pack": 3,
+      "price": 12,
+      "stock": 3
+    },
+    {
+      "sku": "depot-grain",
+      "supplier": "depot",
+      "component": "grain",
+      "unit": "g",
+      "pack": 400,
+      "price": 22,
+      "stock": 3
+    },
+    {
+      "sku": "depot-soy",
+      "supplier": "depot",
+      "component": "soy",
+      "unit": "ml",
+      "pack": 25,
+      "price": 6,
+      "stock": 3
+    },
+    {
+      "sku": "depot-kombu",
+      "supplier": "depot",
+      "component": "kombu",
+      "unit": "g",
+      "pack": 5,
+      "price": 7,
+      "stock": 3
+    }
+  ]
+}

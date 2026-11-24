@@ -1,0 +1,10 @@
+{
+  "name": "@peca12968/combo-counter",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": "./quote.mjs",
+  "files": ["quote.mjs"],
+  "scripts": { "test": "node --test quote.test.mjs" },
+  "engines": { "node": ">=22" }
+}

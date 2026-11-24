@@ -1,0 +1,28 @@
+{
+  "components": {
+    "rice":{"name":"白飯","unit":"g","yield":400,"inputs":{"grain":180,"water":240}},
+    "sauce":{"name":"丼飯醬","unit":"ml","yield":80,"inputs":{"dashi":75,"soy":10}},
+    "dashi":{"name":"高湯","unit":"ml","yield":120,"inputs":{"water":140,"kombu":2}},
+    "grain":{"name":"生米","unit":"g","pack":1000},
+    "water":{"name":"用水","unit":"ml","pack":1},
+    "soy":{"name":"醬油","unit":"ml","pack":300},
+    "kombu":{"name":"昆布","unit":"g","pack":40},
+    "cutlet":{"name":"豬排","unit":"片","pack":4},
+    "chicken":{"name":"雞肉","unit":"g","pack":500},
+    "eggs":{"name":"雞蛋","unit":"顆","pack":10},
+    "gyoza":{"name":"餃子","unit":"顆","pack":30},
+    "beans":{"name":"毛豆","unit":"g","pack":500},
+    "tea":{"name":"茶葉","unit":"g","pack":100}
+  },
+  "dishes": {
+    "katsudon":[
+      {"from_ms":0,"uses":{"rice":180,"sauce":30,"cutlet":1,"eggs":1}},
+      {"from_ms":1000,"uses":{"rice":200,"sauce":40,"cutlet":1,"eggs":1}}
+    ],
+    "oyakodon":[{"from_ms":0,"uses":{"rice":180,"sauce":25,"dashi":10,"chicken":140,"eggs":1}}],
+    "karaage":[{"from_ms":0,"uses":{"chicken":160}}],
+    "gyoza":[{"from_ms":0,"uses":{"gyoza":6}}],
+    "edamame":[{"from_ms":0,"uses":{"beans":100}}],
+    "sencha":[{"from_ms":0,"uses":{"tea":4,"water":220}}]
+  }
+}

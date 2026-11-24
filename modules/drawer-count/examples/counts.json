@@ -1,0 +1,9 @@
+{
+  "currency": "TWD",
+  "events": [
+    {"id":"float-01","after":null,"kind":"add","counts":[0,2,1,0,0]},
+    {"id":"noon","after":"pickup-sencha","kind":"count","counts":[0,2,2,2,2]},
+    {"id":"safe-01","after":"pickup-katsudon","kind":"remove","counts":[0,0,0,0,2]},
+    {"id":"handover","after":"pickup-katsudon","kind":"close","counts":[0,2,0,2,2]}
+  ]
+}

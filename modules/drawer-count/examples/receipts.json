@@ -1,0 +1,98 @@
+{
+  "denominations": [
+    1,
+    5,
+    10,
+    50,
+    100
+  ],
+  "receipts": [
+    {
+      "id": "A03-katsudon",
+      "status": "accepted",
+      "paid": 200,
+      "change": [
+        0,
+        2,
+        0,
+        0,
+        0
+      ],
+      "reserveUsed": 0,
+      "drawer": [
+        0,
+        1,
+        1,
+        1,
+        2
+      ]
+    },
+    {
+      "id": "pickup-sencha",
+      "status": "accepted",
+      "paid": 100,
+      "change": [
+        0,
+        1,
+        0,
+        1,
+        0
+      ],
+      "reserveUsed": 0,
+      "drawer": [
+        0,
+        0,
+        1,
+        0,
+        3
+      ]
+    },
+    {
+      "id": "A05-edamame",
+      "status": "no_exact_change",
+      "paid": 100,
+      "change": [
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "reserveUsed": 0,
+      "drawer": [
+        0,
+        0,
+        1,
+        0,
+        3
+      ]
+    },
+    {
+      "id": "pickup-katsudon",
+      "status": "accepted",
+      "paid": 200,
+      "change": [
+        0,
+        0,
+        1,
+        0,
+        0
+      ],
+      "reserveUsed": 1,
+      "drawer": [
+        0,
+        0,
+        0,
+        0,
+        5
+      ]
+    }
+  ],
+  "closing": [
+    0,
+    0,
+    0,
+    0,
+    5
+  ]
+}

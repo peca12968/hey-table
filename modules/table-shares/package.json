@@ -1,0 +1,8 @@
+{
+  "name": "@peca12968/table-shares",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": "./split.mjs",
+  "files": ["split.mjs"]
+}

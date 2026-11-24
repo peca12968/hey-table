@@ -1,0 +1,74 @@
+{
+  "cards": [
+    {
+      "table": "A01",
+      "image": "A01.png",
+      "expected": "https://private-preview.ordering.example/?table=A01"
+    },
+    {
+      "table": "A02",
+      "image": "A02.png",
+      "expected": "https://private-preview.ordering.example/?table=A02"
+    },
+    {
+      "table": "A03",
+      "image": "A03.png",
+      "expected": "https://private-preview.ordering.example/?table=A03"
+    },
+    {
+      "table": "A04",
+      "image": "A04.png",
+      "expected": "https://private-preview.ordering.example/?table=A04"
+    },
+    {
+      "table": "A05",
+      "image": "A05.png",
+      "expected": "https://private-preview.ordering.example/?table=A05"
+    },
+    {
+      "table": "A06",
+      "image": "A06.png",
+      "expected": "https://private-preview.ordering.example/?table=A06"
+    },
+    {
+      "table": "A07",
+      "image": "A07.png",
+      "expected": "https://private-preview.ordering.example/?table=A07"
+    },
+    {
+      "table": "A08",
+      "image": "A08.png",
+      "expected": "https://private-preview.ordering.example/?table=A08"
+    }
+  ],
+  "profiles": [
+    {
+      "name": "straight",
+      "width_px": 180,
+      "tilt": 0,
+      "blur_sigma": 0,
+      "required": true
+    },
+    {
+      "name": "small",
+      "width_px": 128,
+      "tilt": 0,
+      "blur_sigma": 0,
+      "required": true
+    },
+    {
+      "name": "angled",
+      "width_px": 180,
+      "tilt": 0.18,
+      "blur_sigma": 0.7,
+      "required": true
+    },
+    {
+      "name": "low-resolution",
+      "width_px": 56,
+      "tilt": 0.24,
+      "blur_sigma": 1.2,
+      "required": false
+    }
+  ]
+}

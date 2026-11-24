@@ -1,0 +1,7 @@
+{
+  "name": "pickup-agenda-integration",
+  "private": true,
+  "type": "module",
+  "scripts": {"test":"node --test calendar.test.mjs"},
+  "devDependencies": {"ical.js":"2.2.1"}
+}

@@ -1,0 +1,6 @@
+[
+  {"id":1,"created":90000,"mode":"pickup","paymentMethod":"line_pay","paymentEnv":"demo"},
+  {"id":2,"created":90000,"mode":"table","paymentMethod":"px_pay_plus","paymentEnv":"demo"},
+  {"id":3,"created":90000,"mode":"pickup","paymentMethod":"line_pay","paymentEnv":"demo"},
+  {"id":5,"created":90000,"mode":"pickup","paymentMethod":"cash","paymentEnv":"cash"}
+]

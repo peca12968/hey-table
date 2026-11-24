@@ -1,0 +1,16 @@
+{
+  "start_ms": 100000,
+  "cutoff_ms": 111000,
+  "holds": [
+    {"reservation":{"id":"A","state":"held","held":1,"expires_at_ms":105000},"boxes":[]},
+    {"reservation":{"id":"B","state":"held","held":4,"expires_at_ms":108000},"boxes":[]},
+    {"reservation":{"id":"C","state":"held","held":3,"expires_at_ms":110000},"boxes":[]},
+    {"reservation":{"id":"D","state":"held","held":2,"expires_at_ms":null},"boxes":[]}
+  ],
+  "work": [
+    {"reservation_id":"A","ready_ms":100000,"pack_ms":4000,"boxes":[{"shipment_id":"A1","quantity":1}]},
+    {"reservation_id":"B","ready_ms":102000,"pack_ms":5000,"boxes":[{"shipment_id":"B1","quantity":2},{"shipment_id":"B2","quantity":2}]},
+    {"reservation_id":"C","ready_ms":107000,"pack_ms":2000,"boxes":[{"shipment_id":"C1","quantity":3}]},
+    {"reservation_id":"D","ready_ms":109000,"pack_ms":1000,"boxes":[{"shipment_id":"D1","quantity":2}]}
+  ]
+}

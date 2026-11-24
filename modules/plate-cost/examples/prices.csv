@@ -1,0 +1,10 @@
+component,unit,from_ms,pack_quantity,pack_price_twd
+grain,g,0,1000,80
+water,ml,0,1000,1
+soy,ml,0,300,60
+kombu,g,0,40,100
+eggs,顆,0,10,60
+chicken,g,0,500,100
+gyoza,顆,0,30,120
+tea,g,0,100,150
+gyoza,顆,1796000000000,30,150

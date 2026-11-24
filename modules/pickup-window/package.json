@@ -1,0 +1,11 @@
+{
+  "name": "@peca12968/pickup-window",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./estimate.mjs",
+    "./demo-kitchen.json": "./examples/kitchen.json"
+  },
+  "files": ["estimate.mjs", "examples/kitchen.json"]
+}

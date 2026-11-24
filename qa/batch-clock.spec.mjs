@@ -11,7 +11,7 @@ const patch=(api,revision,kitchen)=>api.patch(endpoint,{headers,data:{revision,k
 const tea=async api=>(await api.post("/api/quote",{data:{items:[{id:"sencha",qty:3}]}})).json();
 
 test("staff compare a Batch Clock export, activate it and restore while stale writers are blocked",async({browser,page,request})=>{
-  const clock=process.env.BATCH_CLOCK_PROJECT||fileURLToPath(new URL("../../batch-clock/",import.meta.url));
+  const clock=process.env.BATCH_CLOCK_PROJECT||fileURLToPath(new URL("../modules/batch-clock/",import.meta.url));
   const dir=await mkdtemp(join(tmpdir(),"hey-table-timing-"));
   const kitchen=join(dir,"download.json"), model=join(dir,"measured.json");
   const other=await browser.newContext();

@@ -1,0 +1,8 @@
+posting_id,order_id,currency,amount_minor
+P-01,O-100,USD,12000
+P-02,O-100,USD,-2000
+P-03,O-101,USD,4000
+P-03,O-101,USD,4000
+P-04,O-102,TWD,72000
+P-05,O-999,USD,800
+P-06,O-104,EUR,1250

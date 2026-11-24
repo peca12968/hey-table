@@ -1,0 +1,9 @@
+{
+  "name": "@peca12968/menu-pairs",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": "./pairs.mjs",
+  "files": ["pairs.mjs"],
+  "scripts": {"test": "node --test pairs.test.mjs"}
+}

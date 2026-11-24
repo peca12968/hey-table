@@ -3,6 +3,7 @@ import {randomUUID} from "node:crypto";
 import {execFileSync} from "node:child_process";
 import {readFile} from "node:fs/promises";
 import {join} from "node:path";
+import {fileURLToPath} from "node:url";
 import jsQR from "jsqr";
 import {PNG} from "pngjs";
 
@@ -193,8 +194,8 @@ test("printable kitchen snapshot exports the displayed orders to Prep Sheet",asy
     expect(Object.keys(order).sort()).toEqual(["created","id","items","status"]);
     for(const line of order.items) expect(Object.keys(line).sort()).toEqual(["id","qty"]);
   }
-  if(process.env.PREP_PROJECT){
-    const root=process.env.PREP_PROJECT;
+  {
+    const root=process.env.PREP_PROJECT||fileURLToPath(new URL("../modules/prep-sheet/",import.meta.url));
     const plan=JSON.parse(execFileSync("python",[join(root,"prep.py"),"--orders",path,
       "--recipes",join(root,"examples","recipes.json"),"--stock",join(root,"examples","stock.json")],
       {encoding:"utf8",env:{...process.env,PYTHONUTF8:"1"}}));
@@ -307,8 +308,8 @@ test("staff downloads a fresh station export that remains safe to re-import out 
   const recent=await download();
   expect(recent.data.throughId).toBe(second);
   expect(recent.data.orders.find(order=>order.id===first).status).toBe("ready");
-  if(process.env.RAIL_PROJECT){
-    const root=process.env.RAIL_PROJECT;
+  {
+    const root=process.env.RAIL_PROJECT||fileURLToPath(new URL("../modules/pass-rail/",import.meta.url));
     const db=test.info().outputPath("station-rail.db");
     const run=(...args)=>JSON.parse(execFileSync("python",[join(root,"rail.py"),"--db",db,...args],
       {encoding:"utf8",env:{...process.env,PYTHONUTF8:"1"}}));

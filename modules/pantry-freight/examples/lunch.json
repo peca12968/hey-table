@@ -1,0 +1,135 @@
+{
+  "included_orders": [
+    1,
+    2
+  ],
+  "portions": [
+    {
+      "dish": "katsudon",
+      "from_ms": 0,
+      "quantity": 2
+    },
+    {
+      "dish": "katsudon",
+      "from_ms": 1000,
+      "quantity": 1
+    },
+    {
+      "dish": "oyakodon",
+      "from_ms": 0,
+      "quantity": 2
+    }
+  ],
+  "lines": [
+    {
+      "component": "rice",
+      "name": "白飯",
+      "unit": "g",
+      "action": "prepare",
+      "needed": 920,
+      "available": 220,
+      "batch_size": 400,
+      "batches": 2,
+      "remaining": 100
+    },
+    {
+      "component": "sauce",
+      "name": "丼飯醬",
+      "unit": "ml",
+      "action": "prepare",
+      "needed": 150,
+      "available": 30,
+      "batch_size": 80,
+      "batches": 2,
+      "remaining": 40
+    },
+    {
+      "component": "cutlet",
+      "name": "豬排",
+      "unit": "片",
+      "action": "purchase",
+      "needed": 3,
+      "available": 1,
+      "batch_size": 4,
+      "batches": 1,
+      "remaining": 2
+    },
+    {
+      "component": "chicken",
+      "name": "雞肉",
+      "unit": "g",
+      "action": "purchase",
+      "needed": 280,
+      "available": 0,
+      "batch_size": 500,
+      "batches": 1,
+      "remaining": 220
+    },
+    {
+      "component": "eggs",
+      "name": "雞蛋",
+      "unit": "顆",
+      "action": "purchase",
+      "needed": 5,
+      "available": 2,
+      "batch_size": 10,
+      "batches": 1,
+      "remaining": 7
+    },
+    {
+      "component": "grain",
+      "name": "生米",
+      "unit": "g",
+      "action": "purchase",
+      "needed": 360,
+      "available": 0,
+      "batch_size": 1000,
+      "batches": 1,
+      "remaining": 640
+    },
+    {
+      "component": "dashi",
+      "name": "高湯",
+      "unit": "ml",
+      "action": "prepare",
+      "needed": 170,
+      "available": 50,
+      "batch_size": 120,
+      "batches": 1,
+      "remaining": 0
+    },
+    {
+      "component": "soy",
+      "name": "醬油",
+      "unit": "ml",
+      "action": "purchase",
+      "needed": 20,
+      "available": 0,
+      "batch_size": 300,
+      "batches": 1,
+      "remaining": 280
+    },
+    {
+      "component": "water",
+      "name": "用水",
+      "unit": "ml",
+      "action": "purchase",
+      "needed": 620,
+      "available": 2000,
+      "batch_size": 1,
+      "batches": 0,
+      "remaining": 1380
+    },
+    {
+      "component": "kombu",
+      "name": "昆布",
+      "unit": "g",
+      "action": "purchase",
+      "needed": 2,
+      "available": 0,
+      "batch_size": 40,
+      "batches": 1,
+      "remaining": 38
+    }
+  ]
+}

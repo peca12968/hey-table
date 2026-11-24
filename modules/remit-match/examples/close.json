@@ -1,0 +1,254 @@
+{
+  "balanced": false,
+  "by_account": {
+    "food": {
+      "expected_twd": 475,
+      "bank_twd": 535,
+      "unassigned_twd": 485,
+      "delta_twd": 60
+    },
+    "second": {
+      "expected_twd": -100,
+      "bank_twd": -100,
+      "unassigned_twd": -100,
+      "delta_twd": 0
+    }
+  },
+  "batch_counts": {
+    "missing_bank": 6,
+    "amount_mismatch": 1
+  },
+  "duplicates_ignored": {
+    "notice": 0,
+    "bank": 0
+  },
+  "batches": [
+    {
+      "account": "food",
+      "payout_id": "A",
+      "status": "missing_bank",
+      "components_twd": {
+        "collection": 100
+      },
+      "expected_twd": 100,
+      "bank_twd": 0,
+      "delta_twd": -100,
+      "notice_lines": [
+        {
+          "account": "food",
+          "payout_id": "A",
+          "merchant": "lunch",
+          "line_id": "L1",
+          "method": "line_pay",
+          "kind": "collection",
+          "amount_twd": 100
+        }
+      ],
+      "bank_entries": []
+    },
+    {
+      "account": "food",
+      "payout_id": "B",
+      "status": "amount_mismatch",
+      "components_twd": {
+        "collection": 150
+      },
+      "expected_twd": 150,
+      "bank_twd": 50,
+      "delta_twd": -100,
+      "notice_lines": [
+        {
+          "account": "food",
+          "payout_id": "B",
+          "merchant": "dinner",
+          "line_id": "L2",
+          "method": "px_pay_plus",
+          "kind": "collection",
+          "amount_twd": 150
+        }
+      ],
+      "bank_entries": [
+        {
+          "account": "food",
+          "entry_id": "KNOWN",
+          "payout_id": "B",
+          "posted_on": "2026-11-20",
+          "amount_twd": 50
+        }
+      ]
+    },
+    {
+      "account": "food",
+      "payout_id": "C",
+      "status": "missing_bank",
+      "components_twd": {
+        "collection": 70
+      },
+      "expected_twd": 70,
+      "bank_twd": 0,
+      "delta_twd": -70,
+      "notice_lines": [
+        {
+          "account": "food",
+          "payout_id": "C",
+          "merchant": "lunch",
+          "line_id": "L3",
+          "method": "pi_wallet",
+          "kind": "collection",
+          "amount_twd": 70
+        }
+      ],
+      "bank_entries": []
+    },
+    {
+      "account": "food",
+      "payout_id": "D",
+      "status": "missing_bank",
+      "components_twd": {
+        "collection": 70
+      },
+      "expected_twd": 70,
+      "bank_twd": 0,
+      "delta_twd": -70,
+      "notice_lines": [
+        {
+          "account": "food",
+          "payout_id": "D",
+          "merchant": "dinner",
+          "line_id": "L4",
+          "method": "plus_pay",
+          "kind": "collection",
+          "amount_twd": 70
+        }
+      ],
+      "bank_entries": []
+    },
+    {
+      "account": "food",
+      "payout_id": "E",
+      "status": "missing_bank",
+      "components_twd": {
+        "collection": 60
+      },
+      "expected_twd": 60,
+      "bank_twd": 0,
+      "delta_twd": -60,
+      "notice_lines": [
+        {
+          "account": "food",
+          "payout_id": "E",
+          "merchant": "lunch",
+          "line_id": "L5",
+          "method": "jko_pay",
+          "kind": "collection",
+          "amount_twd": 60
+        }
+      ],
+      "bank_entries": []
+    },
+    {
+      "account": "food",
+      "payout_id": "F",
+      "status": "missing_bank",
+      "components_twd": {
+        "collection": 25
+      },
+      "expected_twd": 25,
+      "bank_twd": 0,
+      "delta_twd": -25,
+      "notice_lines": [
+        {
+          "account": "food",
+          "payout_id": "F",
+          "merchant": "lunch",
+          "line_id": "L6",
+          "method": "card",
+          "kind": "collection",
+          "amount_twd": 25
+        }
+      ],
+      "bank_entries": []
+    },
+    {
+      "account": "second",
+      "payout_id": "A",
+      "status": "missing_bank",
+      "components_twd": {
+        "refund": 100
+      },
+      "expected_twd": -100,
+      "bank_twd": 0,
+      "delta_twd": 100,
+      "notice_lines": [
+        {
+          "account": "second",
+          "payout_id": "A",
+          "merchant": "branch",
+          "line_id": "L1",
+          "method": "line_pay",
+          "kind": "refund",
+          "amount_twd": 100
+        }
+      ],
+      "bank_entries": []
+    }
+  ],
+  "unassigned_bank_entries": [
+    {
+      "account": "food",
+      "entry_id": "D01",
+      "payout_id": "",
+      "posted_on": "2026-11-21",
+      "amount_twd": 100
+    },
+    {
+      "account": "food",
+      "entry_id": "D02",
+      "payout_id": "",
+      "posted_on": "2026-11-22",
+      "amount_twd": 100
+    },
+    {
+      "account": "food",
+      "entry_id": "D03",
+      "payout_id": "",
+      "posted_on": "2026-11-22",
+      "amount_twd": 70
+    },
+    {
+      "account": "food",
+      "entry_id": "D04",
+      "payout_id": "",
+      "posted_on": "2026-11-22",
+      "amount_twd": 70
+    },
+    {
+      "account": "food",
+      "entry_id": "D05",
+      "payout_id": "",
+      "posted_on": "2026-11-22",
+      "amount_twd": 60
+    },
+    {
+      "account": "food",
+      "entry_id": "D06",
+      "payout_id": "",
+      "posted_on": "2026-11-23",
+      "amount_twd": 60
+    },
+    {
+      "account": "food",
+      "entry_id": "D07",
+      "payout_id": "",
+      "posted_on": "2026-11-22",
+      "amount_twd": 25
+    },
+    {
+      "account": "second",
+      "entry_id": "D01",
+      "payout_id": "",
+      "posted_on": "2026-11-22",
+      "amount_twd": -100
+    }
+  ]
+}

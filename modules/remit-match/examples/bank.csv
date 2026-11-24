@@ -1,0 +1,10 @@
+account,entry_id,payout_id,posted_on,amount_twd
+food,KNOWN,B,2026-11-20,50
+food,D01,,2026-11-21,100
+food,D02,,2026-11-22,100
+food,D03,,2026-11-22,70
+food,D04,,2026-11-22,70
+food,D05,,2026-11-22,60
+food,D06,,2026-11-23,60
+food,D07,,2026-11-22,25
+second,D01,,2026-11-22,-100

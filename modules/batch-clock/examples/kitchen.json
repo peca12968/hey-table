@@ -1,0 +1,57 @@
+{
+  "stations": {
+    "hot": 2,
+    "cold": 1,
+    "bar": 1
+  },
+  "recipes": {
+    "katsudon": {
+      "station": "hot",
+      "batchSize": 2,
+      "seconds": [
+        300,
+        420
+      ]
+    },
+    "oyakodon": {
+      "station": "hot",
+      "batchSize": 1,
+      "seconds": [
+        240,
+        300
+      ]
+    },
+    "karaage": {
+      "station": "hot",
+      "batchSize": 2,
+      "seconds": [
+        180,
+        240
+      ]
+    },
+    "gyoza": {
+      "station": "hot",
+      "batchSize": 2,
+      "seconds": [
+        180,
+        240
+      ]
+    },
+    "edamame": {
+      "station": "cold",
+      "batchSize": 3,
+      "seconds": [
+        45,
+        60
+      ]
+    },
+    "sencha": {
+      "station": "bar",
+      "batchSize": 2,
+      "seconds": [
+        60,
+        90
+      ]
+    }
+  }
+}

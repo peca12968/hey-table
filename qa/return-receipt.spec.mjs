@@ -3,6 +3,7 @@ import {randomUUID} from "node:crypto";
 import {readFile} from "node:fs/promises";
 import {execFileSync} from "node:child_process";
 import {join} from "node:path";
+import {fileURLToPath} from "node:url";
 
 const endpoint="/api/kitchen/return-receipt";
 const staff={Authorization:"Bearer local-test-kitchen"};
@@ -31,8 +32,7 @@ test("staff lookup returns frozen prices for plain receipts and rejects invalid 
 });
 
 test("staff finds an archived combo receipt on mobile and imports its download into Receipt Returns",async({request,page})=>{
-  const project=process.env.RECEIPT_RETURNS_PROJECT;
-  test.skip(!project,"Set RECEIPT_RETURNS_PROJECT to exercise the actual offline CLI");
+  const project=process.env.RECEIPT_RETURNS_PROJECT||fileURLToPath(new URL("../modules/receipt-returns/",import.meta.url));
   const {ticket,token}=await place(request,{mode:"table",table:"A03",note:"另放餐具",
     items:[{id:"oyakodon",qty:1},{id:"gyoza",qty:2},{id:"sencha",qty:1}],
     paymentMethod:"px_pay_plus",comboVersion:"demo-v1",expectedTotal:345});

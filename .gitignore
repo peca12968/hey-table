@@ -3,6 +3,8 @@
 **/node_modules/
 **/test-results/
 **/playwright-report/
+**/__pycache__/
+**/.pytest_cache/
 /.pnp
 .pnp.*
 # Keep authored Yarn tooling if the project adopts Yarn.
@@ -35,7 +37,7 @@ yarn-error.log*
 *.pem
 
 # Checkout-local tool state
-/.wrangler/
+**/.wrangler/
 /.sites-runtime/
 
 # Workspace scaffolding and publication archives

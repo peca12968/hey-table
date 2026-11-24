@@ -1,0 +1,11 @@
+{
+  "denominations": [1, 5, 10, 50, 100],
+  "opening": [0, 3, 1, 1, 0],
+  "reserve": [0, 0, 1, 0, 0],
+  "payments": [
+    {"id": "A03-katsudon", "price": 190, "tender": [0, 0, 0, 0, 2]},
+    {"id": "pickup-sencha", "price": 45, "tender": [0, 0, 0, 0, 1]},
+    {"id": "A05-edamame", "price": 55, "tender": [0, 0, 0, 0, 1]},
+    {"id": "pickup-katsudon", "price": 190, "tender": [0, 0, 0, 0, 2]}
+  ]
+}

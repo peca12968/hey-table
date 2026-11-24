@@ -1,0 +1,47 @@
+{
+  "currency": "TWD",
+  "subtotal": 385,
+  "discount": 40,
+  "total": 345,
+  "bundles": [
+    {
+      "id": "chicken-gyoza",
+      "main": "oyakodon",
+      "side": "gyoza",
+      "qty": 1,
+      "unitPrice": 215,
+      "unitSavings": 40,
+      "mainUnitDiscount": 27,
+      "sideUnitDiscount": 13
+    }
+  ],
+  "lines": [
+    {
+      "id": "gyoza",
+      "qty": 2,
+      "price": 85,
+      "subtotal": 170,
+      "paired": 1,
+      "discount": 13,
+      "total": 157
+    },
+    {
+      "id": "oyakodon",
+      "qty": 1,
+      "price": 170,
+      "subtotal": 170,
+      "paired": 1,
+      "discount": 27,
+      "total": 143
+    },
+    {
+      "id": "sencha",
+      "qty": 1,
+      "price": 45,
+      "subtotal": 45,
+      "paired": 0,
+      "discount": 0,
+      "total": 45
+    }
+  ]
+}
