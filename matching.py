@@ -1,5 +1,6 @@
 """Classify every possible partner across maximum one-to-one interval matchings."""
 from bisect import bisect_left, bisect_right
+from collections import deque
 from heapq import heappop, heappush
 
 
@@ -45,7 +46,34 @@ def components(graph, reverse):
     return labels
 
 
-def classify(deposits, windows):
+def repair_matching(neighbors, selected, original_size):
+    """Recover lost pairs using alternating paths in the filtered graph."""
+    owner = {batch: entry for entry, batch in selected.items()}
+    while len(selected) < original_size:
+        queue = deque(entry for entry in range(len(neighbors)) if entry not in selected)
+        parent = {}
+        end = None
+        while queue and end is None:
+            entry = queue.popleft()
+            for batch in neighbors[entry]:
+                if batch == selected.get(entry) or batch in parent:
+                    continue
+                parent[batch] = entry
+                if batch not in owner:
+                    end = batch
+                    break
+                queue.append(owner[batch])
+        if end is None:
+            break
+        while end is not None:
+            entry = parent[end]
+            previous = selected.get(entry)
+            selected[entry] = end
+            owner[end] = entry
+            end = previous
+
+
+def classify(deposits, windows, excluded=frozenset()):
     """deposits: (date, entry_id), windows: (first_date, last_date, payout_id)."""
     deposits = sorted(deposits)
     windows = sorted(windows)
@@ -63,10 +91,22 @@ def classify(deposits, windows):
             _, selected[entry] = heappop(pending)
 
     count = len(deposits)
+    neighbors = [[] for _ in deposits]
+    original_size = len(selected)
+    for batch, (first, last, payout) in enumerate(windows):
+        for entry in range(bisect_left(dates, first), bisect_right(dates, last)):
+            if (deposits[entry][1], payout) in excluded:
+                if selected.get(entry) == batch:
+                    del selected[entry]
+            else:
+                neighbors[entry].append(batch)
+    if len(selected) < original_size:
+        repair_matching(neighbors, selected, original_size)
+
     graph = [[] for _ in range(count + len(windows))]
     reverse = [[] for _ in graph]
-    for batch, (first, last, _) in enumerate(windows):
-        for entry in range(bisect_left(dates, first), bisect_right(dates, last)):
+    for entry, batches in enumerate(neighbors):
+        for batch in batches:
             left, right = entry, count + batch
             if selected.get(entry) == batch:
                 left, right = right, left
