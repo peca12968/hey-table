@@ -49,6 +49,24 @@ function statusHistory(row) {
   if (history.at(-1).status !== row.status) history.push({status:row.status,at:null});
   return history;
 }
+function kitchenSchedule(rows, timing, cart) {
+  const capturedAt = Date.now();
+  const orders = rows.map(row => ({...row,items:JSON.parse(row.items)}));
+  const snapshot = {format:"hey-table.station-orders.v1",capturedAt,throughId:orders[0]?.id??0,orders};
+  const {kitchen}=fromTimingRow(timing);
+  const plan=estimate(snapshot,kitchen,cart);
+  return {plan, timingSource:timingChanges(demoKitchen,kitchen).length?"store":undefined};
+}
+function receiptTiming(row, queue, timing) {
+  try {
+    const {plan,timingSource}=kitchenSchedule(queue,timing);
+    const order=plan.orders.find(entry=>entry.orderId===row.id);
+    return order && {capturedAt:plan.capturedAt,seconds:order.seconds,timingSource};
+  } catch {
+    // A historic item can outlive its recipe. Keep the receipt and status available.
+    return undefined;
+  }
+}
 function menuItems(lines) {
   if (!Array.isArray(lines) || !lines.length || lines.length > dishes.length) return null;
   const byId = new Map();
@@ -162,12 +180,8 @@ export async function api(request, env) {
     ]);
     if (stock.results.some(row => items.some(item => item.id === row.dish)))
       return fail("餐單中有已售完餐點，請調整數量後再試算",409);
-    const capturedAt = Date.now();
-    const orders = queue.results.map(row => ({...row,items:JSON.parse(row.items)}));
-    const snapshot = {format:"hey-table.station-orders.v1", capturedAt, throughId:orders[0]?.id ?? 0, orders};
-    const {kitchen}=fromTimingRow(timing.results[0]);
-    const {quote} = estimate(snapshot, kitchen, {cart:{items}});
-    return json({capturedAt, seconds:quote.seconds,...(timingChanges(demoKitchen,kitchen).length?{timingSource:"store"}:{})});
+    const {plan,timingSource}=kitchenSchedule(queue.results,timing.results[0],{cart:{items}});
+    return json({capturedAt:plan.capturedAt,seconds:plan.quote.seconds,timingSource});
   }
   if (path === "/api/orders" && method === "POST") {
     const order = prepare(input);
@@ -211,10 +225,30 @@ export async function api(request, env) {
   if (path === "/api/ticket" && method === "GET") {
     const token = request.headers.get("X-Ticket");
     if (!uuid.test(token)) return fail("找不到訂單",404);
-    const row = await db.prepare(selectOrders+" WHERE token=?").bind(token).first();
+    const lookup=db.prepare(selectOrders+" WHERE token=?").bind(token);
+    const withTiming=url.searchParams.get("timing")==="1";
+    let row, queue, timing;
+    if(withTiming){
+      const [saved,active,settings]=await db.batch([
+        lookup,
+        db.prepare(`SELECT queued.id,queued.created,queued.items,queued.status
+          FROM orders AS ticket JOIN orders AS queued
+          ON queued.status='preparing' AND
+          (queued.created<ticket.created OR (queued.created=ticket.created AND queued.id<=ticket.id))
+          WHERE ticket.token=? AND ticket.status='preparing' ORDER BY queued.id DESC`).bind(token),
+        db.prepare(timingRows+" LIMIT 1"),
+      ]);
+      row=saved.results[0];
+      queue=active.results;
+      timing=settings.results[0];
+    }else row=await lookup.first();
     if (!row) return fail("找不到訂單",404);
     const saved = receipt(row);
     if (url.searchParams.get("progress") === "1") saved.statusHistory = statusHistory(row);
+    if(withTiming&&row.status==="preparing"){
+      const quote=receiptTiming(row,queue,timing);
+      if(quote)saved.kitchenQuote=quote;
+    }
     return json(saved);
   }
   if (path === "/api/kitchen/prep" && method === "GET") {

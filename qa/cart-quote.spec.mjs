@@ -2,6 +2,55 @@ import {test,expect} from "@playwright/test";
 import {randomUUID} from "node:crypto";
 
 const staff={Authorization:"Bearer local-test-kitchen"};
+test("a receipt estimates its own place in the live queue and hides the estimate when ready",async({page,request})=>{
+  async function create(qty,note,table=null){
+    const token=randomUUID();
+    const response=await request.post("/api/orders",{data:{token,mode:table?"table":"pickup",table,note,items:[{id:"oyakodon",qty}]}});
+    expect(response.ok()).toBe(true);
+    return {...await response.json(),token};
+  }
+  async function move(order,from,to){
+    const response=await request.patch("/api/kitchen/status",{headers:staff,data:{id:order.id,from,to}});
+    expect(response.ok()).toBe(true);
+  }
+  const earlier=await create(2,"僅廚房可見的前單", "A03");
+  const own=await create(1,"");
+  const later=await create(8,"僅廚房可見的後單");
+  const headers={"X-Ticket":own.token};
+  const url="/api/ticket?progress=1&timing=1";
+  const read=()=>request.get(url,{headers}).then(response=>response.json());
+  expect((await request.get(url)).status()).toBe(404);
+  expect((await read()).kitchenQuote).toBeUndefined();
+  for(const order of [earlier,own,later])await move(order,"pending","preparing");
+  const response=await request.get(url,{headers});
+  expect(response.headers()["cache-control"]).toBe("no-store");
+  const body=await response.json();
+  expect(body.kitchenQuote).toEqual({capturedAt:expect.any(Number),seconds:[480,600]});
+  expect(JSON.stringify(body)).not.toContain("僅廚房可見");
+  const old=await request.get("/api/ticket?progress=1",{headers}).then(r=>r.json());
+  const {kitchenQuote,...legacy}=body;
+  expect(legacy).toEqual(old);
+
+  await page.setViewportSize({width:360,height:780});
+  await page.goto("/ticket#"+own.token);
+  const region=page.getByRole("region",{name:"餐單出餐估算"});
+  await expect(region).toContainText("約 8–10 分鐘");
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBe(360);
+  await move(earlier,"preparing","ready");
+  await page.getByRole("button",{name:"更新進度"}).click();
+  await expect(region).toContainText("約 4–5 分鐘");
+  await move(own,"preparing","ready");
+  await expect(region).toBeHidden({timeout:8000});
+  await expect(page.getByText("出示取餐 QR 碼",{exact:true})).toBeVisible();
+  const ready=await read();
+  expect(ready.status).toBe("ready");
+  expect(ready.kitchenQuote).toBeUndefined();
+  await move(own,"ready","completed");
+  await move(earlier,"ready","completed");
+  await move(later,"preparing","ready");
+  await move(later,"ready","completed");
+});
+
 test("cart reads the live kitchen, ignores unaccepted payments and releases finished work",async({page,request})=>{
   const create=async(items,paymentMethod="cash")=>{
     const r=await request.post("/api/orders",{data:{token:randomUUID(),mode:"pickup",note:"廚房備註",items,paymentMethod}});

@@ -170,6 +170,7 @@ test("upgrade old receipt progress without making up transition times",async t=>
   };
   const old=await get();
   assert.deepEqual(old.statusHistory,[{status:"pending",at:1},{status:"preparing",at:null}]);
+  assert.deepEqual(await get("?progress=1&timing=1"),old);
   const moved=await api(new Request("https://order.example/api/kitchen/status",{method:"PATCH",
     headers:{Authorization:"Bearer local-test-key","Content-Type":"application/json"},
     body:JSON.stringify({id:old.id,from:"preparing",to:"ready"})}),env);

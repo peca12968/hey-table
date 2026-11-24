@@ -9,6 +9,7 @@ import BillShares from "./bill-shares";
 import Payment from "./payment";
 import {methods,canPrepare} from "../../lib/payments.mjs";
 import {reorderable} from "../../lib/reorder.mjs";
+import {QuoteSummary} from "../cart-quote";
 const progressLabels={
   pending:"已送單",preparing:"店家接單，開始製作",ready:"餐點已備妥",completed:"已交餐",cancelled:"店家已取消",
 };
@@ -69,7 +70,7 @@ export default function Ticket(){
       if(inFlight)return;
       inFlight=true;
       try{
-        const value=await request("/api/ticket?progress=1",{headers:{"X-Ticket":route.token},signal:controller.signal});
+        const value=await request("/api/ticket?progress=1&timing=1",{headers:{"X-Ticket":route.token},signal:controller.signal});
         if(!controller.signal.aborted){setOrder(value);setError("");}
       }catch(e){if(!controller.signal.aborted)setError(e.message);}
       finally{inFlight=false;}
@@ -83,6 +84,11 @@ export default function Ticket(){
     {pending.length>0&&<section><h2>待確認的餐單</h2>{pending.map(table=><p key={table??"pickup"}><a className="outline" href={table?"/?table="+table:"/"}>確認 {table?table+" 桌":"自取"}送單結果</a></p>)}</section>}
     {error&&<p role="status">{error}</p>}{order&&<><div className="receiptMeta"><Mode table={order.table}/><b aria-live="polite">{order.status==='pending'&&!canPrepare(order)?'等待付款':labels[order.status]}</b></div>
     <p>{({pending:canPrepare(order)?"餐單已送達，等候店家接單。":"付款確認後，店家即可接單。",preparing:"廚房正在準備餐點。",ready:order.table?"餐點已完成，請留意桌邊送餐。":"餐點已完成，請出示取餐號碼。",completed:"這張餐單已完成。",cancelled:"店家已取消這張餐單。"})[order.status]}</p>
+    {!error&&order.kitchenQuote&&<section className="cartQuote" aria-label="餐單出餐估算">
+      <span>目前廚房排程</span>
+      <QuoteSummary quote={order.kitchenQuote}/>
+      <small>工時按完整批次估算，餐點備妥時會更新進度。</small>
+    </section>}
     {order.mode==="pickup"&&order.status==="ready"&&<PickupCode key={order.id} number={numberOf(order.id)}/>}
     <OrderProgress history={order.statusHistory}/>
     <ul className="orderLines">{order.items.map(d=><li key={d.id}><b>{d.name} × {d.qty}</b><span>NT$ {d.price*d.qty}</span></li>)}</ul>

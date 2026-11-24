@@ -9,6 +9,11 @@ function minutes(seconds) {
   return (low===high ? String(low) : low+"–"+high)+" 分鐘";
 }
 
+export function QuoteSummary({quote}) {
+  return <><strong>約 {minutes(quote.seconds)}</strong>
+    <small>{localTime.format(quote.capturedAt)} 依製作中餐單與{quote.timingSource==="store"?"店家設定工時":"示範工時"}估算</small></>;
+}
+
 export default function CartQuote({body}) {
   const [quote,setQuote]=useState(null), [error,setError]=useState(""), [revision,setRevision]=useState(0);
   useEffect(()=>{
@@ -28,7 +33,6 @@ export default function CartQuote({body}) {
   return <section className="cartQuote" aria-label="預估出餐時間">
     <div className="quoteHead"><span><Clock3 size={16} aria-hidden="true"/> 預估出餐</span>
       <button type="button" onClick={refresh} disabled={!quote&&!error}>重新試算</button></div>
-    <div role="status">{quote ? <><strong>約 {minutes(quote.seconds)}</strong>
-      <small>{localTime.format(quote.capturedAt)} 依製作中餐單與{quote.timingSource==="store"?"店家設定工時":"示範工時"}估算</small></> : error || "正在試算…"}</div>
+    <div role="status">{quote ? <QuoteSummary quote={quote}/> : error || "正在試算…"}</div>
   </section>;
 }
