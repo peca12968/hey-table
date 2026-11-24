@@ -7,6 +7,59 @@ import {fileURLToPath} from "node:url";
 import jsQR from "jsqr";
 import {PNG} from "pngjs";
 
+test("staff filter a mobile handoff queue by channel, table and exact collection number",async({page,request})=>{
+  await page.setViewportSize({width:360,height:800});
+  const headers={Authorization:"Bearer local-test-kitchen"};
+  await page.addInitScript(()=>sessionStorage.setItem("he-ri-staff","local-test-kitchen"));
+  async function ready(mode,table){
+    const token=randomUUID();
+    const submitted=await request.post("/api/orders",{data:{mode,table,token,note:"",items:[{id:"oyakodon",qty:1}]}});
+    expect(submitted.ok()).toBe(true);
+    const {id}=await submitted.json();
+    for (const [from,to] of [["pending","preparing"],["preparing","ready"]]){
+      const moved=await request.patch("/api/kitchen/status",{headers,data:{id,from,to}});
+      expect(moved.ok()).toBe(true);
+    }
+    return {id,token};
+  }
+  const pickup=await ready("pickup",null), table=await ready("table","A03"), other=await ready("table","A04");
+  const number=id=>String(id).padStart(4,"0");
+  const card=({id})=>page.locator(".kitchenTicket").filter({has:page.getByRole("heading",{name:"#"+number(id),exact:true})});
+  const search=page.getByRole("searchbox",{name:"取餐號碼"});
+  const scope=page.getByRole("combobox",{name:"管道或桌號"});
+  await page.goto("/kitchen");
+  await page.getByRole("button",{name:"待交餐",exact:true}).click();
+  await scope.selectOption("table");
+  await expect(card(pickup)).toHaveCount(0);
+  await expect(card(table)).toBeVisible();
+  await expect(card(other)).toBeVisible();
+  await scope.selectOption("A03");
+  await expect(card(other)).toHaveCount(0);
+  await expect(card(table)).toBeVisible();
+  await search.fill("#"+number(pickup.id));
+  await expect(page.locator(".kitchenTicket")).toHaveCount(0);
+  await scope.selectOption("pickup");
+  await search.fill("＃"+number(pickup.id).replace(/\d/g,d=>String.fromCharCode(d.charCodeAt(0)+0xfee0)));
+  await expect(card(pickup)).toBeVisible();
+  await expect(page.locator(".kitchenTicket")).toHaveCount(1);
+  await search.fill("A03");
+  await expect(search).toHaveAttribute("aria-invalid","true");
+  await expect(page.locator(".kitchenTicket")).toHaveCount(0);
+  await search.fill(String(pickup.id));
+  await card(pickup).getByRole("button",{name:"完成交餐"}).click();
+  await expect(card(pickup)).toHaveCount(0);
+  await expect(search).toHaveValue(String(pickup.id));
+  await page.getByRole("button",{name:"含近期結單",exact:true}).click();
+  await expect(card(pickup)).toBeVisible();
+  const receipt=await request.get("/api/ticket",{headers:{"X-Ticket":pickup.token}});
+  expect((await receipt.json()).status).toBe("completed");
+  await page.getByRole("button",{name:"清除搜尋條件"}).click();
+  await expect(search).toHaveValue("");
+  await expect(scope).toHaveValue("all");
+  await expect(card(table)).toBeVisible();
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBe(360);
+});
+
 test("mobile receipt follows committed kitchen progress for its own order",async({page,request})=>{
   await page.setViewportSize({width:360,height:800});
   const staff={Authorization:"Bearer local-test-kitchen"};
