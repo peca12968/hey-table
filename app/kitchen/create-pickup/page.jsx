@@ -1,13 +1,14 @@
 "use client";
 import {useEffect,useState} from "react";
-import {Header,Footer,request} from "../../shared";
+import {Header,Footer,PickupAppointment,request} from "../../shared";
 import {dishes,numberOf,withItemNotes} from "../../../lib/menu.mjs";
 import {ItemNotesEditor} from "../../item-notes";
+import PickupSlots from "../../pickup-slots";
 import "./pickup.css";
 
 const endpoint="/api/kitchen/create-pickup";
 const draftKey="he-ri-staff-pickup-draft";
-const empty={quantities:{},lineNotes:{},note:"",attempt:null,result:null};
+const empty={quantities:{},lineNotes:{},note:"",pickupSlot:null,attempt:null,result:null};
 
 function staffHeaders(){
   const key=sessionStorage.getItem("he-ri-staff");
@@ -47,8 +48,9 @@ export default function CreatePickup(){
     return true;
   }
 
-  const {quantities,lineNotes={},note,attempt,result}=draft??empty;
+  const {quantities,lineNotes={},note,pickupSlot=null,attempt,result}=draft??empty;
   const lines=dishes.filter(dish=>Number(quantities[dish.id])>0);
+  const count=lines.reduce((amount,dish)=>amount+Number(quantities[dish.id]),0);
   const total=lines.reduce((amount,dish)=>amount+dish.price*Number(quantities[dish.id]),0);
   const exceedsSupply=menu&&lines.some(dish=>Number(quantities[dish.id])>availableQuantity(menu,dish.id));
   const locked=busy||Boolean(attempt);
@@ -59,7 +61,8 @@ export default function CreatePickup(){
     if(busy||!menu||(!attempt&&(!lines.length||exceedsSupply)))return;
     setError("");
     const payload=attempt??{token:crypto.randomUUID(),note:note.trim(),expectedTotal:total,
-      items:withItemNotes(lines.map(dish=>({id:dish.id,qty:Number(quantities[dish.id])})),lineNotes)};
+      items:withItemNotes(lines.map(dish=>({id:dish.id,qty:Number(quantities[dish.id])})),lineNotes),
+      ...(pickupSlot===null?{}:{pickupSlot})};
     const pending={...draft,attempt:payload};
     if(!saveDraft(pending)){
       setError("瀏覽器無法保存送單資料。請開啟網站儲存權限後再送單。");
@@ -69,7 +72,7 @@ export default function CreatePickup(){
     try{
       const order=await request(endpoint,{method:"POST",headers:{"Content-Type":"application/json",...staffHeaders()},
         body:JSON.stringify(payload),signal:AbortSignal.timeout(15000)});
-      const complete={...empty,result:{id:order.id,total:order.total,token:payload.token}};
+      const complete={...empty,result:{id:order.id,total:order.total,token:payload.token,pickupSlot:order.pickupSlot}};
       if(!saveDraft(complete))setDraft(complete);
     }catch(failure){
       if(failure.status===400||failure.status===409){
@@ -100,6 +103,7 @@ export default function CreatePickup(){
     {menu&&result&&<section className="sheet pickupForm" aria-label="已建立自取單">
       <p role="status">已建立自取單</p>
       <h2>取餐號碼 {numberOf(result.id)}</h2>
+      <PickupAppointment start={result.pickupSlot}/>
       <p>現場付款 · NT$ {result.total}</p>
       <div className="actions">
         <a className="primary" target="_blank" rel="noreferrer" href={receiptLink}>開啟顧客收據</a>
@@ -129,6 +133,8 @@ export default function CreatePickup(){
         onChange={(id,value)=>setDraft({...draft,lineNotes:{...lineNotes,[id]:value}})}/>}
       <label className="note">訂單備註<textarea maxLength={160} value={note} disabled={locked}
         placeholder="例如：不要餐具" onChange={event=>setDraft({...draft,note:event.target.value})}/></label>
+      {count>0&&<PickupSlots selected={attempt?attempt.pickupSlot??null:pickupSlot} count={count} disabled={locked}
+        revision={revision} onChange={value=>{setError("");setDraft({...draft,pickupSlot:value});}}/>}
       <div className="total"><span>合計</span><b>NT$ {attempt?.expectedTotal??total}</b></div>
       {error&&<p className="error" role="alert">{error}</p>}
       {attempt&&!busy&&!error&&<p role="status">這張餐單的送單結果尚待確認。</p>}

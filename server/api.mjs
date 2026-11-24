@@ -250,7 +250,6 @@ export async function api(request, env) {
     return json({capturedAt:plan.capturedAt,seconds:plan.quote.seconds,timingSource});
   }
   if ((path === "/api/orders" || staffPickup) && method === "POST") {
-    if(staffPickup&&input.pickupSlot!=null)return fail("請使用線上自取預約時段");
     const order = prepare(staffPickup ? {...input,mode:"pickup",table:null} : input);
     if (!order) return fail("請確認桌號、餐點數量與備註");
     const source=staffPickup ? "staff" : null;
