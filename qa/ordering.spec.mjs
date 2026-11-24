@@ -7,6 +7,78 @@ import {fileURLToPath} from "node:url";
 import jsQR from "jsqr";
 import {PNG} from "pngjs";
 
+test("reorder adds available quantities at today's prices and submits only after confirmation",async({page,request})=>{
+  await page.setViewportSize({width:360,height:800});
+  const staff={Authorization:"Bearer local-test-kitchen"};
+  const token=randomUUID();
+  const original=await request.post("/api/orders",{data:{token,mode:"table",table:"A03",note:"舊餐單備註",
+    items:[{id:"oyakodon",qty:3},{id:"sencha",qty:1}]}});
+  expect(original.ok()).toBe(true);
+  const {id}=await original.json();
+  expect((await request.patch("/api/kitchen/status",{headers:staff,data:{id,from:"pending",to:"cancelled"}})).ok()).toBe(true);
+  const mark=available=>request.patch("/api/kitchen/availability",{headers:staff,data:{id:"sencha",available}});
+  expect((await mark(false)).ok()).toBe(true);
+  try{
+    await page.goto("/ticket#"+token);
+    await page.evaluate(()=>{
+      localStorage.setItem("he-ri-cart-v1:A03",JSON.stringify({cart:{oyakodon:19},note:"本次備註",method:"cash"}));
+      localStorage.setItem("he-ri-cart-v1:pickup",JSON.stringify({cart:{edamame:2},note:"自取餐單"}));
+    });
+    let posted=0;
+    page.on("request",req=>{if(req.method()==="POST"&&new URL(req.url()).pathname==="/api/orders")posted++;});
+    await page.route("**/api/ticket",async route=>{
+      const reply=await route.fetch();
+      const receipt=await reply.json();
+      await route.fulfill({response:reply,json:{...receipt,items:receipt.items.map(item=>({...item,price:1}))}});
+    });
+    await page.getByRole("link",{name:"再次點餐"}).click();
+    const review=page.getByRole("region",{name:"再次點餐"});
+    await expect(review.getByText(/雞肉親子丼.*可加入 1 份.*最多 20 份/)).toBeVisible();
+    await expect(review.getByText(/日式熱煎茶.*已售完/)).toBeVisible();
+    await expect(page.getByRole("textbox",{name:/訂單備註/})).toHaveValue("本次備註");
+    expect(posted).toBe(0);
+    await review.getByRole("button",{name:"加入這些餐點"}).click();
+    await expect(review).toBeHidden();
+    expect(new URL(page.url()).hash).toBe("");
+    const cart=page.getByRole("complementary",{name:"我的餐單"});
+    await expect(cart.getByRole("heading",{name:"我的餐單"})).toBeVisible();
+    await expect(cart.getByText("NT$ 3400",{exact:true}).first()).toBeVisible();
+    await expect(cart.getByText("日式熱煎茶",{exact:true})).toHaveCount(0);
+    expect(await page.evaluate(()=>JSON.parse(localStorage.getItem("he-ri-cart-v1:pickup")).cart)).toEqual({edamame:2});
+    expect(posted).toBe(0);
+    expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBe(360);
+    await cart.getByRole("button",{name:"確認送出訂單"}).click();
+    await expect(page.getByRole("heading",{name:/取餐號碼/})).toBeVisible();
+    expect(posted).toBe(1);
+    const newer=new URL(page.url()).hash.slice(1);
+    expect(newer).not.toBe(token);
+    const receipt=await (await request.get("/api/ticket",{headers:{"X-Ticket":newer}})).json();
+    expect(receipt).toMatchObject({table:"A03",note:"本次備註",total:3400,items:[{id:"oyakodon",qty:20,price:170}]});
+  }finally{
+    expect((await mark(true)).ok()).toBe(true);
+  }
+});
+
+test("reorder review preserves an unresolved order in the same cart",async({page,request})=>{
+  const token=randomUUID();
+  const response=await request.post("/api/orders",{data:{token,mode:"pickup",table:null,note:"",items:[{id:"oyakodon",qty:1}]}});
+  expect(response.ok()).toBe(true);
+  const {id}=await response.json();
+  expect((await request.patch("/api/kitchen/status",{headers:{Authorization:"Bearer local-test-kitchen"},
+    data:{id,from:"pending",to:"cancelled"}})).ok()).toBe(true);
+  const pending={token:randomUUID(),mode:"pickup",table:null,note:"待查餐單",items:[{id:"karaage",qty:1}]};
+  await page.addInitScript(draft=>localStorage.setItem("he-ri-cart-v1:pickup",
+    JSON.stringify({draft,cart:{karaage:1},note:draft.note})),pending);
+  await page.goto("/#reorder="+token);
+  const review=page.getByRole("region",{name:"再次點餐"});
+  await expect(review.getByText(/可加入 1 份/)).toBeVisible();
+  await expect(review.getByRole("button",{name:"加入這些餐點"})).toBeDisabled();
+  await review.getByRole("button",{name:"取消帶入"}).click();
+  await expect(review).toBeHidden();
+  await expect(page.getByRole("button",{name:"重試同一張訂單"})).toBeVisible();
+  expect(await page.evaluate(()=>JSON.parse(localStorage.getItem("he-ri-cart-v1:pickup")).draft)).toEqual(pending);
+});
+
 test("staff filter a mobile handoff queue by channel, table and exact collection number",async({page,request})=>{
   await page.setViewportSize({width:360,height:800});
   const headers={Authorization:"Bearer local-test-kitchen"};

@@ -47,3 +47,6 @@
 .kitchenFilters input,.kitchenFilters select{box-sizing:border-box;width:100%;margin-top:5px}
 .kitchenFilters select{padding:8px;border:1px solid #c7cdbf;border-radius:7px;background:#fffefa;color:inherit;font:inherit}
 .kitchenFilters button{min-height:40px}
+.reorder{border:1px solid var(--line);border-radius:8px;padding:10px 12px;margin:10px 0;background:var(--pale)}
+.reorder h3,.reorder p{margin:0 0 8px}
+.reorder ul{padding-left:1.2rem;margin:0 0 10px}

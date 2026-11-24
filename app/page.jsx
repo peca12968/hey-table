@@ -8,6 +8,7 @@ import {comboVersion,priceCombos} from "../lib/combo-pricing.mjs";
 import {intakeNotice} from "../lib/order-intake.mjs";
 import CartAddOn from "./cart-add-on";
 import CartQuote from "./cart-quote";
+import Reorder from "./reorder";
 
 import {methods,environmentLabel} from "../lib/payments.mjs";
 const groups=["全部","丼飯","小食","飲品"];
@@ -22,6 +23,7 @@ export default function Menu(){
   const activeMenuRequest=useRef(null);
   const [useCombo,setUseCombo]=useState(false);
   const [lookup,setLookup]=useState("");
+  const [repeat,setRepeat]=useState("");
   const refreshMenu=useCallback(async()=>{
     activeMenuRequest.current?.abort();
     const controller=new AbortController();
@@ -41,7 +43,9 @@ export default function Menu(){
   useEffect(()=>{
     const param=new URLSearchParams(location.search).get("table"), key=cartKey(param);
     setTable(param);setScope(key);const old=read(key,{});setUseCombo(old.useCombo===true);setCart(Object.fromEntries(dishes.filter(d=>Number.isInteger(old.cart?.[d.id]) && old.cart[d.id]>0 && old.cart[d.id]<=20).map(d=>[d.id,old.cart[d.id]])));setNote(old.note??"");setDraft(old.draft??null);setMethod(old.draft?.paymentMethod??old.method??'cash');
-    if(old.draft && window.matchMedia("(max-width: 680px)").matches) setPanel(true);
+    const token=new URLSearchParams(location.hash.slice(1)).get("reorder")??"";
+    setRepeat(token);
+    if((old.draft||token)&&window.matchMedia("(max-width: 680px)").matches) setPanel(true);
   },[]);
   useEffect(()=>{
     refreshMenu();
@@ -87,6 +91,21 @@ export default function Menu(){
   const applied=draft ? draft.comboVersion===comboVersion : useCombo && offer?.discount>0;
   const total=applied ? draft?.expectedTotal??offer.total : subtotal;
   function change(id,delta){if(draft||busy)return;setCart(old=>({...old,[id]:Math.max(0,Math.min(20,(old[id]||0)+delta))}));setError("");setAnnouncement((dishes.find(d=>d.id===id)?.name??"")+"數量已更新");}
+  function dismissRepeat(){
+    setRepeat("");
+    history.replaceState(history.state,"",location.pathname+location.search);
+  }
+  function addRepeat(plan){
+    if(draft||busy||sending.current||read(scope,{}).draft)return false;
+    setCart(current=>{
+      const next={...current};
+      for(const {id,added} of plan)if(added)next[id]=Math.min(20,(next[id]||0)+added);
+      return next;
+    });
+    dismissRepeat();
+    setAnnouncement("先前餐點已加入餐單，請確認後送出。");
+    return true;
+  }
   async function submit(){
     if(sending.current||invalid||!scope||!count||(!draft&&paused))return;
     sending.current=true;setBusy(true);setError("");
@@ -119,6 +138,8 @@ export default function Menu(){
     {panel&&<button className="shade" aria-label="關閉餐單" onClick={()=>setPanel(false)}/>}
     <aside className={"cart "+(panel?"opened":"")} aria-label="我的餐單"><div className="cartHead"><h2><ShoppingBag size={21}/> 我的餐單</h2><span>{count} 件</span><button className="mobileClose" aria-label="關閉" onClick={()=>setPanel(false)}><X size={19}/></button></div>
     <div className="cartMode"><Mode table={table}/><span>{methods[method]}</span></div>
+    {repeat&&scope&&!invalid&&<Reorder token={repeat} table={table} sold={sold} loaded={loaded} cart={cart}
+      blocked={!!draft||busy} onAdd={addRepeat} onClose={dismissRepeat}/>}
     {!count?<div className="empty"><Utensils size={30}/><strong>餐單還是空的</strong><p>從菜單加入想吃的餐點</p></div>:<ul className="orderLines">{lines.map(d=><li key={d.id}><div><b>{d.name}{sold.includes(d.id)?"（售完）":""}</b><small>NT$ {d.price*cart[d.id]}</small></div><div className="stepper"><button disabled={!!draft||busy} aria-label={"減少"+d.name} onClick={()=>change(d.id,-1)}><Minus size={14}/></button><span>{cart[d.id]}</span><button disabled={!!draft||busy||sold.includes(d.id)||cart[d.id]>=20} aria-label={"增加"+d.name} onClick={()=>change(d.id,1)}><Plus size={14}/></button></div></li>)}</ul>}
     {loaded&&!invalid&&!blocked&&!draft&&!busy&&lines.some(d=>d.group==="丼飯")&&
       <CartAddOn key={quoteBody+JSON.stringify(sold)} body={quoteBody} sold={sold} onAdd={id=>change(id,1)}/>}
