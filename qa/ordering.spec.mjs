@@ -21,7 +21,7 @@ test("mobile receipt follows committed kitchen progress for its own order",async
   const table=await create("table","A03");
   const pickup=await create("pickup",null);
   const move=(id,from,to)=>request.patch("/api/kitchen/status",{headers:staff,data:{id,from,to}});
-  const ticket=token=>request.get("/api/ticket",{headers:{"X-Ticket":token}});
+  const ticket=token=>request.get("/api/ticket?progress=1",{headers:{"X-Ticket":token}});
   await page.goto("/ticket#"+table.token);
   const progress=page.getByRole("region",{name:"餐單進度"});
   const list=progress.getByRole("listitem");

@@ -50,7 +50,7 @@ export default function Ticket(){
       if(inFlight)return;
       inFlight=true;
       try{
-        const value=await request("/api/ticket",{headers:{"X-Ticket":route.token},signal:controller.signal});
+        const value=await request("/api/ticket?progress=1",{headers:{"X-Ticket":route.token},signal:controller.signal});
         if(!controller.signal.aborted){setOrder(value);setError("");}
       }catch(e){if(!controller.signal.aborted)setError(e.message);}
       finally{inFlight=false;}

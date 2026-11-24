@@ -163,8 +163,8 @@ test("upgrade old receipt progress without making up transition times",async t=>
   });
   t.after(()=>db.sqlite.close());
   const env={DB:db,STAFF_KEY:"local-test-key"};
-  const get=async()=>{
-    const response=await api(new Request("https://order.example/api/ticket",{headers:{"X-Ticket":token}}),env);
+  const get=async(suffix="?progress=1")=>{
+    const response=await api(new Request("https://order.example/api/ticket"+suffix,{headers:{"X-Ticket":token}}),env);
     assert.equal(response.status,200);
     return response.json();
   };
@@ -176,12 +176,14 @@ test("upgrade old receipt progress without making up transition times",async t=>
   assert.equal(moved.status,200);
   const ready=await get();
   assert.equal(ready.status,"ready");
-  assert.deepEqual(ready.statusHistory.slice(0,2),old.statusHistory);
-  const last=ready.statusHistory.at(-1);
+  const {statusHistory,...standardReceipt}=ready;
+  assert.deepEqual(await get(""),standardReceipt);
+  assert.deepEqual(statusHistory.slice(0,2),old.statusHistory);
+  const last=statusHistory.at(-1);
   assert.ok(Number.isSafeInteger(last.at)&&last.at>1);
   const sample=JSON.parse(readFileSync(new URL("../examples/receipt-progress.json",import.meta.url),"utf8"));
   const milestones=history=>history.map(({status,at})=>[status,at===null]);
-  assert.deepEqual(milestones(ready.statusHistory),milestones(sample.find(row=>row.scenario==="legacy").statusHistory));
+  assert.deepEqual(milestones(statusHistory),milestones(sample.find(row=>row.scenario==="legacy").statusHistory));
 });
 for(const method of ["line_pay","px_pay_plus"]){
   test(method+" resolves a lost charge reply with the original bank reference",async t=>{

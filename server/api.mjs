@@ -201,13 +201,16 @@ export async function api(request, env) {
     if (saved.combo?.version !== input.comboVersion || (selected && saved.total !== input.expectedTotal) ||
         row.payment_method!==method || row.mode!==order.mode || row.table_no!==order.table || row.note!==order.note || !sameItems)
       return fail("送單識別碼已用於另一張訂單",409);
-    return json({...saved,statusHistory:statusHistory(row)});
+    return json(saved);
   }
   if (path === "/api/ticket" && method === "GET") {
     const token = request.headers.get("X-Ticket");
     if (!uuid.test(token)) return fail("找不到訂單",404);
     const row = await db.prepare(selectOrders+" WHERE token=?").bind(token).first();
-    return row ? json({...receipt(row),statusHistory:statusHistory(row)}) : fail("找不到訂單",404);
+    if (!row) return fail("找不到訂單",404);
+    const saved = receipt(row);
+    if (url.searchParams.get("progress") === "1") saved.statusHistory = statusHistory(row);
+    return json(saved);
   }
   if (path === "/api/kitchen/prep" && method === "GET") {
     const {results} = await db.prepare(`SELECT id, created, status, items FROM orders
