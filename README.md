@@ -11,7 +11,7 @@
 | 已發布的整批出貨版本 | 75 | 0 | 七個範例全部收到 HTTP 201。新增的整批出貨端點列在未覆蓋清單。 |
 | 將每筆保留上限改為 5 件的本機演練版 | 60 | 15 | 保留 6 件與 10 件的兩個範例收到 HTTP 422，其餘五個仍收到 201。 |
 
-其中一筆反例是 `POST /reservations` 的 `{"sku":"KIT-01","quantity":6}`。範例中它出現 12 次，另一筆 10 件的出現 3 次。兩筆的錯誤位置都是 `/quantity`，觸犯的規則都是 `maximum`。這些次數是演練權重，實際發布影響取決於所提供的請求樣本。[範例資料](examples/requests.json) · [兩個 Stockroom 版本的差異](https://github.com/peca12968/stockroom-reservations/compare/34165f1adceb2baceaa53997b7a79a86656e959b...d6d5139e2b4413fea49f83d15b3928c7e97be6da)
+其中一筆反例是 `POST /reservations` 的 `{"sku":"KIT-01","quantity":6}`。範例中它出現 12 次，另一筆 10 件的出現 3 次。兩筆的錯誤位置都是 `/quantity`，觸犯的規則都是 `maximum`。這些次數是演練權重，實際發布影響取決於所提供的請求樣本。[範例資料](examples/requests.json) · [兩個 Stockroom 版本的差異](https://github.com/peca12968/hey-table/compare/34165f1adceb2baceaa53997b7a79a86656e959b...d6d5139e2b4413fea49f83d15b3928c7e97be6da)
 
 ## 自己跑
 
@@ -27,7 +27,7 @@ python replay.py old-openapi.json new-openapi.json requests.json
 若要從 Stockroom 的 Git 歷史實際產生規格與回應紀錄，在新虛擬環境執行下列命令。若已有相鄰的完整 checkout，可直接使用。演練在暫存目錄載入兩版來源，合成的限制變更也只寫入該目錄。
 
 ```sh
-git clone https://github.com/peca12968/stockroom-reservations ../stockroom-reservations
+git clone https://github.com/peca12968/hey-table ../stockroom-reservations
 git -C ../stockroom-reservations checkout d6d5139e2b4413fea49f83d15b3928c7e97be6da
 python -m pip install -r requirements.txt -r ../stockroom-reservations/requirements-dev.txt
 python demo.py ../stockroom-reservations results

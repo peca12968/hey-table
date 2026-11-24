@@ -12,7 +12,7 @@ jobs:
       - uses: actions/checkout@v7
       - uses: actions/checkout@v7
         with:
-          repository: peca12968/stockroom-reservations
+          repository: peca12968/hey-table
           ref: d6d5139e2b4413fea49f83d15b3928c7e97be6da
           fetch-depth: 0
           path: stockroom-src
