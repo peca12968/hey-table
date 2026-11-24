@@ -174,6 +174,18 @@ export async function api(request, env) {
     return json({id:row.id, created:row.created, items, total:row.total,
       ...(row.combo_quote ? {combo:JSON.parse(row.combo_quote)} : {})});
   }
+  if (path === "/api/kitchen/payment-snapshot" && method === "GET") {
+    const environments = url.searchParams.getAll("environment");
+    const [environment] = environments;
+    if (environments.length !== 1 || !["sandbox", "production"].includes(environment))
+      return fail("請指定一個金流環境");
+    const limit = 5000;
+    const {results} = await db.prepare(`SELECT a.order_id, a.reference, a.trade_id, a.merchant, a.created, a.state,
+      o.payment_method, o.total FROM payment_attempts a JOIN orders o ON o.id=a.order_id
+      WHERE o.payment_env=? ORDER BY a.id LIMIT ?`).bind(environment, limit + 1).all();
+    if (results.length > limit) return fail("付款紀錄超過匯出範圍，請使用 SQLite 備份核帳",409);
+    return json({format:"hey-table.payment-snapshot.v1", capturedAt:Date.now(), environment, attempts:results});
+  }
   if ((path === "/api/kitchen" || path === "/api/kitchen/stations") && method === "GET") {
     const {results} = await db.prepare(`${selectOrders} WHERE status NOT IN ('completed','cancelled')
         OR id IN (SELECT id FROM orders WHERE status IN ('completed','cancelled') ORDER BY id DESC LIMIT 20)

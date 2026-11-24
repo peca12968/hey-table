@@ -1,7 +1,6 @@
 """Compare Hey Table payment attempts with TapPay Record API transactions for a Taipei day."""
 import argparse
 from collections import Counter, defaultdict
-from contextlib import closing
 from datetime import date, datetime, time, timedelta, timezone
 import json
 import os
@@ -10,6 +9,7 @@ import sqlite3
 import sys
 from urllib.error import URLError
 from urllib.request import HTTPRedirectHandler, Request, build_opener
+from restaurant_source import add_restaurant_source, open_restaurant
 
 STATES = {-1: "failed", 0: "authorized", 1: "paid", 2: "partial", 3: "refunded",
           4: "pending", 5: "cancelled"}
@@ -304,7 +304,7 @@ def load_inputs(scopes, snapshots, wallet_funding=False):
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("database", type=Path, help="read-only Hey Table SQLite backup")
+    add_restaurant_source(parser)
     parser.add_argument("--day", required=True, help="YYYY-MM-DD in Taiwan")
     parser.add_argument("--merchant", required=True, action="append", help="merchant ID, repeat for a combined close")
     parser.add_argument("--environment", required=True, choices=["sandbox", "production"])
@@ -320,8 +320,8 @@ def main(argv=None):
                   "start_time": start - DAY_MS, "end_time": start + 2 * DAY_MS - 1}
         merchants = sorted({identifier(m, "merchant ID") for m in args.merchant})
         scopes = {m: dict(window, merchant=m) for m in merchants}
-        inputs = load_inputs(scopes, args.snapshot, args.wallet_funding)
-        with closing(sqlite3.connect(args.database.resolve().as_uri() + "?mode=ro", uri=True)) as db:
+        with open_restaurant(args.database, args.restaurant_snapshot, args.environment) as db:
+            inputs = load_inputs(scopes, args.snapshot, args.wallet_funding)
             report = reconcile_accounts(db, scopes, start, inputs, args.wallet_funding)
         scope = scopes[merchants[0]] if len(merchants) == 1 else dict(window, merchants=merchants)
         print(json.dumps({"day": args.day, "scope": scope, **report}, sort_keys=True, ensure_ascii=False, indent=2))

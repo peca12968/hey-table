@@ -6,6 +6,7 @@ import {dishes,labels,numberOf,transitions} from "../../lib/menu.mjs";
 import {downloadJson} from "../../lib/download-json.mjs";
 import Timing from "./timing";
 import ReturnReceipt from "./return-receipt";
+import PaymentSnapshot from "./payment-snapshot";
 import {methods,paymentStates,environmentLabel,canPrepare,canCancel} from "../../lib/payments.mjs";
 const action={preparing:"接單製作",ready:"完成製作",completed:"完成交餐",cancelled:"取消訂單"};
 export default function Kitchen(){
@@ -44,6 +45,7 @@ export default function Kitchen(){
       <button className="outline" disabled={exporting} onClick={exportStations}>{exporting?"正在擷取訂單…":"下載分站出單檔"}</button></div>
     {exportMessage&&<p role="status">{exportMessage}</p>}
     <ReturnReceipt key={key} staffKey={key}/>
+    <PaymentSnapshot key={"payments-"+key} staffKey={key}/>
     <nav className="tabs">{[["active","處理中"],["pending","待接單"],["ready","待交餐"],["all","含近期結單"]].map(([v,n])=><button aria-pressed={v===filter} key={v} onClick={()=>setFilter(v)}>{n}</button>)}</nav>
     {filtered.length===0&&<div className="sheet muted">目前沒有符合條件的訂單。</div>}
     <div className="kGrid">{filtered.map(r=><article className="sheet kitchenTicket" key={r.id}><div className="menuTitle"><h2>#{numberOf(r.id)}</h2><Mode table={r.table}/></div><p><b>{labels[r.status]}</b> · {new Date(r.created).toLocaleTimeString("zh-TW",{hour:"2-digit",minute:"2-digit",timeZone:"Asia/Taipei"})}</p><ul className="orderLines">{r.items.map(d=><li key={d.id}>{d.name}<b>×{d.qty}</b></li>)}</ul>{r.note&&<p>備註　{r.note}</p>}<p>{methods[r.paymentMethod]} {r.paymentMethod!=="cash"&&[environmentLabel(r.paymentEnv),paymentStates[r.paymentState]].join(" · ")}</p><div className="total"><span>合計</span><b>NT$ {r.total}</b></div><div className="actions">{["sandbox","production"].includes(r.paymentEnv)&&<button className="outline" disabled={busy} onClick={()=>update("payment",{id:r.id})}>查詢金流</button>}{transitions[r.status].map(s=><button disabled={busy||(s==="cancelled"?!canCancel(r):!canPrepare(r))} className={s==="cancelled"?"outline":"primary"} key={s} onClick={()=>{if(s!=="cancelled"||window.confirm("取消這張訂單？"))update("status",{id:r.id,from:r.status,to:s});}}>{action[s]}</button>)}</div></article>)}</div>

@@ -2,7 +2,6 @@
 
 import argparse
 from collections import defaultdict
-from contextlib import closing
 from dataclasses import asdict, dataclass
 from datetime import date
 import json
@@ -14,6 +13,7 @@ from urllib.error import URLError
 from urllib.request import Request, build_opener
 
 from restaurant_close import COLUMNS, DAY_MS, NoRedirect, day_start, identifier, integer
+from restaurant_source import add_restaurant_source, open_restaurant
 
 
 ACTIONS = ("CAPTURE", "REFUND")
@@ -261,7 +261,7 @@ def reconcile(db, scope, records):
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("database", type=Path)
+    add_restaurant_source(parser)
     source = parser.add_mutually_exclusive_group(required=True)
     source.add_argument(
         "--snapshot",
@@ -291,17 +291,15 @@ def main(argv=None):
             "end_time_millis": start + DAY_MS - 1,
             "transaction_actions": list(ACTIONS),
         }
-        if args.snapshot:
-            records = read_snapshot(args.snapshot, scope)
-        else:
-            key = os.environ.get("TAPPAY_PARTNER_KEY")
-            if not key:
-                raise ValueError("TAPPAY_PARTNER_KEY is required for --fetch")
-            records = read_pages(fetch_pages(scope, key), scope)
-        with closing(
-            sqlite3.connect(args.database.resolve().as_uri() + "?mode=ro", uri=True)
-        ) as db:
+        with open_restaurant(args.database, args.restaurant_snapshot, args.environment) as db:
             db.execute("PRAGMA trusted_schema=OFF")
+            if args.snapshot:
+                records = read_snapshot(args.snapshot, scope)
+            else:
+                key = os.environ.get("TAPPAY_PARTNER_KEY")
+                if not key:
+                    raise ValueError("TAPPAY_PARTNER_KEY is required for --fetch")
+                records = read_pages(fetch_pages(scope, key), scope)
             report = reconcile(db, scope, records)
         print(
             json.dumps(

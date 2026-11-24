@@ -1,6 +1,27 @@
 import {test,expect} from "@playwright/test";
 import {randomUUID} from "node:crypto";
+import {readFile} from "node:fs/promises";
 const staff={Authorization:"Bearer local-test-kitchen"};
+
+test("staff can download a sandbox reconciliation snapshot on mobile",async({page})=>{
+  await page.setViewportSize({width:390,height:844});
+  await page.goto("/kitchen");
+  await expect(page.getByRole("heading",{name:"店員登入"})).toBeVisible();
+  await expect(page.getByText("匯出付款對帳快照",{exact:true})).toHaveCount(0);
+  await page.evaluate(()=>sessionStorage.setItem("he-ri-staff","local-test-kitchen"));
+  await page.reload();
+  await page.getByText("匯出付款對帳快照",{exact:true}).click();
+  await expect(page.getByRole("combobox",{name:"金流環境"})).toHaveValue("sandbox");
+  const download=page.waitForEvent("download");
+  await page.getByRole("button",{name:"下載付款快照 JSON"}).click();
+  const file=await download;
+  expect(file.suggestedFilename()).toMatch(/^hey-table-payments-sandbox-.*\.json$/);
+  expect(JSON.parse(await readFile(await file.path(),"utf8"))).toMatchObject({
+    format:"hey-table.payment-snapshot.v1",environment:"sandbox",attempts:[],
+  });
+  await expect(page.getByText("已下載 0 筆付款嘗試。",{exact:true})).toBeVisible();
+});
+
 for(const [method,resume] of [["line_pay","online"],["px_pay_plus","visibilitychange"]]){
   test(method+" restores an interrupted receipt on "+resume,async({page,request})=>{
     const token=randomUUID(),headers={"X-Ticket":token};

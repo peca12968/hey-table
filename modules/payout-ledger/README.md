@@ -2,6 +2,17 @@
 
 電商訂單可能分兩次入帳、發生退款，或被支付平台重複列入檔案。這個 Python CLI 將兩種 CSV 載入 SQLite，按訂單與幣別彙總，列出需要追查的差異。只使用 Python 標準函式庫。
 
+## 從接單台匯出的快照開始
+
+登入禾日食堂接單台，開啟「匯出付款對帳快照」。選擇與金流紀錄檔相同的環境。下載的 JSON 可供兩個報表當作店內資料來源。以下檔名與商店編號請依實際核帳資料替換。
+
+```sh
+python restaurant_close.py --restaurant-snapshot payments.json --day 2026-11-23 --merchant demo-restaurant --environment sandbox --snapshot records.json
+python bank_activity.py --restaurant-snapshot payments.json --day 2026-11-23 --merchant demo-restaurant --environment sandbox --snapshot bank-activity.json
+```
+
+`--restaurant-snapshot` 讀店內付款嘗試，`--snapshot` 讀金流商的原始分頁。程式以記憶體 SQLite 使用既有查核規則，會驗證環境、餐單資料是否一致，以及參考號與金流交易號是否重複。快照中的歷史嘗試可供晚到的退款比對。整合測試用同一份合成資料比較匯出檔與唯讀備份，兩種報表的結果一致。[整合測試](../../qa/tappay.test.mjs)
+
 ## 昨天付款，今天退款
 
 用 `bank_activity.py` 按銀行處理時間查指定台灣日期的請款與退款。報表比對商店、金流交易號、付款參考號、支付方式與授權金額，連回原餐單。付款較早發起、退款今天才處理時，退款列在今天，並標示原付款嘗試來自前一個日期。

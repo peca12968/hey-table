@@ -1,7 +1,11 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {DatabaseSync} from "node:sqlite";
-import {readFileSync} from "node:fs";
+import {mkdtempSync,readFileSync,rmSync,writeFileSync} from "node:fs";
+import {execFileSync,spawnSync} from "node:child_process";
+import {tmpdir} from "node:os";
+import {join} from "node:path";
+import {fileURLToPath} from "node:url";
 import {api} from "../server/api.mjs";
 import {settings,lookup} from "../server/tappay.mjs";
 import {paymentPrime,openPaymentUrl} from "../lib/tappay-client.mjs";
@@ -57,9 +61,74 @@ function database(beforeMigration=()=>{}){
     beforeMigration(tag,sqlite);
     sqlite.exec(readFileSync(new URL("../drizzle/"+tag+".sql",import.meta.url),"utf8"));
   }
+  return d1(sqlite);
+}
+function d1(sqlite){
   return {sqlite,prepare(sql){const stmt=sqlite.prepare(sql);return {bind(...args){return {
     first:()=>stmt.get(...args),run:()=>({meta:stmt.run(...args)}),all:()=>({results:stmt.all(...args)})};}};}};
 }
+test("staff payment export matches both reconciliation tools without exporting customer fields",async t=>{
+  const temp=mkdtempSync(join(tmpdir(),"hey-table-payment-snapshot-"));
+  t.after(()=>rmSync(temp,{recursive:true,force:true}));
+  const root=fileURLToPath(new URL("../",import.meta.url));
+  const ledger=join(root,"modules","payout-ledger");
+  const fixture=join(temp,"fixture");
+  const python=process.env.PYTHON || (process.platform==="win32" ? "python" : "python3");
+  execFileSync(python,[join(ledger,"examples","restaurant_demo.py"),fixture,"--bank-activity","--migrations",join(root,"drizzle")]);
+  const database=join(fixture,"restaurant.db");
+  const sqlite=new DatabaseSync(database);
+  try {
+    sqlite.exec("UPDATE orders SET note='private-order-note'");
+    sqlite.exec("UPDATE payment_attempts SET redirect_url='https://example.test/private-checkout'");
+    const runtime={DB:d1(sqlite),STAFF_KEY:"fixture-staff"};
+    const auth={Authorization:"Bearer fixture-staff"};
+    const get=(query,headers={})=>api(new Request("https://order.example/api/kitchen/payment-snapshot"+query,{headers}),runtime);
+    assert.equal((await get("?environment=sandbox")).status,403);
+    assert.equal((await get("?environment=sandbox",{"X-Ticket":"private-ticket-2"})).status,403);
+    for(const query of ["","?environment=demo","?environment=sandbox&environment=production"])
+      assert.equal((await get(query,auth)).status,400);
+    const response=await get("?environment=sandbox",auth);
+    assert.equal(response.status,200);
+    assert.equal(response.headers.get("Cache-Control"),"no-store");
+    const snapshot=await response.json();
+    assert.deepEqual(snapshot.attempts.map(row=>row.reference),["C1","L1","L2","P1","J1"]);
+    assert.deepEqual(Object.keys(snapshot.attempts[0]).sort(),
+      ["created","merchant","order_id","payment_method","reference","state","total","trade_id"]);
+    assert.doesNotMatch(JSON.stringify(snapshot),/private-ticket|private-order-note|private-checkout/);
+    const production=await (await get("?environment=production",auth)).json();
+    assert.deepEqual(production.attempts.map(row=>row.reference),["LIVE"]);
+    const snapshotFile=join(temp,"payments.json");
+    writeFileSync(snapshotFile,JSON.stringify(snapshot));
+
+    const run=(script,local,flags)=>spawnSync(python,["-X","utf8",join(ledger,script),...local,...flags],{encoding:"utf8"});
+    const base=["--day","2026-11-23","--environment","sandbox","--merchant","demo-restaurant"];
+    for(const [script,name,more] of [["restaurant_close.py","records.json",[]],
+      ["bank_activity.py","bank-activity.json",["--merchant","demo-wallet"]]]) {
+      const flags=[...base,...more,"--snapshot",join(fixture,name),"--strict"];
+      const fromBackup=run(script,[database],flags);
+      const fromExport=run(script,["--restaurant-snapshot",snapshotFile],flags);
+      assert.equal(fromBackup.status,3,fromBackup.stderr);
+      assert.equal(fromExport.status,fromBackup.status,fromExport.stderr);
+      assert.deepEqual(JSON.parse(fromExport.stdout),JSON.parse(fromBackup.stdout));
+      if(script==="bank_activity.py") assert.equal(JSON.parse(fromExport.stdout).net_twd,30);
+    }
+    writeFileSync(snapshotFile,JSON.stringify({...snapshot,environment:"production"}));
+    const mismatch=run("restaurant_close.py",["--restaurant-snapshot",snapshotFile],
+      [...base,"--snapshot",join(fixture,"records.json")]);
+    assert.equal(mismatch.status,2);
+    assert.equal(mismatch.stdout,"");
+    assert.match(mismatch.stderr,/restaurant snapshot or payment environment/);
+
+    sqlite.exec(`WITH RECURSIVE n(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM n WHERE x<4996)
+      INSERT INTO payment_attempts(order_id,reference,merchant,created)
+      SELECT 1,'extra-'||x,'demo-restaurant',1 FROM n`);
+    const limited=await get("?environment=sandbox",auth);
+    assert.equal(limited.status,409);
+    assert.equal(Object.hasOwn(await limited.json(),"attempts"),false);
+  } finally {
+    sqlite.close();
+  }
+});
 test("migrate a historic price and recover accepted demo orders after a change of payment environment",async t=>{
   const oldToken=crypto.randomUUID(),newToken=crypto.randomUUID();
   const db=database((tag,sqlite)=>{
