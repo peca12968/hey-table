@@ -12,6 +12,8 @@ import {methods,canPrepare,canCustomerCancel} from "../../lib/payments.mjs";
 import {reorderable} from "../../lib/reorder.mjs";
 import {QuoteSummary} from "../cart-quote";
 import CancelReceipt from "./cancel-receipt";
+import ReschedulePickup from "./reschedule-pickup";
+import {pickupWindow} from "../../lib/pickup-slots.mjs";
 const progressLabels={
   pending:"已送單",preparing:"店家接單，開始製作",ready:"餐點已備妥",completed:"已交餐",cancelled:"店家已取消",
 };
@@ -122,6 +124,7 @@ export default function Ticket(){
   const menu=order?.table?"/?table="+order.table:"/";
   const cancellationActor=order?.statusHistory?.at(-1)?.actor;
   const latestMove=order?.tableMoves?.at(-1);
+  const latestPickup=order?.pickupChanges?.at(-1);
   const closedBeforePayment=Object.hasOwn(cancellationMessages,cancellationActor);
   const showHold=order?.paymentDueAt&&order.paymentMethod!=="cash"&&canCustomerCancel(order);
   const payable=order&&canPrepare(order);
@@ -132,6 +135,8 @@ export default function Ticket(){
     <ReceiptHistory entries={recent} active={route?.token} open={route&&!route.direct} onRemove={forget}/>
     {error&&<p role="status">{error}</p>}{order&&<><div className="receiptMeta"><Mode table={order.table} source={order.source}/><b aria-live="polite">{order.status==='pending'&&!payable?'等待付款':labels[order.status]}</b></div>
     <PickupAppointment start={order.pickupSlot}/>
+    {latestPickup&&<p className="muted" role="status">取餐時段已從 {pickupWindow(latestPickup.from)} 改到 {pickupWindow(latestPickup.to)}。</p>}
+    {order.pickupSlot!=null&&<ReschedulePickup key={"pickup-reschedule-"+route.token} order={order} token={route.token} onChange={refreshReceipt}/>}
     {latestMove&&<p className="muted" role="status">店家已將餐單從 {latestMove.from} 桌移到 {latestMove.to} 桌。</p>}
     <p>{({pending:pendingMessage,preparing:"廚房正在準備餐點。",ready:order.table?"餐點已完成，請留意桌邊送餐。":"餐點已完成，請出示取餐號碼。",completed:"這張餐單已完成。",cancelled:cancellationMessages[cancellationActor]??"店家已取消這張餐單。"})[order.status]}</p>
     {showHold&&<p className="muted">付款保留至 <time dateTime={new Date(order.paymentDueAt).toISOString()}>{progressTime.format(order.paymentDueAt)}</time></p>}

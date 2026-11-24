@@ -159,6 +159,8 @@ Stockroom 支援在一筆交易內保留多個 SKU。若其中一項缺貨，該
 
 店員在接單台選「預約自取」可依時段查看餐單，取餐前 15 分鐘開始接單製作。收據、分站看板和交餐小票均顯示預約時段。待交餐的逾時計時最早從預約開始起算。[手機重選與接單測試](qa/pickup-slots.spec.mjs) · [容量、付款到期與時間邊界測試](qa/tappay.test.mjs)
 
+在現有餐單進入備餐窗口前，顧客可在收據選「更改取餐時段」。新時段需符合當天預約與份數規則。改期確認後，同一筆 D1 寫入會把份數從舊時段移到新時段，原餐號、金額與付款紀錄一起沿用。斷線重試會查回已成立的改期。店員接單時會核對目前的預約版本。[改期、容量及接單版本測試](qa/tappay.test.mjs) · [手機收據測試](qa/pickup-slots.spec.mjs)
+
 ## 從收據再次點餐
 
 已完成及已取消的收據可開啟「再次點餐」。確認桌號或自取管道後，菜單會列出可加入、已售完和達數量上限的品項。選擇加入後，系統會按當時菜單計價，現有備註與購物車仍可編輯，待確認送單的餐單會先保留。再次點餐只帶入品項與數量，送單仍需按「確認送出訂單」。[再次點餐的瀏覽器測試](qa/ordering.spec.mjs)
@@ -208,6 +210,7 @@ node --import ./scripts/sites-env.mjs ./node_modules/wrangler/bin/wrangler.js d1
 node --import ./scripts/sites-env.mjs ./node_modules/wrangler/bin/wrangler.js d1 execute DB --local --config dist/server/wrangler.json --persist-to .wrangler/state --file drizzle/0013_staff_pickup_source.sql
 node --import ./scripts/sites-env.mjs ./node_modules/wrangler/bin/wrangler.js d1 execute DB --local --config dist/server/wrangler.json --persist-to .wrangler/state --file drizzle/0014_kitchen_payment_start.sql
 node --import ./scripts/sites-env.mjs ./node_modules/wrangler/bin/wrangler.js d1 execute DB --local --config dist/server/wrangler.json --persist-to .wrangler/state --file drizzle/0015_pickup_slots.sql
+node --import ./scripts/sites-env.mjs ./node_modules/wrangler/bin/wrangler.js d1 execute DB --local --config dist/server/wrangler.json --persist-to .wrangler/state --file drizzle/0016_pickup_changes.sql
 npm start
 ```
 

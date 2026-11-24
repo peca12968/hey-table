@@ -355,7 +355,7 @@ test("same-day pickup slots use Taipei opening, notice and closing boundaries",(
   assert.deepEqual(bookablePickupSlots(taipei("19:15:00")+1),[]);
   assert.deepEqual(bookablePickupSlots(taipei("23:59:59")),[]);
 });
-test("the Worker and D1 commit only four three-portion orders for an empty pickup slot",async t=>{
+test("the Worker and D1 enforce pickup capacity and serialize conflicting reschedules",async t=>{
   const {build}=await import("esbuild");
   const {Miniflare}=await import("miniflare");
   const root=fileURLToPath(new URL("../",import.meta.url));
@@ -369,15 +369,29 @@ test("the Worker and D1 commit only four three-portion orders for an empty picku
   await applyDemoMigrations(await worker.getD1Database("DB"),root);
   const host=(await worker.ready).origin;
   const pickupSlot=Date.parse("2026-11-25T12:00:00+08:00");
-  const post=()=>fetch(host+"/api/orders",{method:"POST",headers:{"Content-Type":"application/json"},
-    body:JSON.stringify({token:crypto.randomUUID(),mode:"pickup",note:"",items:[{id:"sencha",qty:3}],pickupSlot})});
-  const responses=await Promise.all(Array.from({length:8},post));
+  const requests=Array.from({length:8},()=>({token:crypto.randomUUID(),mode:"pickup",note:"",items:[{id:"sencha",qty:3}],pickupSlot}));
+  const post=(path,data,headers={})=>fetch(host+path,{method:"POST",headers:{"Content-Type":"application/json",...headers},body:JSON.stringify(data)});
+  const responses=await Promise.all(requests.map(data=>post("/api/orders",data)));
   assert.deepEqual(responses.map(response=>response.status).sort(),[200,200,200,200,409,409,409,409]);
   const results=await Promise.all(responses.map(response=>response.json()));
   assert.equal(new Set(results.filter(result=>result.pickupSlot===pickupSlot).map(result=>result.id)).size,4);
   assert.equal(results.filter(result=>result.code==="pickup_slot_full").length,4);
-  const slots=await fetch(host+"/api/pickup-slots").then(response=>response.json());
-  assert.equal(slots.slots.find(slot=>slot.start===pickupSlot).remaining,0);
+  const remaining=async start=>(await fetch(host+"/api/pickup-slots").then(response=>response.json())).slots.find(slot=>slot.start===start).remaining;
+  assert.equal(await remaining(pickupSlot),0);
+  const index=responses.findIndex(response=>response.ok),original=requests[index];
+  const targets=[pickupSlot+900_000,pickupSlot+1_800_000];
+  const reschedule=to=>post("/api/ticket/reschedule",{from:pickupSlot,to,revision:0},{"X-Ticket":original.token});
+  const moved=await Promise.all(targets.map(reschedule));
+  assert.deepEqual(moved.map(response=>response.status).sort(),[200,409]);
+  const winner=moved.findIndex(response=>response.ok),changed=await moved[winner].json();
+  assert.equal(changed.pickupSlot,targets[winner]);
+  assert.equal(changed.pickupChanges.length,1);
+  assert.deepEqual(await (await reschedule(changed.pickupSlot)).json(),changed);
+  assert.equal(await remaining(pickupSlot),3);
+  assert.equal(await remaining(changed.pickupSlot),9);
+  assert.equal(await remaining(targets[1-winner]),12);
+  assert.deepEqual(await (await post("/api/orders",original)).json(),{...results[index],pickupSlot:changed.pickupSlot});
+  assert.equal((await post("/api/orders",{...original,pickupSlot:changed.pickupSlot})).status,409);
 });
 test("pickup slots reserve portions atomically, release expired payments and gate kitchen preparation",async t=>{
   const db=database();
@@ -448,6 +462,54 @@ test("pickup slots reserve portions atomically, release expired payments and gat
   assert.deepEqual((await board()).overdue,{elapsedMs:600_000,overByMs:0});
   const handoff=await (await call("/api/kitchen/handoff?id="+accepted.id,{headers:staff})).json();
   assert.equal(handoff.pickupSlot,pickupSlot);
+});
+test("pickup rescheduling preserves payment and requires staff to use the new version",async t=>{
+  const db=database();
+  t.after(()=>db.sqlite.close());
+  const taipei=time=>Date.parse("2026-11-25T"+time+"+08:00");
+  let now=taipei("10:45:00");
+  const first=taipei("12:00:00"),next=taipei("12:15:00"),full=taipei("12:30:00");
+  t.mock.method(Date,"now",()=>now);
+  const runtime={DB:db,STAFF_KEY:"fixture-staff",TAPPAY_MODE:"demo"};
+  const staff={Authorization:"Bearer fixture-staff"};
+  const token=crypto.randomUUID(),guest={"X-Ticket":token};
+  const call=(path,options={})=>api(new Request("https://order.example"+path,options),runtime);
+  const send=(method,path,data,headers={})=>call(path,{method,headers:{"Content-Type":"application/json",...headers},body:JSON.stringify(data)});
+  const booking=(pickupSlot,qty,fields={})=>({token:crypto.randomUUID(),mode:"pickup",note:"",items:[{id:"sencha",qty}],pickupSlot,...fields});
+  const post=data=>send("POST","/api/orders",data);
+  const input=booking(first,4,{token,paymentMethod:"line_pay"});
+  const original=await (await post(input)).json();
+  const shift=(from,to,revision=0,headers=guest)=>send("POST","/api/ticket/reschedule",{from,to,revision},headers);
+  const ticket=async()=> (await call("/api/ticket?progress=1",{headers:guest})).json();
+  const advance=pickupRevision=>send("PATCH","/api/kitchen/status",{id:original.id,from:"pending",to:"preparing",pickupRevision},staff);
+  assert.equal(await (await ticket()).canReschedulePickup,true);
+  assert.equal((await shift(first,next,0,{})).status,404);
+  assert.equal((await shift(first,next,0,{"X-Ticket":crypto.randomUUID()})).status,404);
+  const {attempt}=await (await send("POST","/api/payments/start",{},guest)).json();
+  assert.equal((await send("POST","/api/payments/demo",{ref:attempt.ref,outcome:"paid"},guest)).status,200);
+  const paid=await ticket();
+  assert.equal((await post(booking(full,9))).status,200);
+  const blocked=await shift(first,full);
+  assert.equal(blocked.status,409);
+  assert.equal((await blocked.json()).code,"pickup_slot_full");
+  assert.deepEqual(await ticket(),paid);
+  const newTime=await (await shift(first,next)).json();
+  assert.deepEqual(newTime,{pickupSlot:next,pickupChanges:[{from:first,to:next,at:now}],canReschedulePickup:true});
+  assert.deepEqual(await ticket(),{...paid,...newTime});
+  const payment=await (await send("POST","/api/payments/check",{},guest)).json();
+  assert.equal(payment.attempt.ref,attempt.ref);
+  assert.equal(payment.attempt.state,"paid");
+
+  now=taipei("12:00:00");
+  assert.equal((await ticket()).canReschedulePickup,false);
+  assert.equal((await shift(next,taipei("13:00:00"),1)).status,409);
+  assert.equal((await advance(0)).status,409);
+  assert.equal((await advance()).status,409);
+  const board=await (await call("/api/kitchen",{headers:staff})).json();
+  assert.equal(board.find(row=>row.id===original.id).pickupRevision,1);
+  assert.equal((await advance(1)).status,200);
+  assert.equal((await ticket()).status,"preparing");
+  assert.deepEqual(await (await shift(first,next)).json(),{...newTime,canReschedulePickup:false});
 });
 test("kitchen overdue uses the current stage and starts online orders at confirmed payment",async t=>{
   const db=database();

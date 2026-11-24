@@ -84,7 +84,8 @@ function KitchenTicket({order,busy,update,showOverdue=false,handoffOnly=false}){
       {!workingByStation&&actions.map(next=><button disabled={busy||(next==="preparing"&&order.pickupUpcoming)||
         (next==="cancelled"?!canCancel(order):!canPrepare(order))} className={next==="cancelled"?"outline":"primary"} key={next}
         onClick={()=>{if(next!=="cancelled"||window.confirm("取消這張訂單？"))
-          update("status",{id,from:status,to:next,...(table&&next==="completed"?{tableRevision}:{})});}}>{action[next]}</button>)}
+          update("status",{id,from:status,to:next,...(table&&next==="completed"?{tableRevision}:{}),
+            ...(next==="preparing"&&order.pickupSlot!=null?{pickupRevision:order.pickupRevision??0}:{})});}}>{action[next]}</button>)}
     </div>
     {table&&["pending","preparing","ready"].includes(status)&&<TableMove
       key={table+":"+tableRevision} id={id} table={table} revision={tableRevision} busy={busy} update={update}/>}
@@ -154,7 +155,7 @@ export default function Kitchen(){
         setActionMessage(e.status===409?"餐單狀態已更新，請核對最新狀態。":e.message);
         setRows(null);
         setRevision(v=>v+1);
-      }else if(endpoint==="table"||endpoint==="table-handoff"||body.tableRevision!==undefined){
+      }else if(endpoint==="table"||endpoint==="table-handoff"||body.tableRevision!==undefined||body.pickupRevision!==undefined){
         setActionMessage(e.message);
         setRevision(v=>v+1);
       }else setError(e.message);

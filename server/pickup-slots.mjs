@@ -1,9 +1,12 @@
-import {bookablePickupSlots,pickupSlotCapacity,pickupSlotDuration} from "../lib/pickup-slots.mjs";
+import {bookablePickupSlots,pickupPrepLead,pickupSlotCapacity,pickupSlotDuration} from "../lib/pickup-slots.mjs";
 import {expirePaymentHolds} from "./payment-holds.mjs";
 
 const portions="SUM(json_extract(line.value,'$.qty'))";
 const activeSlots="FROM orders JOIN json_each(orders.items) AS line WHERE status<>'cancelled'";
 export const usedAtPickupSlot=`COALESCE((SELECT ${portions} ${activeSlots} AND pickup_slot=?),0)`;
+export const orderPortions=`(SELECT ${portions} FROM json_each(orders.items) AS line)`;
+export const pickupChanges=row=>JSON.parse(row.pickup_changes??"[]");
+export const canReschedulePickup=(row,now)=>row.mode==="pickup"&&row.status==="pending"&&row.pickup_slot>now+pickupPrepLead;
 
 export async function pickupSlots(db,now){
   const starts=bookablePickupSlots(now);

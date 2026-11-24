@@ -113,6 +113,13 @@
       "when": 1795556508555,
       "tag": "0015_pickup_slots",
       "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "6",
+      "when": 1795557274433,
+      "tag": "0016_pickup_changes",
+      "breakpoints": true
     }
   ]
 }

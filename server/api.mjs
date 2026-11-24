@@ -9,7 +9,7 @@ import {expirePaymentHolds,noBlockingPayment,paymentHoldMs} from "./payment-hold
 import {dailyTiming,dailyTimingRows} from "./daily-timing.mjs";
 import {kitchenOverdue} from "./kitchen-overdue.mjs";
 import {bookablePickupSlots,pickupPrepLead,pickupSlotCapacity} from "../lib/pickup-slots.mjs";
-import {pickupSlots,usedAtPickupSlot} from "./pickup-slots.mjs";
+import {canReschedulePickup,orderPortions,pickupChanges,pickupSlots,usedAtPickupSlot} from "./pickup-slots.mjs";
 
 const json = (value, status=200) => Response.json(value,{status,headers:{"Cache-Control":"no-store"}});
 const fail = (message,status=400) => json({error:message},status);
@@ -284,12 +284,13 @@ export async function api(request, env) {
     if (!row) return fail("部分餐點已售完，請重新確認菜單",409);
     const saved = receipt(row);
     const submittedTable=row.table_moves?JSON.parse(row.table_moves)[0]?.from??row.table_no:row.table_no;
+    const submittedSlot=pickupChanges(row)[0]?.from??row.pickup_slot??null;
     const sameItems = saved.items.length === order.items.length && saved.items.every(line =>
       order.items.some(item => item.id === line.id && item.qty === line.qty && (item.note??"")===(line.note??"")));
     if ((row.source??null)!==source || (!staffPickup && saved.combo?.version !== input.comboVersion) ||
         ((selected||staffPickup) && saved.total !== input.expectedTotal) ||
         row.payment_method!==method || row.mode!==order.mode || submittedTable!==order.table || row.note!==order.note ||
-        (row.pickup_slot??null)!==order.pickupSlot || !sameItems)
+        submittedSlot!==order.pickupSlot || !sameItems)
       return fail("送單識別碼已用於另一張訂單",409);
     return json(saved);
   }
@@ -297,7 +298,8 @@ export async function api(request, env) {
     const token = request.headers.get("X-Ticket");
     if (!uuid.test(token)) return fail("找不到訂單",404);
     const lookup=db.prepare(selectOrders+" WHERE token=?").bind(token);
-    const expiry=expirePaymentHolds(db,Date.now(),token);
+    const now=Date.now();
+    const expiry=expirePaymentHolds(db,now,token);
     const withTiming=url.searchParams.get("timing")==="1";
     let row, queue, timing;
     if(withTiming){
@@ -323,12 +325,48 @@ export async function api(request, env) {
       saved.statusHistory = statusHistory(row);
       if(row.payment_due_at!==null)saved.paymentDueAt=row.payment_due_at;
       if(row.table_moves)saved.tableMoves=JSON.parse(row.table_moves);
+      if(row.pickup_slot!=null){
+        saved.pickupChanges=pickupChanges(row);
+        saved.canReschedulePickup=canReschedulePickup(row,now);
+      }
     }
     if(withTiming&&row.status==="preparing"){
       const quote=receiptTiming(row,queue,timing);
       if(quote)saved.kitchenQuote=quote;
     }
     return json(saved);
+  }
+  if(path==="/api/ticket/reschedule"&&method==="POST"){
+    const token=request.headers.get("X-Ticket");
+    if(!uuid.test(token))return fail("找不到訂單",404);
+    const {from,to,revision}=input;
+    if(!Number.isSafeInteger(from)||from<1||!Number.isSafeInteger(to)||to<1||from===to||
+      !Number.isSafeInteger(revision)||revision<0||revision>=Number.MAX_SAFE_INTEGER)
+      return fail("請選擇另一個有效的預約時段。");
+    const now=Date.now(),validDestination=bookablePickupSlots(now).includes(to);
+    const [,,current,target]=await db.batch([
+      expirePaymentHolds(db,now),
+      db.prepare(`UPDATE orders SET pickup_slot=?, pickup_changes=json_insert(COALESCE(pickup_changes,'[]'),'$[#]',
+        json_object('from',pickup_slot,'to',?,'at',?))
+        WHERE token=? AND mode='pickup' AND status='pending' AND pickup_slot=? AND pickup_slot>?
+        AND COALESCE(json_array_length(pickup_changes),0)=? AND ?
+        AND ${usedAtPickupSlot}+${orderPortions}<=?`)
+        .bind(to,to,now,token,from,now+pickupPrepLead,revision,validDestination?1:0,to,pickupSlotCapacity),
+      db.prepare(`SELECT mode,status,pickup_slot,pickup_changes,${orderPortions} AS portions FROM orders WHERE token=?`).bind(token),
+      db.prepare(`SELECT ${usedAtPickupSlot} AS used`).bind(to),
+    ]);
+    const row=current.results[0];
+    if(!row)return fail("找不到訂單",404);
+    const changes=pickupChanges(row),last=changes.at(-1);
+    if(changes.length===revision+1&&row.pickup_slot===to&&last.from===from&&last.to===to)
+      return json({pickupSlot:to,pickupChanges:changes,canReschedulePickup:canReschedulePickup(row,now)});
+    if(row.pickup_slot==null)return fail("這張餐單沒有可改期的預約時段。",409);
+    if(!canReschedulePickup(row,now))return fail("這張餐單已進入備餐時間或已結單，無法更改時段。",409);
+    if(row.pickup_slot!==from||changes.length!==revision)return fail("取餐時段已更新，請先核對收據。",409);
+    if(!validDestination)return json({error:"這個取餐時段已停止預約，請重新選擇。",code:"pickup_slot_closed"},409);
+    if(target.results[0].used+row.portions>pickupSlotCapacity)
+      return json({error:"此時段剩餘份數不足，原預約仍有效。",code:"pickup_slot_full"},409);
+    return fail("取餐時段已更新，請先核對收據。",409);
   }
   if (path === "/api/ticket/cancel" && method === "POST") {
     const token=request.headers.get("X-Ticket");
@@ -463,9 +501,10 @@ export async function api(request, env) {
     return json(orders.map((order,index)=>{
       const row=results[index];
       const overdue=kitchenOverdue(row,order,capturedAt);
+      const booked=order.status==="pending"&&order.pickupSlot!=null;
       return {...order,...(row.station_progress?{stationProgress:true}:{}),
         ...(overdue?{overdue}:{}),
-        ...(order.status==="pending"&&order.pickupSlot!=null&&order.pickupSlot-pickupPrepLead>capturedAt?{pickupUpcoming:true}:{}),
+        ...(booked?{pickupRevision:pickupChanges(row).length,...(canReschedulePickup(row,capturedAt)?{pickupUpcoming:true}:{})}:{}),
         ...(row.table_moves?{tableRevision:JSON.parse(row.table_moves).length}:{})};
     }));
   }
@@ -512,16 +551,22 @@ export async function api(request, env) {
     const expectedTable=input.tableRevision;
     if(expectedTable!==undefined&&(input.to!=="completed"||!Number.isSafeInteger(expectedTable)||expectedTable<0))
       return fail("桌號版本無效");
+    const expectedPickup=input.pickupRevision;
+    if(expectedPickup!==undefined&&(input.to!=="preparing"||!Number.isSafeInteger(expectedPickup)||expectedPickup<0))
+      return fail("預約版本無效");
     const readyGuard=input.to==="ready"?" AND station_progress IS NULL":"";
     const tableGuard=expectedTable===undefined?"":" AND COALESCE(json_array_length(table_moves),0)=?";
     const now=Date.now();
-    const prepGuard=input.to==="preparing"?" AND (pickup_slot IS NULL OR pickup_slot<=?)":"";
+    const prepGuard=input.to==="preparing"?` AND (pickup_slot IS NULL OR
+      (pickup_slot<=? AND COALESCE(json_array_length(pickup_changes),0)=?))`:"";
     const {meta} = await db.prepare(`UPDATE orders SET status=?,
       status_history=json_insert(COALESCE(status_history,'[]'),'$[#]',json_object('from',status,'status',?,'at',?))
       WHERE id=? AND status=? AND `+(input.to==="cancelled" ?
       "(payment_method='cash' OR COALESCE("+latestState+",'unpaid') IN ('unpaid','failed','cancelled','refunded'))" : payableForKitchen)+readyGuard+tableGuard+prepGuard)
-      .bind(input.to,input.to,now,input.id,input.from,...(expectedTable===undefined?[]:[expectedTable]),...(prepGuard?[now+pickupPrepLead]:[])).run();
-    return meta.changes ? json({ok:true}) : fail(input.to==="ready"?"訂單已更新，請重新整理或開啟分站看板":"訂單已更新，請重新整理",409);
+      .bind(input.to,input.to,now,input.id,input.from,...(expectedTable===undefined?[]:[expectedTable]),
+        ...(prepGuard?[now+pickupPrepLead,expectedPickup??0]:[])).run();
+    return meta.changes ? json({ok:true}) : fail(input.to==="ready"?"訂單已更新，請重新整理或開啟分站看板":
+      expectedPickup!==undefined?"取餐時段或餐單狀態已更新，請核對後再接單。":"訂單已更新，請重新整理",409);
   }
   if (path === "/api/kitchen/availability" && method === "PATCH") {
     if (!dishes.some(d=>d.id===input.id) || typeof input.available !== "boolean") return fail("餐點狀態錯誤");

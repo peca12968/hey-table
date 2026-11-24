@@ -1,4 +1,5 @@
 import {test,expect} from "@playwright/test";
+import {randomUUID} from "node:crypto";
 
 test("mobile guests recover a full pickup slot and the kitchen sees when preparation can start",async({page})=>{
   const start=Date.parse("2026-11-25T12:00:00+08:00"),duration=900_000;
@@ -65,4 +66,54 @@ test("mobile guests recover a full pickup slot and the kitchen sees when prepara
   await page.getByRole("button",{name:"更新",exact:true}).click();
   await expect(cards.first().getByRole("button",{name:"接單製作"})).toBeEnabled();
   await expect(cards.last().getByRole("button",{name:"接單製作"})).toBeDisabled();
+});
+
+test("a mobile receipt preserves its booking across a full slot and retries one uncertain change",async({page})=>{
+  const first=Date.parse("2026-11-25T12:00:00+08:00"),interval=900_000;
+  const offered=first+interval,next=offered+interval,token=randomUUID();
+  const base={id:231,mode:"pickup",table:null,pickupSlot:first,pickupChanges:[],canReschedulePickup:true,
+    note:"",items:[{id:"sencha",name:"日式熱煎茶",price:45,qty:2}],status:"pending",
+    created:first-3_600_000,paymentMethod:"cash",paymentEnv:"cash",paymentState:"unpaid",total:90};
+  let full=false,attempt,readBack=false;
+  const moved={...base,pickupSlot:next,pickupChanges:[{from:first,to:next,at:first-3_500_000}]};
+  await page.setViewportSize({width:360,height:780});
+  await page.route(url=>url.pathname==="/api/ticket",route=>route.fulfill({json:readBack?moved:base}));
+  await page.route("**/api/pickup-slots",route=>route.fulfill({json:{slots:[
+    {start:first,end:offered,remaining:10},{start:offered,end:next,remaining:full?0:2},{start:next,end:next+interval,remaining:12},
+  ]}}));
+  await page.route("**/api/ticket/reschedule",route=>{
+    const data=route.request().postDataJSON();
+    expect(route.request().headers()["x-ticket"]).toBe(token);
+    if(!full){
+      expect(data).toEqual({from:first,to:offered,revision:0});
+      full=true;
+      return route.fulfill({status:409,json:{code:"pickup_slot_full",error:"此時段剩餘份數不足，原預約仍有效。"}});
+    }
+    if(!attempt){
+      expect(data).toEqual({from:first,to:next,revision:0});
+      attempt=data;
+      return route.abort("connectionreset");
+    }
+    expect(data).toEqual(attempt);
+    readBack=true;
+    return route.fulfill({json:{pickupSlot:next,pickupChanges:moved.pickupChanges,canReschedulePickup:true}});
+  });
+  await page.goto("/ticket#"+token);
+  await page.getByRole("button",{name:"更改取餐時段"}).click();
+  const selector=page.getByLabel("新的取餐時段");
+  await selector.selectOption(String(offered));
+  await page.getByRole("button",{name:"確認改期"}).click();
+  await expect(page.getByRole("alert")).toHaveText("此時段剩餘份數不足，原預約仍有效。");
+  await expect(page.locator(".pickupSlotTime")).toContainText("12:00～12:15");
+  await expect(selector.getByRole("option",{name:/12:15/})).toHaveCount(0);
+  await selector.selectOption(String(next));
+  await page.getByRole("button",{name:"確認改期"}).click();
+  await expect(page.getByRole("alert")).toHaveText("尚未收到改期結果。可用原資料重試。");
+  await expect(selector).toBeDisabled();
+  await page.getByRole("button",{name:"重試同一次改期"}).click();
+  await expect(page.getByText("取餐時段已從 12:00～12:15 改到 12:30～12:45。")).toBeVisible();
+  await expect(page.locator(".pickupSlotTime")).toContainText("12:30～12:45");
+  await expect(page.getByRole("heading",{name:"取餐號碼 0231"})).toBeVisible();
+  expect(new URL(page.url()).hash).toBe("#"+token);
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBe(360);
 });

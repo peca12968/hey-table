@@ -84,3 +84,4 @@
 .pickupSlotsButton,.pickupSlots{margin:12px 0}.pickupSlots{padding:10px 12px;border:1px solid var(--line);border-radius:8px;background:var(--pale)}
 .pickupSlots label{display:block;font-weight:700}.pickupSlots select{display:block;width:100%;margin-top:5px;min-height:40px;border:1px solid #c7cdbf;border-radius:7px;padding:6px;color:inherit;background:#fffefa;font:inherit}
 .pickupSlots p{margin:6px 0 0}.pickupSlotTime{color:var(--green);font-weight:700}
+.pickupReschedule .actions{margin-top:10px;gap:8px}.pickupReschedule button{min-height:40px}
