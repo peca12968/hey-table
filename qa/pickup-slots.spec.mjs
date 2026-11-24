@@ -334,6 +334,83 @@ test("mobile staff pause and reopen a date without displacing orders or erasing 
   }
 });
 
+test("staff can print the selected pickup date with the same mobile roster and status filter",async({page,request})=>{
+  page.setDefaultTimeout(9000);
+  const date=businessDate(Date.now()+4*86_400_000),early=Date.parse(date+"T11:30:00+08:00");
+  const later=early+900_000,endpoint="/api/kitchen/pickup-roster";
+  const staff={Authorization:"Bearer local-test-kitchen"},tokens=[];
+  const submit=async(pickupSlot,{byStaff=false,paymentMethod="cash"}={})=>{
+    const token=randomUUID();
+    tokens.push(token);
+    const response=await request.post(byStaff?"/api/kitchen/create-pickup":"/api/orders",{
+      headers:byStaff?staff:{},data:{token,mode:"pickup",note:"內部備註勿列印",pickupSlot,paymentMethod,
+        items:[{id:"sencha",qty:1}],expectedTotal:45},
+    });
+    expect(response.ok()).toBe(true);
+    return {id:(await response.json()).id,headers:{"X-Ticket":token}};
+  };
+  const assertReceipt=order=>page.getByRole("rowheader",{name:new RegExp("#"+String(order.id).padStart(4,"0"))});
+  await page.setViewportSize({width:360,height:780});
+  await page.addInitScript(()=>{
+    sessionStorage.setItem("he-ri-staff","local-test-kitchen");
+    window.print=()=>document.body.setAttribute("data-print-invoked","yes");
+  });
+  try{
+    const phone=await submit(later,{byStaff:true});
+    const wallet=await submit(early,{paymentMethod:"px_pay_plus"});
+    const cancelled=await submit(later);
+    expect((await request.post("/api/ticket/cancel",{headers:cancelled.headers,data:{}})).status()).toBe(200);
+    const started=await request.post("/api/payments/start",{headers:wallet.headers,data:{}});
+    expect(started.ok()).toBe(true);
+    const {attempt}=await started.json();
+    expect((await request.post("/api/payments/demo",{headers:wallet.headers,data:{ref:attempt.ref,outcome:"paid"}})).ok()).toBe(true);
+    expect((await request.get(endpoint+"?date="+date)).status()).toBe(403);
+
+    await page.goto("/kitchen");
+    await page.getByRole("link",{name:"自取預約清單"}).click();
+    const selector=page.getByLabel("取餐日期");
+    await selector.fill(date);
+    await expect(selector).toHaveValue(date);
+    await expect(page.locator(".rosterWindow h2")).toHaveText(["11:30～11:45預約 1 份","11:45～12:00預約 1 份"]);
+    await expect(page.getByText("2 張有效預約 · 2 份", {exact:false})).toBeVisible();
+    await expect(assertReceipt(wallet)).toContainText("線上自取");
+    await expect(page.getByText("已付款",{exact:true})).toBeVisible();
+    await expect(assertReceipt(phone)).toContainText("店員代建");
+    await expect(assertReceipt(cancelled)).toHaveCount(0);
+    await expect(page.getByText("內部備註勿列印")).toHaveCount(0);
+    expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBe(360);
+    await page.getByRole("checkbox",{name:"顯示 1 張已取消餐單"}).check();
+    await expect(assertReceipt(cancelled)).toBeVisible();
+    const print=page.getByRole("button",{name:"列印預約清單"});
+    await print.click();
+    await expect(page.locator("body")).toHaveAttribute("data-print-invoked","yes");
+    await page.emulateMedia({media:"print"});
+    await expect(page.getByLabel("取餐日期")).toBeHidden();
+    await expect(assertReceipt(cancelled)).toBeVisible();
+    await expect(page.locator("time")).toBeVisible();
+    await page.emulateMedia({media:"screen"});
+
+    let failure=true;
+    await page.route(url=>url.pathname===endpoint&&url.searchParams.get("date")===date,route=>{
+      if(!failure)return route.continue();
+      failure=false;
+      return route.fulfill({status:503,json:{error:"暫時無法讀取清單"}});
+    });
+    const refresh=page.getByRole("button",{name:"重新擷取"});
+    await refresh.click();
+    await expect(page.getByRole("alert")).toHaveText("暫時無法讀取清單");
+    await expect(print).toBeDisabled();
+    await expect(assertReceipt(phone)).toHaveCount(0);
+    await refresh.click();
+    await expect(assertReceipt(phone)).toBeVisible();
+    await page.getByLabel("取餐日期").fill("2001-01-01");
+    await expect(page.getByText("這天沒有自取預約。")).toBeVisible();
+    await expect(print).toBeDisabled();
+  }finally{
+    for(const token of tokens)await request.post("/api/ticket/cancel",{headers:{"X-Ticket":token},data:{}});
+  }
+});
+
 test("a mobile pickup receipt downloads the current calendar file and its cancellation",async({page})=>{
   const token=randomUUID(),start=Date.parse("2026-11-25T12:00:00+08:00"),created=start-3_600_000;
   const order={id:233,mode:"pickup",table:null,pickupSlot:start,pickupChanges:[],canReschedulePickup:true,

@@ -12,6 +12,7 @@ import {bookedPickupDate,pickupBookingDays,pickupCalendarStatus,pickupPrepLead,p
 import {canReschedulePickup,capacityAtPickupSlot,editablePickupSlots,orderPortions,pickupChanges,pickupSlotLimits,
   pickupDayPaused,pickupDaySettings,pickupSlotUsage,pickupSlots,usedAtPickupSlot} from "./pickup-slots.mjs";
 import {pickupCalendar} from "./pickup-calendar.mjs";
+import {pickupRoster} from "./pickup-roster.mjs";
 
 const json = (value, status=200) => Response.json(value,{status,headers:{"Cache-Control":"no-store"}});
 const fail = (message,status=400) => json({error:message},status);
@@ -535,6 +536,12 @@ export async function api(request, env) {
     const numbers={ready:[],preparing:[]};
     for(const {id,status} of results)numbers[status].push(id);
     return json({capturedAt:Date.now(),...numbers});
+  }
+  if (path === "/api/kitchen/pickup-roster" && method === "GET") {
+    const capturedAt=Date.now(),date=url.searchParams.get("date")??businessDate(capturedAt);
+    const range=businessDayRange(date);
+    if(!range)return fail("請選擇有效的取餐日期。");
+    return json(await pickupRoster(db,date,range,capturedAt));
   }
   if (path === "/api/kitchen/return-receipt" && method === "GET") {
     const id = collectionId(url);

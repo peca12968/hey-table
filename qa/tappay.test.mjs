@@ -740,6 +740,51 @@ test("staff reservations share slot capacity, survive a lost response and keep t
   assert.equal((await prepare(accepted.id)).status,200);
 });
 
+test("staff pickup roster groups one Taipei day and excludes private receipt and payment fields",async t=>{
+  const db=database();
+  t.after(()=>db.sqlite.close());
+  const date="2026-11-25",now=Date.parse(date+"T10:45:00+08:00");
+  const first=Date.parse(date+"T11:30:00+08:00"),later=first+900_000;
+  t.mock.method(Date,"now",()=>now);
+  const runtime={DB:db,STAFF_KEY:"fixture-staff"},staff={Authorization:"Bearer fixture-staff"};
+  const call=(path,headers={})=>api(new Request("https://order.example"+path,{headers}),runtime);
+  const endpoint="/api/kitchen/pickup-roster";
+  const add=db.sqlite.prepare(`INSERT INTO orders(token,mode,source,pickup_slot,note,items,total,created,status,payment_method,payment_due_at)
+    VALUES (?,?,?,?, 'private kitchen note', ?,90,?,?,?,?)`);
+  const insert=({slot,source=null,method="cash",mode="pickup",status="pending",due=null})=>
+    add.run(crypto.randomUUID(),mode,source,slot,JSON.stringify([{id:"sencha",qty:2,note:"private item note"}]),now-900_000,status,method,due).lastInsertRowid;
+  const late=insert({slot:later,source:"staff"});
+  const paid=insert({slot:first,method:"px_pay_plus",status:"ready"});
+  const expired=insert({slot:first,method:"line_pay",due:now-1});
+  insert({slot:null});
+  insert({slot:first,mode:"table"});
+  insert({slot:Date.parse("2026-11-24T23:59:59.999+08:00")});
+  insert({slot:Date.parse("2026-11-26T00:00:00+08:00")});
+  const attempt=db.sqlite.prepare("INSERT INTO payment_attempts(order_id,reference,merchant,state,created) VALUES (?,?, 'private merchant', ?,?)");
+  attempt.run(paid,"earlier-private-ref","pending",now-2000);
+  attempt.run(paid,"latest-private-ref","paid",now-1000);
+  db.sqlite.prepare("INSERT INTO pickup_day_intake(date,accepting,revision) VALUES (?,0,1)").run(date);
+  assert.equal((await call(endpoint)).status,403);
+  assert.equal((await call(endpoint+"?date=2026-02-30",staff)).status,400);
+  const response=await call(endpoint,staff);
+  assert.equal(response.status,200);
+  assert.equal(response.headers.get("Cache-Control"),"no-store");
+  const raw=await response.text();
+  assert.ok(!raw.includes("private"));
+  assert.deepEqual(JSON.parse(raw),{
+    date,capturedAt:now,accepting:false,totals:{bookings:2,portions:4,cancelled:1},windows:[
+      {start:first,portions:2,orders:[
+        {id:paid,source:"online",status:"ready",paymentMethod:"px_pay_plus",paymentState:"paid",portions:2},
+        {id:expired,source:"online",status:"cancelled",paymentMethod:"line_pay",paymentState:"unpaid",portions:2},
+      ]},
+      {start:later,portions:2,orders:[
+        {id:late,source:"staff",status:"pending",paymentMethod:"cash",paymentState:"unpaid",portions:2},
+      ]},
+    ],
+  });
+  assert.deepEqual((await (await call(endpoint+"?date=2026-11-27",staff)).json()).windows,[]);
+});
+
 test("authorized staff can close, raise and reset an individual slot without displacing bookings",async t=>{
   const db=database();
   t.after(()=>db.sqlite.close());
