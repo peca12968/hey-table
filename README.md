@@ -97,6 +97,12 @@ Stockroom 支援在一筆交易內保留多個 SKU。若其中一項缺貨，該
 
 待確認的餐單保存在瀏覽器裡，各桌與自取分開保存。此功能需要瀏覽器允許本站儲存資料。端對端測試會讓本機 Worker 真正寫入訂單，再刻意丟掉回應並關閉分頁，核對重開後的取餐號碼、廚房訂單數及實際送單請求次數。另測試送單未達、查詢服務暫時失敗、重試時售完，以及舊版裝置草稿的恢復。
 
+## 收據進度
+
+自取及掃碼內用的顧客可在收據查看送單、店家接單、備妥及交餐時間。若店家取消，收據會顯示取消時間。時間以台灣時區呈現，頁面每五秒更新一次，也可以按「更新進度」。
+
+廚房比對舊狀態時，會用同一個 SQLite 更新寫入新狀態與時間。兩位店員同時操作時只有成功的一筆會寫入。舊餐單仍可查詢，能確認的舊狀態會標示「時間未記錄」。收據持有者才可查閱進度，付款仍有自己的狀態。[收據進度示範資料](examples/receipt-progress.json)
+
 ## 同桌分帳
 
 在手機收據展開「這張餐單怎麼分帳？」，填寫用餐人稱呼，替每道菜指定分攤份數。同桌平分填 1，沒吃填 0，分食份量不同也可填 2 比 1。每道菜的小計與每人應付都以整元顯示。例如 190 元豬排丼歸小安，85 元煎餃和 55 元毛豆兩人平分，最後小安付 260 元、小岑付 70 元。
@@ -129,6 +135,7 @@ node --import ./scripts/sites-env.mjs ./node_modules/wrangler/bin/wrangler.js d1
 node --import ./scripts/sites-env.mjs ./node_modules/wrangler/bin/wrangler.js d1 execute DB --local --config dist/server/wrangler.json --persist-to .wrangler/state --file drizzle/0004_combo_pricing.sql
 node --import ./scripts/sites-env.mjs ./node_modules/wrangler/bin/wrangler.js d1 execute DB --local --config dist/server/wrangler.json --persist-to .wrangler/state --file drizzle/0005_order_intake.sql
 node --import ./scripts/sites-env.mjs ./node_modules/wrangler/bin/wrangler.js d1 execute DB --local --config dist/server/wrangler.json --persist-to .wrangler/state --file drizzle/0006_table_intake.sql
+node --import ./scripts/sites-env.mjs ./node_modules/wrangler/bin/wrangler.js d1 execute DB --local --config dist/server/wrangler.json --persist-to .wrangler/state --file drizzle/0007_receipt_progress.sql
 npm start
 ```
 

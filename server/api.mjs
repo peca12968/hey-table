@@ -35,6 +35,15 @@ function receipt(row) {
     ...(row.combo_quote ? {combo:JSON.parse(row.combo_quote)} : {}),
     paymentMethod:row.payment_method,paymentEnv:row.payment_env,paymentState:row.payment_state??'unpaid',total:row.total, status:row.status, created:row.created};
 }
+function statusHistory(row) {
+  const history = [{status:"pending",at:row.created}];
+  for (const {from,status,at} of JSON.parse(row.status_history ?? "[]")) {
+    if (history.at(-1).status !== from) history.push({status:from,at:null});
+    history.push({status,at});
+  }
+  if (history.at(-1).status !== row.status) history.push({status:row.status,at:null});
+  return history;
+}
 function menuItems(lines) {
   if (!Array.isArray(lines) || !lines.length || lines.length > dishes.length) return null;
   const byId = new Map();
@@ -192,13 +201,13 @@ export async function api(request, env) {
     if (saved.combo?.version !== input.comboVersion || (selected && saved.total !== input.expectedTotal) ||
         row.payment_method!==method || row.mode!==order.mode || row.table_no!==order.table || row.note!==order.note || !sameItems)
       return fail("送單識別碼已用於另一張訂單",409);
-    return json(saved);
+    return json({...saved,statusHistory:statusHistory(row)});
   }
   if (path === "/api/ticket" && method === "GET") {
     const token = request.headers.get("X-Ticket");
     if (!uuid.test(token)) return fail("找不到訂單",404);
     const row = await db.prepare(selectOrders+" WHERE token=?").bind(token).first();
-    return row ? json(receipt(row)) : fail("找不到訂單",404);
+    return row ? json({...receipt(row),statusHistory:statusHistory(row)}) : fail("找不到訂單",404);
   }
   if (path === "/api/kitchen/prep" && method === "GET") {
     const {results} = await db.prepare(`SELECT id, created, status, items FROM orders
@@ -247,9 +256,11 @@ export async function api(request, env) {
   if (path === "/api/kitchen/status" && method === "PATCH") {
     if (!Number.isSafeInteger(input.id) || !Object.hasOwn(transitions,input.from) ||
         !transitions[input.from].includes(input.to)) return fail("無效的訂單狀態轉換");
-    const {meta} = await db.prepare("UPDATE orders SET status=? WHERE id=? AND status=? AND "+(input.to==="cancelled" ?
+    const {meta} = await db.prepare(`UPDATE orders SET status=?,
+      status_history=json_insert(COALESCE(status_history,'[]'),'$[#]',json_object('from',status,'status',?,'at',?))
+      WHERE id=? AND status=? AND `+(input.to==="cancelled" ?
       "(payment_method='cash' OR COALESCE("+latestState+",'unpaid') IN ('unpaid','failed','cancelled','refunded'))" : payableForKitchen))
-      .bind(input.to,input.id,input.from).run();
+      .bind(input.to,input.to,Date.now(),input.id,input.from).run();
     return meta.changes ? json({ok:true}) : fail("訂單已更新，請重新整理",409);
   }
   if (path === "/api/kitchen/availability" && method === "PATCH") {

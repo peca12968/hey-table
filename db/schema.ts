@@ -13,6 +13,7 @@ export const orders = sqliteTable("orders", {
   comboQuote: text("combo_quote"),
   total: integer("total").notNull(),
   status: text("status").notNull().default("pending"),
+  statusHistory: text("status_history"),
   created: integer("created").notNull(),
 }, t => [index("orders_status_id").on(t.status,t.id)]);
 export const paymentAttempts = sqliteTable("payment_attempts", {

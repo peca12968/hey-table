@@ -1,0 +1,26 @@
+[
+  {
+    "scenario": "table",
+    "statusHistory": [
+      {"status": "pending", "at": 1795492800000},
+      {"status": "preparing", "at": 1795492860000},
+      {"status": "ready", "at": 1795493340000},
+      {"status": "completed", "at": 1795493400000}
+    ]
+  },
+  {
+    "scenario": "pickup",
+    "statusHistory": [
+      {"status": "pending", "at": 1795492800000},
+      {"status": "cancelled", "at": 1795492920000}
+    ]
+  },
+  {
+    "scenario": "legacy",
+    "statusHistory": [
+      {"status": "pending", "at": 1795492800000},
+      {"status": "preparing", "at": null},
+      {"status": "ready", "at": 1795493340000}
+    ]
+  }
+]

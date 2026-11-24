@@ -7,6 +7,52 @@ import {fileURLToPath} from "node:url";
 import jsQR from "jsqr";
 import {PNG} from "pngjs";
 
+test("mobile receipt follows committed kitchen progress for its own order",async({page,request})=>{
+  await page.setViewportSize({width:360,height:800});
+  const staff={Authorization:"Bearer local-test-kitchen"};
+  const sample=JSON.parse(await readFile(new URL("../examples/receipt-progress.json",import.meta.url),"utf8"));
+  const statuses=history=>history.map(event=>event.status);
+  async function create(mode,table){
+    const token=randomUUID();
+    const response=await request.post("/api/orders",{data:{token,mode,table,note:"",items:[{id:"oyakodon",qty:1}]}});
+    expect(response.ok()).toBeTruthy();
+    return {token,...await response.json()};
+  }
+  const table=await create("table","A03");
+  const pickup=await create("pickup",null);
+  const move=(id,from,to)=>request.patch("/api/kitchen/status",{headers:staff,data:{id,from,to}});
+  const ticket=token=>request.get("/api/ticket",{headers:{"X-Ticket":token}});
+  await page.goto("/ticket#"+table.token);
+  const progress=page.getByRole("region",{name:"餐單進度"});
+  const list=progress.getByRole("listitem");
+  await expect(list).toHaveText([/^已送單/]);
+  const race=await Promise.all([move(table.id,"pending","preparing"),move(table.id,"pending","preparing")]);
+  expect(race.map(response=>response.status()).sort()).toEqual([200,409]);
+  await expect(list).toHaveText([/^已送單/,/^店家接單，開始製作/],{timeout:8000});
+  expect((await move(table.id,"preparing","ready")).status()).toBe(200);
+  expect((await move(table.id,"ready","completed")).status()).toBe(200);
+  await page.getByRole("button",{name:"更新進度"}).click();
+  await expect(list).toHaveText([/^已送單/,/^店家接單，開始製作/,/^餐點已備妥/,/^已交餐/]);
+  const history=(await (await ticket(table.token)).json()).statusHistory;
+  expect(statuses(history)).toEqual(statuses(sample.find(row=>row.scenario==="table").statusHistory));
+  expect(history[0].at).toBe(table.created);
+  expect(history.every(event=>Number.isSafeInteger(event.at))).toBe(true);
+  for (const [index,event] of history.entries())
+    await expect(list.nth(index).locator("time")).toHaveAttribute("datetime",new Date(event.at).toISOString());
+  await expect(progress.locator('[aria-current="step"]')).toHaveText(/^已交餐/);
+  await page.reload();
+  await expect(list).toHaveCount(4);
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBe(360);
+
+  expect((await move(pickup.id,"pending","cancelled")).status()).toBe(200);
+  await page.goto("/ticket#"+pickup.token);
+  await expect(list).toHaveText([/^已送單/,/^店家已取消/]);
+  expect(statuses((await (await ticket(pickup.token)).json()).statusHistory))
+    .toEqual(statuses(sample.find(row=>row.scenario==="pickup").statusHistory));
+  expect((await ticket(randomUUID())).status()).toBe(404);
+  expect((await ticket("")).status()).toBe(404);
+});
+
 test("reopen a lost A03 receipt after the kitchen committed, without resubmitting",async({context,page,request})=>{
   await page.setViewportSize({width:390,height:844});
   const attempts=[];
