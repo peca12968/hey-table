@@ -33,9 +33,8 @@ broker 在示範全程持續運作，session 存於記憶體。測試驗證的�
 ```sh
 npm ci
 git worktree add --detach ../coldroom-legacy 320c6586eaeb233e127ba999e5903f95d37fa38c
-git clone https://github.com/peca12968/coldroom-inbox.git ../thaw-window
-git -C ../thaw-window checkout 8183b10d648d90f3cdc445298abb58e1a2ca560e
-node coverage-demo.mjs ../coldroom-legacy/inbox.mjs ../thaw-window/thaw.py
+git worktree add --detach ../thaw-window-verified 8183b10d648d90f3cdc445298abb58e1a2ca560e
+node coverage-demo.mjs ../coldroom-legacy/inbox.mjs ../thaw-window-verified/thaw.py
 ```
 
 此演練需 Python 3.12 執行時間區間計算工具。[跨版本與跨專案演練](coverage-demo.mjs)
