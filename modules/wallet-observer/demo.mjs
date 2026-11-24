@@ -6,6 +6,7 @@ import {tmpdir} from "node:os";
 import {join, resolve} from "node:path";
 import {DatabaseSync} from "node:sqlite";
 import {fileURLToPath, pathToFileURL} from "node:url";
+import {sqliteD1} from "../../scripts/sqlite-d1.mjs";
 
 const site = resolve(process.argv[2] || fileURLToPath(new URL("../..", import.meta.url)));
 const {api} = await import(pathToFileURL(join(site,"server/api.mjs")));
@@ -15,13 +16,7 @@ const file = join(dir,"demo.db");
 const sqlite = new DatabaseSync(file);
 // The production API calls D1's prepared-statement interface. The fixture uses
 // SQLite on disk so the independent Python process can open the same database.
-const DB = {prepare(sql){
-  const statement = sqlite.prepare(sql);
-  return {bind(...args){return {
-    first:()=>statement.get(...args), run:()=>({meta:statement.run(...args)}),
-    all:()=>({results:statement.all(...args)})
-  };}};
-}};
+const DB = sqliteD1(sqlite);
 const python = (...args)=>execFileSync(process.env.PYTHON || "python",[cli,...args],{encoding:"utf8"});
 const start = 1795406400000;
 let now = start;

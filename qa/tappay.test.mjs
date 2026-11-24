@@ -9,6 +9,7 @@ import {fileURLToPath} from "node:url";
 import {api} from "../server/api.mjs";
 import {settings,lookup} from "../server/tappay.mjs";
 import {paymentPrime,openPaymentUrl} from "../lib/tappay-client.mjs";
+import {sqliteD1} from "../scripts/sqlite-d1.mjs";
 
 const env={TAPPAY_MODE:"sandbox",TAPPAY_APP_ID:"123",TAPPAY_APP_KEY:"test-public",TAPPAY_PARTNER_KEY:"test-only",
   TAPPAY_SITE_ORIGIN:"https://order.example",TAPPAY_NOTIFY_URL:"https://notify.example/api/payments/notify"};
@@ -61,19 +62,7 @@ function database(beforeMigration=()=>{}){
     beforeMigration(tag,sqlite);
     sqlite.exec(readFileSync(new URL("../drizzle/"+tag+".sql",import.meta.url),"utf8"));
   }
-  return d1(sqlite);
-}
-function d1(sqlite){
-  const wrap=(stmt,args=[])=>({bind:(...values)=>wrap(stmt,values),first:()=>stmt.get(...args),
-    run:()=>({meta:stmt.run(...args)}),all:()=>({results:stmt.all(...args)})});
-  return {sqlite,prepare:sql=>wrap(sqlite.prepare(sql)),batch(statements){
-    sqlite.exec("BEGIN");
-    try{
-      const results=statements.map(stmt=>stmt.all());
-      sqlite.exec("COMMIT");
-      return results;
-    }catch(e){sqlite.exec("ROLLBACK");throw e;}
-  }};
+  return sqliteD1(sqlite);
 }
 test("staff payment export matches both reconciliation tools without exporting customer fields",async t=>{
   const temp=mkdtempSync(join(tmpdir(),"hey-table-payment-snapshot-"));
@@ -88,7 +77,7 @@ test("staff payment export matches both reconciliation tools without exporting c
   try {
     sqlite.exec("UPDATE orders SET note='private-order-note'");
     sqlite.exec("UPDATE payment_attempts SET redirect_url='https://example.test/private-checkout'");
-    const runtime={DB:d1(sqlite),STAFF_KEY:"fixture-staff"};
+    const runtime={DB:sqliteD1(sqlite),STAFF_KEY:"fixture-staff"};
     const auth={Authorization:"Bearer fixture-staff"};
     const get=(query,headers={})=>api(new Request("https://order.example/api/kitchen/payment-snapshot"+query,{headers}),runtime);
     assert.equal((await get("?environment=sandbox")).status,403);
