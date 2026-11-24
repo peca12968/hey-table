@@ -740,6 +740,64 @@ test("staff reservations share slot capacity, survive a lost response and keep t
   assert.equal((await prepare(accepted.id)).status,200);
 });
 
+test("D1 records cash once, returns the original result on replay and protects the other payment methods",async t=>{
+  const host=await pickupWorkerOrigin(t);
+  const staff={Authorization:"Bearer fixture-staff"},cashEndpoint="/api/kitchen/cash-receipt";
+  const write=(path,body,headers={},method="POST")=>fetch(host+path,{method,
+    headers:{"Content-Type":"application/json",...headers},body:JSON.stringify(body)});
+  const makeOrder=async(method="cash")=>{
+    const token=crypto.randomUUID();
+    const response=await write("/api/orders",{token,mode:"pickup",note:"",paymentMethod:method,items:[{id:"sencha",qty:1}]});
+    assert.equal(response.status,200);
+    return {id:(await response.json()).id,token};
+  };
+  const move=(id,from,to)=>write("/api/kitchen/status",{id,from,to},staff,"PATCH");
+  const collect=(params,headers=staff)=>write(cashEndpoint,params,headers);
+  const receipt=async token=>await (await fetch(host+"/api/ticket",{headers:{"X-Ticket":token}})).json();
+  const {id,token}=await makeOrder();
+  const base={id,expectedTotal:45,tendered:100,operationId:crypto.randomUUID()};
+  assert.equal((await collect(base,{})).status,403);
+  assert.equal((await collect({...base,id:0})).status,400);
+  assert.equal((await collect({...base,tendered:44})).status,400);
+  assert.equal((await collect({...base,tendered:50.25})).status,400);
+  assert.equal((await collect({...base,tendered:Number.MAX_SAFE_INTEGER+1})).status,400);
+  assert.equal((await collect(base)).status,409);
+  assert.equal((await move(id,"pending","preparing")).status,200);
+  assert.equal((await move(id,"preparing","ready")).status,200);
+  assert.equal((await collect({...base,expectedTotal:40})).status,409);
+  const attempts=[base,{...base,tendered:200,operationId:crypto.randomUUID()}];
+  const results=await Promise.all(attempts.map(params=>collect(params)));
+  assert.deepEqual(results.map(result=>result.status).sort(),[200,409]);
+  const winner=results.findIndex(result=>result.ok),saved=await results[winner].json();
+  assert.deepEqual(saved,{id,cashReceipt:{amount:45,tendered:attempts[winner].tendered,change:attempts[winner].tendered-45,
+    collectedAt:Date.parse("2026-11-25T10:45:00+08:00")}});
+  assert.equal((await collect({...attempts[winner],operationId:crypto.randomUUID()})).status,409);
+  assert.equal((await collect({...attempts[winner],tendered:1000})).status,409);
+  assert.equal((await move(id,"ready","completed")).status,200);
+  assert.deepEqual(await (await collect(attempts[winner])).json(),saved);
+  const original=await receipt(token);
+  assert.equal(original.status,"completed");
+  assert.deepEqual(original.cashReceipt,saved.cashReceipt);
+  assert.ok(!JSON.stringify(original).includes(attempts[winner].operationId));
+
+  const second=await makeOrder();
+  assert.equal((await move(second.id,"pending","preparing")).status,200);
+  assert.equal((await move(second.id,"preparing","ready")).status,200);
+  assert.equal((await move(second.id,"ready","completed")).status,200);
+  assert.equal((await receipt(second.token)).cashReceipt,undefined);
+  assert.equal((await collect({...attempts[winner],id:second.id})).status,409);
+  const exact=await (await collect({...base,id:second.id,operationId:crypto.randomUUID(),tendered:45})).json();
+  assert.equal(exact.cashReceipt.change,0);
+  const online=await makeOrder("line_pay");
+  const guest={"X-Ticket":online.token};
+  const {attempt}=await (await write("/api/payments/start",{},guest)).json();
+  assert.equal((await write("/api/payments/demo",{ref:attempt.ref,outcome:"paid"},guest)).status,200);
+  assert.equal((await move(online.id,"pending","preparing")).status,200);
+  assert.equal((await move(online.id,"preparing","ready")).status,200);
+  assert.equal((await collect({...base,id:online.id,operationId:crypto.randomUUID()})).status,409);
+  assert.equal((await receipt(online.token)).cashReceipt,undefined);
+});
+
 test("staff pickup roster groups one Taipei day and excludes private receipt and payment fields",async t=>{
   const db=database();
   t.after(()=>db.sqlite.close());
@@ -754,6 +812,7 @@ test("staff pickup roster groups one Taipei day and excludes private receipt and
   const insert=({slot,source=null,method="cash",mode="pickup",status="pending",due=null})=>
     add.run(crypto.randomUUID(),mode,source,slot,JSON.stringify([{id:"sencha",qty:2,note:"private item note"}]),now-900_000,status,method,due).lastInsertRowid;
   const late=insert({slot:later,source:"staff"});
+  db.sqlite.prepare("INSERT INTO cash_receipts(order_id,operation_id,amount,tendered,collected_at) VALUES (?,'private operation',90,100,?)").run(late,now-1000);
   const paid=insert({slot:first,method:"px_pay_plus",status:"ready"});
   const expired=insert({slot:first,method:"line_pay",due:now-1});
   insert({slot:null});
@@ -778,7 +837,7 @@ test("staff pickup roster groups one Taipei day and excludes private receipt and
         {id:expired,source:"online",status:"cancelled",paymentMethod:"line_pay",paymentState:"unpaid",portions:2},
       ]},
       {start:later,portions:2,orders:[
-        {id:late,source:"staff",status:"pending",paymentMethod:"cash",paymentState:"unpaid",portions:2},
+        {id:late,source:"staff",status:"pending",paymentMethod:"cash",paymentState:"unpaid",portions:2,cashCollected:true},
       ]},
     ],
   });

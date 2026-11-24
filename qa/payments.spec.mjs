@@ -4,6 +4,60 @@ import {readFile} from "node:fs/promises";
 import {businessDate} from "../lib/business-day.mjs";
 const staff={Authorization:"Bearer local-test-kitchen"};
 
+test("mobile cash collection previews change and resumes the same operation after a lost request",async({page,request})=>{
+  page.setDefaultTimeout(9000);
+  const token=randomUUID(),ticket={"X-Ticket":token},endpoint="/api/kitchen/cash-receipt";
+  const created=await request.post("/api/orders",{data:{token,mode:"pickup",note:"",items:[{id:"sencha",qty:1}]}});
+  expect(created.ok()).toBe(true);
+  const {id}=await created.json();
+  const move=(from,to)=>request.patch("/api/kitchen/status",{headers:staff,data:{id,from,to}});
+  expect((await move("pending","preparing")).ok()).toBe(true);
+  expect((await move("preparing","ready")).ok()).toBe(true);
+  await page.setViewportSize({width:360,height:780});
+  await page.addInitScript(()=>sessionStorage.setItem("he-ri-staff","local-test-kitchen"));
+  let sent,postCount=0;
+  await page.route("**"+endpoint,route=>{
+    postCount++;
+    const payload=route.request().postDataJSON();
+    expect(route.request().headers().authorization).toBe(staff.Authorization);
+    expect(payload).toMatchObject({id,expectedTotal:45,tendered:100});
+    if(postCount===1){
+      sent=payload;
+      return route.abort("connectionreset");
+    }
+    expect(payload).toEqual(sent);
+    return route.continue();
+  });
+
+  await page.goto("/kitchen?pickup="+id);
+  await page.getByText("登記現金收款",{exact:true}).click();
+  const amount=page.getByLabel("實收金額");
+  const confirm=page.getByRole("button",{name:"確認現金收款"});
+  await amount.fill("40");
+  await expect(confirm).toBeDisabled();
+  await expect(page.getByText("尚差 NT$ 5")).toBeVisible();
+  await amount.fill("100");
+  await expect(page.getByText("應找零 NT$ 55")).toBeVisible();
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBe(360);
+  await confirm.click();
+  await expect(page.getByRole("alert")).toContainText("尚未收到收款結果");
+  await page.reload();
+  await expect(amount).toHaveValue("100");
+  await expect(amount).toBeDisabled();
+  await page.getByRole("button",{name:"重試確認收款"}).click();
+  const cash=page.getByRole("region",{name:"現金收款紀錄"});
+  await expect(cash).toContainText("NT$ 55");
+  await expect(cash).toContainText("NT$ 100");
+  expect(postCount).toBe(2);
+  await page.getByRole("button",{name:"完成交餐"}).click();
+  await expect(page.getByText("已完成交餐。")).toBeVisible();
+  await page.goto("/ticket#"+token);
+  await expect(cash).toContainText("NT$ 55");
+  const saved=await (await request.get("/api/ticket",{headers:ticket})).json();
+  expect(saved).toMatchObject({status:"completed",cashReceipt:{amount:45,tendered:100,change:55}});
+  expect(saved.cashReceipt.operationId).toBeUndefined();
+});
+
 test("mobile receipt shows the payment hold deadline and explains automatic release",async({page,request})=>{
   const token=randomUUID(),headers={"X-Ticket":token};
   const created=await request.post("/api/orders",{data:{token,mode:"pickup",note:"",items:[{id:"sencha",qty:1}],paymentMethod:"line_pay"}});

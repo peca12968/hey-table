@@ -22,7 +22,8 @@ function RosterWindow({slot,includeCancelled}){
         <th scope="row"><a className="textLink" href={"/kitchen?pickup="+numberOf(order.id)}>#{numberOf(order.id)}</a>
           <small>{order.source==="staff"?"店員代建":"線上自取"}</small></th>
         <td>{order.portions}</td>
-        <td>{methods[order.paymentMethod]??"未記錄"}{order.paymentMethod!=="cash"&&<small>{paymentStates[order.paymentState]??"未記錄"}</small>}</td>
+        <td>{methods[order.paymentMethod]??"未記錄"}{order.paymentMethod==="cash"?
+          (order.cashCollected&&<small>已登記收款</small>):<small>{paymentStates[order.paymentState]??"未記錄"}</small>}</td>
         <td>{labels[order.status]}</td>
       </tr>)}</tbody>
     </table>

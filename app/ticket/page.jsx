@@ -14,6 +14,7 @@ import {QuoteSummary} from "../cart-quote";
 import CancelReceipt from "./cancel-receipt";
 import ReschedulePickup from "../reschedule-pickup";
 import PickupCalendar from "./pickup-calendar";
+import CashReceipt from "../cash-receipt";
 import {pickupCalendarStatus,pickupChangeWindows} from "../../lib/pickup-slots.mjs";
 const progressLabels={
   pending:"已送單",preparing:"店家接單，開始製作",ready:"餐點已備妥",completed:"已交餐",cancelled:"店家已取消",
@@ -157,6 +158,7 @@ export default function Ticket(){
     <ul className="orderLines">{order.items.map(d=><li key={d.id}><div><b>{d.name} × {d.qty}</b><ItemNote note={d.note}/></div><span>NT$ {d.price*d.qty}</span></li>)}</ul>
     {order.combo&&<p>餐點原價 NT$ {order.combo.quote.subtotal} · 套餐折抵 NT$ {order.combo.quote.discount}</p>}
     {order.note&&<p>備註　{order.note}</p>}<div className="total"><span>{methods[order.paymentMethod]}</span><b>NT$ {order.total}</b></div>
+    {order.cashReceipt&&<CashReceipt record={order.cashReceipt}/>}
     {order.paymentMethod!=="cash"&&!closedBeforePayment&&<Payment key={order.id} order={order} token={route.token} onChange={refreshReceipt}/>}
     {canCustomerCancel(order)&&<CancelReceipt key={route.token} token={route.token} onChange={refreshReceipt}/>}
     <button className="outline" onClick={()=>setRefresh(v=>v+1)}><RefreshCw size={16}/> 更新進度</button></>}

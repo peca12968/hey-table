@@ -40,6 +40,15 @@ export const paymentAttempts = sqliteTable("payment_attempts", {
   kitchenPayableAt: integer("kitchen_payable_at"),
   checked: integer("checked").notNull().default(0),
 }, t => [index("attempt_order").on(t.orderId,t.id)]);
+export const cashReceipts = sqliteTable("cash_receipts", {
+  orderId: integer("order_id").primaryKey().notNull().references(()=>orders.id),
+  operationId: text("operation_id").notNull().unique(),
+  amount: integer("amount").notNull(),
+  tendered: integer("tendered").notNull(),
+  collectedAt: integer("collected_at").notNull(),
+}, t => [
+  check("cash_receipt_amount",sql`${t.amount} >= 0 AND ${t.tendered} >= ${t.amount}`),
+]);
 export const unavailable = sqliteTable("unavailable", {
   dish: text("dish").primaryKey(),
 });

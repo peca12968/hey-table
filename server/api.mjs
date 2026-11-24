@@ -13,6 +13,7 @@ import {canReschedulePickup,capacityAtPickupSlot,editablePickupSlots,orderPortio
   pickupDayPaused,pickupDaySettings,pickupSlotUsage,pickupSlots,usedAtPickupSlot} from "./pickup-slots.mjs";
 import {pickupCalendar} from "./pickup-calendar.mjs";
 import {pickupRoster} from "./pickup-roster.mjs";
+import {cashReceiptColumn,collectCash} from "./cash-receipts.mjs";
 
 const json = (value, status=200) => Response.json(value,{status,headers:{"Cache-Control":"no-store"}});
 const fail = (message,status=400) => json({error:message},status);
@@ -26,7 +27,7 @@ import {activeKitchen,demoKitchen,importTiming,stationLabels,timingChanges} from
 import {finishStation,remainingStationItems,stationQueue} from "./station-work.mjs";
 const timingRows = "SELECT revision,config FROM kitchen_timing ORDER BY revision DESC";
 const fromTimingRow = row => ({revision:row?.revision??0, kitchen:activeKitchen(row ? JSON.parse(row.config) : null)});
-const orderColumns = "SELECT orders.*, "+latestState+" AS payment_state";
+const orderColumns = `SELECT orders.*, ${latestState} AS payment_state, ${cashReceiptColumn} AS cash_receipt`;
 const selectOrders = orderColumns+" FROM orders";
 const intakeRows = "SELECT mode,accepting,revision FROM order_intake";
 const tableIntakeRows = "SELECT table_no,accepting,revision FROM table_intake";
@@ -52,6 +53,7 @@ function receipt(row) {
     ...(row.source === "staff" ? {source:row.source} : {}),
     ...(row.pickup_slot!=null ? {pickupSlot:row.pickup_slot} : {}),
     ...(row.combo_quote ? {combo:JSON.parse(row.combo_quote)} : {}),
+    ...(row.cash_receipt ? {cashReceipt:JSON.parse(row.cash_receipt)} : {}),
     paymentMethod:row.payment_method,paymentEnv:row.payment_env,paymentState:row.payment_state??'unpaid',total:row.total, status:row.status, created:row.created};
 }
 function statusHistory(row) {
@@ -140,6 +142,24 @@ export async function api(request, env) {
     if (!input || typeof input !== "object") return fail("資料格式錯誤");
   }
   if(path==="/api/kitchen/payment" && method==="PATCH")return checkKitchenPayment(env,input.id);
+  if(path==="/api/kitchen/cash-receipt"&&method==="POST"){
+    const {id,operationId,expectedTotal,tendered}=input;
+    if(!Number.isSafeInteger(id)||id<1||typeof operationId!=="string"||!uuid.test(operationId)||
+        !Number.isSafeInteger(expectedTotal)||expectedTotal<0||!Number.isSafeInteger(tendered)||tendered<0)
+      return fail("請確認餐號、收款金額與操作識別碼。");
+    if(tendered<expectedTotal)return fail("實收金額少於應收金額。");
+    const row=await collectCash(db,input,Date.now());
+    if(!row)return fail("找不到餐單。",404);
+    if(row.cash_receipt){
+      const cashReceipt=JSON.parse(row.cash_receipt);
+      if(row.operation_id===operationId&&cashReceipt.amount===expectedTotal&&cashReceipt.tendered===tendered)
+        return json({id,cashReceipt});
+      return fail("這張餐單已有現金收款紀錄，請先核對。",409);
+    }
+    if(row.payment_method!=="cash"||!["ready","completed"].includes(row.status))return fail("餐單目前無法登記現金收款。",409);
+    if(row.total!==expectedTotal)return fail("應收金額已更新，請重新核對。",409);
+    return fail("收款操作識別碼已使用，請重新核對餐單。",409);
+  }
   if(path==="/api/kitchen/timing" && method==="GET"){
     const {results}=await db.prepare(timingRows+" LIMIT 2").all();
     return json({current:fromTimingRow(results[0]),previous:results.length ? fromTimingRow(results[1]) : null});

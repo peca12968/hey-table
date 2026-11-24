@@ -7,6 +7,7 @@ export async function pickupRoster(db,date,range,capturedAt){
     expirePaymentHolds(db,capturedAt),
     pickupDaySettings(db,date),
     db.prepare(`SELECT id,source,status,pickup_slot,payment_method,COALESCE(${latestState},'unpaid') AS payment_state,
+      EXISTS (SELECT 1 FROM cash_receipts WHERE order_id=orders.id) AS cash_collected,
       COALESCE(${orderPortions},0) AS portions FROM orders
       WHERE mode='pickup' AND pickup_slot>=? AND pickup_slot<? ORDER BY pickup_slot,id`).bind(...range),
   ]);
@@ -19,7 +20,8 @@ export async function pickupRoster(db,date,range,capturedAt){
       windows.set(row.pickup_slot,window);
     }
     window.orders.push({id:row.id,source:row.source==="staff"?"staff":"online",status:row.status,
-      paymentMethod:row.payment_method,paymentState:row.payment_state,portions:row.portions});
+      paymentMethod:row.payment_method,paymentState:row.payment_state,portions:row.portions,
+      ...(row.cash_collected?{cashCollected:true}:{})});
     if(row.status==="cancelled")totals.cancelled++;
     else{
       totals.bookings++;

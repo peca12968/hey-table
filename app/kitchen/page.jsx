@@ -13,6 +13,7 @@ import Timing from "./timing";
 import ReturnReceipt from "./return-receipt";
 import PaymentSnapshot from "./payment-snapshot";
 import Intake from "./intake";
+import CashCollection from "./cash-collection";
 import {methods,paymentStates,environmentLabel,canPrepare,canCancel} from "../../lib/payments.mjs";
 const action={preparing:"接單製作",ready:"完成製作",completed:"完成交餐",cancelled:"取消訂單"};
 const overdueStage={pending:"待接單",preparing:"製作中",ready:"待交餐"};
@@ -65,7 +66,7 @@ function TableHandoff({table,orders,busy,update}){
   </section>;
 }
 
-function KitchenTicket({order,busy,update,movePickup,refresh,today,showOverdue=false,handoffOnly=false}){
+function KitchenTicket({order,busy,update,movePickup,recordCash,refresh,today,showOverdue=false,handoffOnly=false}){
   const {id,status,table,created,items,note,paymentMethod,paymentEnv,paymentState,total}=order;
   const actions=handoffOnly ? transitions[status].filter(next=>next==="completed") : transitions[status];
   const workingByStation=order.stationProgress&&status==="preparing";
@@ -85,6 +86,8 @@ function KitchenTicket({order,busy,update,movePickup,refresh,today,showOverdue=f
     {note&&<p>備註　{note}</p>}
     <p>{methods[paymentMethod]} {paymentMethod!=="cash"&&[environmentLabel(paymentEnv),paymentStates[paymentState]].join(" · ")}</p>
     <div className="total"><span>合計</span><b>NT$ {total}</b></div>
+    {paymentMethod==="cash"&&["ready","completed"].includes(status)&&
+      <CashCollection order={order} disabled={busy} submit={recordCash} onChange={refresh}/>}
     <div className="actions">
       {["ready","completed"].includes(status)&&<a className="outline" href={"/kitchen/handoff?id="+numberOf(id)}>交餐小票</a>}
       {workingByStation&&<a className="primary" href="/kitchen/station-work">查看分站進度</a>}
@@ -177,6 +180,11 @@ export default function Kitchen(){
     return request("/api/kitchen/pickup-reschedule",{method:"PATCH",headers:{"Content-Type":"application/json",
       ...(key?{Authorization:"Bearer "+key}:{})},body:JSON.stringify({id,...change}),signal});
   }
+  function recordCash(input){
+    return request("/api/kitchen/cash-receipt",{method:"POST",headers:{"Content-Type":"application/json",
+      ...(key?{Authorization:"Bearer "+key}:{})},body:JSON.stringify(input),signal:AbortSignal.timeout(15_000)});
+  }
+  const refresh=()=>setRevision(value=>value+1);
   async function exportStations(){
     setExporting(true);setExportMessage("");
     try{
@@ -210,7 +218,7 @@ export default function Kitchen(){
   }else if(rows===null){
     content=!error&&<p>正在讀取{focused?"自取餐單":"接單台"}…</p>;
   }else if(focused){
-    content=<KitchenTicket order={rows[0]} busy={busy} update={update} handoffOnly/>;
+    content=<KitchenTicket key={rows[0].id} order={rows[0]} busy={busy} update={update} recordCash={recordCash} refresh={refresh} handoffOnly/>;
   }else{
     const showTableHandoff=filter==="ready"&&!search.trim();
     const readyAt=table=>filtered.filter(order=>order.table===table&&order.mode==="table");
@@ -248,7 +256,7 @@ export default function Kitchen(){
     </div>}
     {showTableHandoff&&tables.includes(scope)&&<TableHandoff key={scope} table={scope} orders={readyAt(scope)} busy={busy} update={update}/>}
     <div className="kGrid">{filtered.map(order=><KitchenTicket key={order.id} order={order} busy={busy} update={update} today={today}
-      movePickup={movePickup} refresh={()=>setRevision(value=>value+1)} showOverdue={queueAvailable}/>)}</div>
+      movePickup={movePickup} recordCash={recordCash} refresh={refresh} showOverdue={queueAvailable}/>)}</div>
     <section className="sheet stock"><h2>餐點供應</h2>{dishes.map(d=><div key={d.id}><span>{d.name}</span><button className="outline" disabled={busy} onClick={()=>update("availability",{id:d.id,available:sold.includes(d.id)})}>{sold.includes(d.id)?"已售完 · 恢復供應":"供應中 · 標記售完"}</button></div>)}</section>
     <Timing staffKey={key}/>
     {key&&<button className="outline" onClick={()=>{sessionStorage.removeItem("he-ri-staff");setKey("");}}>登出金鑰</button>}
