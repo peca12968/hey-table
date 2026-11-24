@@ -52,6 +52,18 @@ class ReservationBatchReceipt(BaseModel):
     items: list[ReservedItem]
 
 
+class CancelledBatchItem(BaseModel):
+    id: str
+    sku: str
+    quantity_released: int
+
+
+class BatchCancellationReceipt(BaseModel):
+    batch_id: str
+    cancelled_at_ms: int
+    items: list[CancelledBatchItem]
+
+
 class Product(BaseModel):
     sku: str
     capacity: int
@@ -246,6 +258,16 @@ def create_app(path: Path, *, ttl_seconds=900, clock=time.time):
     def reservation_batch_receipt(batch_id: str, response: Response):
         response.headers["Cache-Control"] = "no-store"
         return store.reservation_batch_receipt(batch_id)
+
+    @app.delete("/reservation-batches/{batch_id}", response_model=BatchCancellationReceipt)
+    def cancel_batch(batch_id: str, response: Response):
+        response.headers["Cache-Control"] = "no-store"
+        return store.cancel_batch(batch_id)
+
+    @app.get("/reservation-batches/{batch_id}/cancellation", response_model=BatchCancellationReceipt)
+    def batch_cancellation_receipt(batch_id: str, response: Response):
+        response.headers["Cache-Control"] = "no-store"
+        return store.batch_cancellation_receipt(batch_id)
 
     @app.post("/reservations", response_model=Reservation, status_code=201,
               responses={200: {"model": Reservation, "description": "Idempotent replay"}})

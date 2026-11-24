@@ -9,6 +9,16 @@
     ]},
     {"stage": "replayed", "status": 200, "receipt_exists": true, "available": [
       {"sku": "KIT-01", "available": 16}, {"sku": "WRAP-01", "available": 0}
+    ]},
+    {"stage": "cancelled", "status": 200, "receipt_exists": true, "available": [
+      {"sku": "KIT-01", "available": 19}, {"sku": "WRAP-01", "available": 2}
+    ], "released": [
+      {"sku": "KIT-01", "quantity_released": 3}, {"sku": "WRAP-01", "quantity_released": 2}
+    ]},
+    {"stage": "cancellation_replayed", "status": 200, "receipt_exists": true, "available": [
+      {"sku": "KIT-01", "available": 19}, {"sku": "WRAP-01", "available": 2}
+    ], "released": [
+      {"sku": "KIT-01", "quantity_released": 3}, {"sku": "WRAP-01", "quantity_released": 2}
     ]}
   ]
 }

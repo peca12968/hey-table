@@ -36,6 +36,14 @@ CREATE TABLE IF NOT EXISTS reservation_batch_items (
     initial_expires_at_ms INTEGER NOT NULL,
     PRIMARY KEY (batch_id, reservation_id)
 );
+CREATE TABLE IF NOT EXISTS reservation_batch_cancellations (
+    batch_id TEXT NOT NULL,
+    reservation_id TEXT NOT NULL,
+    cancelled_at_ms INTEGER NOT NULL,
+    quantity_released INTEGER NOT NULL CHECK (quantity_released >= 0),
+    PRIMARY KEY (batch_id, reservation_id),
+    FOREIGN KEY (batch_id, reservation_id) REFERENCES reservation_batch_items(batch_id, reservation_id)
+);
 CREATE TABLE IF NOT EXISTS fulfillments (
     reservation_id TEXT NOT NULL REFERENCES reservations(id),
     shipment_id TEXT NOT NULL,
@@ -262,6 +270,43 @@ class Store:
                 raise Missing("Unknown reservation batch")
             return receipt
 
+    @staticmethod
+    def batch_cancellation(conn, batch_id):
+        rows = conn.execute("""SELECT r.id, r.sku, c.cancelled_at_ms, c.quantity_released
+                               FROM reservation_batch_cancellations c JOIN reservations r ON r.id=c.reservation_id
+                               WHERE c.batch_id=? ORDER BY r.sku""", (batch_id,)).fetchall()
+        if not rows:
+            return None
+        return {
+            "batch_id": batch_id,
+            "cancelled_at_ms": rows[0]["cancelled_at_ms"],
+            "items": [{"id": row["id"], "sku": row["sku"], "quantity_released": row["quantity_released"]}
+                      for row in rows],
+        }
+
+    def cancel_batch(self, batch_id):
+        with self.current_inventory() as (conn, now):
+            receipt = self.batch_cancellation(conn, batch_id)
+            if receipt is not None:
+                return receipt
+            members = conn.execute("""SELECT r.* FROM reservation_batch_items b
+                                      JOIN reservations r ON r.id=b.reservation_id
+                                      WHERE b.batch_id=? ORDER BY r.sku""", (batch_id,)).fetchall()
+            if not members:
+                raise Missing("Unknown reservation batch")
+            for row in members:
+                quantity = self.release_remaining(conn, row) or 0
+                conn.execute("INSERT INTO reservation_batch_cancellations VALUES (?,?,?,?)",
+                             (batch_id, row["id"], now, quantity))
+            return self.batch_cancellation(conn, batch_id)
+
+    def batch_cancellation_receipt(self, batch_id):
+        with closing(self.connect()) as conn:
+            receipt = self.batch_cancellation(conn, batch_id)
+            if receipt is None:
+                raise Missing("Unknown reservation batch cancellation")
+            return receipt
+
     def renew(self, key, renewal_id, expected_deadline, seconds):
         with self.current_inventory() as (conn, _):
             row = self.find_reservation(conn, key)
@@ -288,12 +333,17 @@ class Store:
     def release(self, key):
         with self.current_inventory() as (conn, _):
             row = self.find_reservation(conn, key)
-            if row["state"] == "held":
-                conn.execute("UPDATE products SET available=available+? WHERE sku=?",
-                             (self.held_units(row), row["sku"]))
-                conn.execute("UPDATE reservations SET state='released' WHERE id=?", (key,))
+            if self.release_remaining(conn, row) is not None:
                 return self.reservation(row) | {"state": "released"}
             return self.reservation(row)
+
+    def release_remaining(self, conn, row):
+        if row["state"] != "held":
+            return None
+        quantity = self.held_units(row)
+        conn.execute("UPDATE products SET available=available+? WHERE sku=?", (quantity, row["sku"]))
+        conn.execute("UPDATE reservations SET state='released' WHERE id=?", (row["id"],))
+        return quantity
 
     @staticmethod
     def held_units(row):
