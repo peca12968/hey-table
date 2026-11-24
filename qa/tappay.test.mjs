@@ -10,6 +10,8 @@ import {api} from "../server/api.mjs";
 import {settings,lookup} from "../server/tappay.mjs";
 import {paymentPrime,openPaymentUrl} from "../lib/tappay-client.mjs";
 import {sqliteD1} from "../scripts/sqlite-d1.mjs";
+import {applyDemoMigrations} from "../scripts/apply-demo-migrations.mjs";
+import {bookablePickupSlots} from "../lib/pickup-slots.mjs";
 
 const env={TAPPAY_MODE:"sandbox",TAPPAY_APP_ID:"123",TAPPAY_APP_KEY:"test-public",TAPPAY_PARTNER_KEY:"test-only",
   TAPPAY_SITE_ORIGIN:"https://order.example",TAPPAY_NOTIFY_URL:"https://notify.example/api/payments/notify"};
@@ -341,6 +343,111 @@ test("a payment refund blocks the entire reviewed table handoff",async t=>{
   db.sqlite.prepare("UPDATE payment_attempts SET state='partial' WHERE order_id=?").run(wallet);
   assert.equal((await handoff()).status,200);
   assert.deepEqual(statuses(),["completed","completed"]);
+});
+test("same-day pickup slots use Taipei opening, notice and closing boundaries",()=>{
+  const taipei=time=>Date.parse("2026-11-25T"+time+"+08:00");
+  const early=bookablePickupSlots(taipei("10:30:00"));
+  assert.equal(early.length,36);
+  assert.equal(early[0],taipei("11:00:00"));
+  assert.equal(early.at(-1),taipei("19:45:00"));
+  assert.equal(bookablePickupSlots(taipei("10:30:00")+1)[0],taipei("11:15:00"));
+  assert.deepEqual(bookablePickupSlots(taipei("19:15:00")),[taipei("19:45:00")]);
+  assert.deepEqual(bookablePickupSlots(taipei("19:15:00")+1),[]);
+  assert.deepEqual(bookablePickupSlots(taipei("23:59:59")),[]);
+});
+test("the Worker and D1 commit only four three-portion orders for an empty pickup slot",async t=>{
+  const {build}=await import("esbuild");
+  const {Miniflare}=await import("miniflare");
+  const root=fileURLToPath(new URL("../",import.meta.url));
+  const bundle=await build({stdin:{resolveDir:root,contents:`
+    import {api} from './server/api.mjs';
+    Date.now=()=>Date.parse('2026-11-25T10:45:00+08:00');
+    export default {fetch:api};`},bundle:true,format:"esm",write:false});
+  const worker=new Miniflare({modules:true,script:bundle.outputFiles[0].text,compatibilityDate:"2026-05-15",
+    host:"127.0.0.1",d1Databases:["DB"]});
+  t.after(()=>worker.dispose());
+  await applyDemoMigrations(await worker.getD1Database("DB"),root);
+  const host=(await worker.ready).origin;
+  const pickupSlot=Date.parse("2026-11-25T12:00:00+08:00");
+  const post=()=>fetch(host+"/api/orders",{method:"POST",headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({token:crypto.randomUUID(),mode:"pickup",note:"",items:[{id:"sencha",qty:3}],pickupSlot})});
+  const responses=await Promise.all(Array.from({length:8},post));
+  assert.deepEqual(responses.map(response=>response.status).sort(),[200,200,200,200,409,409,409,409]);
+  const results=await Promise.all(responses.map(response=>response.json()));
+  assert.equal(new Set(results.filter(result=>result.pickupSlot===pickupSlot).map(result=>result.id)).size,4);
+  assert.equal(results.filter(result=>result.code==="pickup_slot_full").length,4);
+  const slots=await fetch(host+"/api/pickup-slots").then(response=>response.json());
+  assert.equal(slots.slots.find(slot=>slot.start===pickupSlot).remaining,0);
+});
+test("pickup slots reserve portions atomically, release expired payments and gate kitchen preparation",async t=>{
+  const db=database();
+  t.after(()=>db.sqlite.close());
+  const taipei=time=>Date.parse("2026-11-25T"+time+"+08:00");
+  let now=taipei("10:45:00");
+  const pickupSlot=taipei("12:00:00"),later=taipei("12:15:00");
+  t.mock.method(Date,"now",()=>now);
+  const runtime={DB:db,STAFF_KEY:"fixture-staff",TAPPAY_MODE:"demo"};
+  const staff={Authorization:"Bearer fixture-staff"};
+  const call=(path,options={})=>api(new Request("https://order.example"+path,options),runtime);
+  const send=(method,path,data,headers={})=>call(path,{method,headers:{"Content-Type":"application/json",...headers},body:JSON.stringify(data)});
+  const post=data=>send("POST","/api/orders",data);
+  const order=(qty,fields={})=>({token:crypto.randomUUID(),mode:"pickup",note:"",items:[{id:"sencha",qty}],pickupSlot,...fields});
+  const remaining=async()=>{
+    const response=await call("/api/pickup-slots");
+    assert.equal(response.status,200);
+    const slot=(await response.json()).slots.find(slot=>slot.start===pickupSlot);
+    assert.equal(slot.end,later);
+    assert.deepEqual(Object.keys(slot).sort(),["end","remaining","start"]);
+    return slot.remaining;
+  };
+  assert.equal(await remaining(),12);
+  assert.equal((await post(order(1,{mode:"table",table:"A03"}))).status,400);
+  assert.equal((await send("POST","/api/kitchen/create-pickup",order(1,{expectedTotal:45}),staff)).status,400);
+  assert.equal((await (await post(order(1,{pickupSlot:pickupSlot+1}))).json()).code,"pickup_slot_closed");
+  const requests=[order(7),order(7)];
+  const responses=await Promise.all(requests.map(post));
+  assert.deepEqual(responses.map(response=>response.status).sort(),[200,409]);
+  const won=responses.findIndex(response=>response.ok),accepted=await responses[won].json();
+  assert.equal(accepted.pickupSlot,pickupSlot);
+  assert.equal((await responses[1-won].json()).code,"pickup_slot_full");
+  assert.equal(await remaining(),5);
+  db.sqlite.exec("INSERT INTO daily_portion_limits(date,dish,capacity,revision) VALUES('2026-11-25','sencha',7,1)");
+  assert.equal((await (await post(order(1,{pickupSlot:null}))).json()).code,"portion_limit");
+  db.sqlite.exec("DELETE FROM daily_portion_limits");
+  const unpaid=order(5,{paymentMethod:"line_pay"});
+  assert.equal((await post(unpaid)).status,200);
+  assert.equal(await remaining(),0);
+  now=taipei("11:00:00");
+  assert.equal(await remaining(),5);
+  const expired=await (await call("/api/ticket?progress=1",{headers:{"X-Ticket":unpaid.token}})).json();
+  assert.equal(expired.statusHistory.at(-1).actor,"payment_expiry");
+  const cash=order(5);
+  assert.equal((await post(cash)).status,200);
+  assert.equal(await remaining(),0);
+  assert.equal((await send("POST","/api/ticket/cancel",{},{"X-Ticket":cash.token})).status,200);
+  assert.equal(await remaining(),5);
+
+  const advance=(from,to)=>send("PATCH","/api/kitchen/status",{id:accepted.id,from,to},staff);
+  const board=async()=> (await (await call("/api/kitchen",{headers:staff})).json()).find(row=>row.id===accepted.id);
+  now=taipei("11:44:59");
+  assert.equal((await (await post(requests[won])).json()).id,accepted.id);
+  assert.equal((await post({...requests[won],pickupSlot:later})).status,409);
+  assert.equal((await (await post(order(1))).json()).code,"pickup_slot_closed");
+  assert.equal((await board()).pickupUpcoming,true);
+  assert.equal((await board()).overdue,undefined);
+  assert.equal((await advance("pending","preparing")).status,409);
+  now=taipei("11:45:00");
+  assert.equal((await board()).pickupUpcoming,undefined);
+  assert.equal((await advance("pending","preparing")).status,200);
+  const work=await (await call("/api/kitchen/station-work?station=bar",{headers:staff})).json();
+  assert.equal(work.orders.find(row=>row.id===accepted.id).pickupSlot,pickupSlot);
+  assert.equal((await advance("preparing","ready")).status,200);
+  now=taipei("11:59:59");
+  assert.equal((await board()).overdue,undefined);
+  now=taipei("12:10:00");
+  assert.deepEqual((await board()).overdue,{elapsedMs:600_000,overByMs:0});
+  const handoff=await (await call("/api/kitchen/handoff?id="+accepted.id,{headers:staff})).json();
+  assert.equal(handoff.pickupSlot,pickupSlot);
 });
 test("kitchen overdue uses the current stage and starts online orders at confirmed payment",async t=>{
   const db=database();

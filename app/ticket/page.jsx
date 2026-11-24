@@ -2,7 +2,7 @@
 import {useCallback,useEffect,useState} from "react";
 import {ClipboardCheck,RefreshCw} from "lucide-react";
 import qrcode from "qrcode-generator";
-import {Header,Footer,Mode,request} from "../shared";
+import {Header,Footer,Mode,PickupAppointment,request} from "../shared";
 import {ItemNote} from "../item-notes";
 import {labels,numberOf} from "../../lib/menu.mjs";
 import {lastReceiptToken,pendingCarts,read,recentReceipts,refreshReceiptHistory,removeReceipt} from "../../lib/order-storage.mjs";
@@ -124,12 +124,16 @@ export default function Ticket(){
   const latestMove=order?.tableMoves?.at(-1);
   const closedBeforePayment=Object.hasOwn(cancellationMessages,cancellationActor);
   const showHold=order?.paymentDueAt&&order.paymentMethod!=="cash"&&canCustomerCancel(order);
+  const payable=order&&canPrepare(order);
+  const pendingMessage=payable?(order.pickupSlot!=null?"已保留取餐時段，店家會在接近取餐時間時準備。":"餐單已送達，等候店家接單。"):
+    (order?.pickupSlot!=null?"完成付款後，店家會依預約時段備餐。":"付款確認後，店家即可接單。");
   return <><Header/><main className="shell narrow"><article className="sheet receipt"><ClipboardCheck size={30}/><p className="eyebrow">ORDER RECEIPT</p><h1>{order?"取餐號碼 "+numberOf(order.id):"我的餐單"}</h1>
     {pending.length>0&&<section><h2>待確認的餐單</h2>{pending.map(table=><p key={table??"pickup"}><a className="outline" href={table?"/?table="+table:"/"}>確認 {table?table+" 桌":"自取"}送單結果</a></p>)}</section>}
     <ReceiptHistory entries={recent} active={route?.token} open={route&&!route.direct} onRemove={forget}/>
-    {error&&<p role="status">{error}</p>}{order&&<><div className="receiptMeta"><Mode table={order.table} source={order.source}/><b aria-live="polite">{order.status==='pending'&&!canPrepare(order)?'等待付款':labels[order.status]}</b></div>
+    {error&&<p role="status">{error}</p>}{order&&<><div className="receiptMeta"><Mode table={order.table} source={order.source}/><b aria-live="polite">{order.status==='pending'&&!payable?'等待付款':labels[order.status]}</b></div>
+    <PickupAppointment start={order.pickupSlot}/>
     {latestMove&&<p className="muted" role="status">店家已將餐單從 {latestMove.from} 桌移到 {latestMove.to} 桌。</p>}
-    <p>{({pending:canPrepare(order)?"餐單已送達，等候店家接單。":"付款確認後，店家即可接單。",preparing:"廚房正在準備餐點。",ready:order.table?"餐點已完成，請留意桌邊送餐。":"餐點已完成，請出示取餐號碼。",completed:"這張餐單已完成。",cancelled:cancellationMessages[cancellationActor]??"店家已取消這張餐單。"})[order.status]}</p>
+    <p>{({pending:pendingMessage,preparing:"廚房正在準備餐點。",ready:order.table?"餐點已完成，請留意桌邊送餐。":"餐點已完成，請出示取餐號碼。",completed:"這張餐單已完成。",cancelled:cancellationMessages[cancellationActor]??"店家已取消這張餐單。"})[order.status]}</p>
     {showHold&&<p className="muted">付款保留至 <time dateTime={new Date(order.paymentDueAt).toISOString()}>{progressTime.format(order.paymentDueAt)}</time></p>}
     {!error&&order.kitchenQuote&&<section className="cartQuote" aria-label="餐單出餐估算">
       <span>目前廚房排程</span>

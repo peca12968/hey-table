@@ -1,7 +1,8 @@
 "use client";
 import {useEffect,useState} from "react";
 import {RefreshCw} from "lucide-react";
-import {Header,Footer,Mode,request} from "../shared";
+import {Header,Footer,Mode,PickupAppointment,request} from "../shared";
+import {pickupPrepLead,pickupTime} from "../../lib/pickup-slots.mjs";
 import {ItemNote} from "../item-notes";
 import {dishes,labels,numberOf,tables,transitions} from "../../lib/menu.mjs";
 import {downloadJson} from "../../lib/download-json.mjs";
@@ -69,6 +70,8 @@ function KitchenTicket({order,busy,update,showOverdue=false,handoffOnly=false}){
   return <article className="sheet kitchenTicket">
     <div className="menuTitle"><h2>#{numberOf(id)}</h2><Mode table={table} source={order.source}/></div>
     <p aria-live={handoffOnly?"polite":undefined}><b>{labels[status]}</b> · {new Date(created).toLocaleTimeString("zh-TW",{hour:"2-digit",minute:"2-digit",timeZone:"Asia/Taipei"})}</p>
+    <PickupAppointment start={order.pickupSlot}/>
+    {order.pickupUpcoming&&<p className="muted">{pickupTime(order.pickupSlot-pickupPrepLead)} 後可接單製作。</p>}
     {showOverdue&&order.overdue&&<p className="kitchenOverdue">逾時 · {overdueStage[status]} {Math.floor(order.overdue.elapsedMs/60_000)} 分鐘</p>}
     <ul className="orderLines">{items.map(dish=><li key={dish.id}><div>{dish.name}<ItemNote note={dish.note}/></div><b>×{dish.qty}</b></li>)}</ul>
     {note&&<p>備註　{note}</p>}
@@ -78,7 +81,8 @@ function KitchenTicket({order,busy,update,showOverdue=false,handoffOnly=false}){
       {["ready","completed"].includes(status)&&<a className="outline" href={"/kitchen/handoff?id="+numberOf(id)}>交餐小票</a>}
       {workingByStation&&<a className="primary" href="/kitchen/station-work">查看分站進度</a>}
       {!handoffOnly&&["sandbox","production"].includes(paymentEnv)&&<button className="outline" disabled={busy} onClick={()=>update("payment",{id})}>查詢金流</button>}
-      {!workingByStation&&actions.map(next=><button disabled={busy||(next==="cancelled"?!canCancel(order):!canPrepare(order))} className={next==="cancelled"?"outline":"primary"} key={next}
+      {!workingByStation&&actions.map(next=><button disabled={busy||(next==="preparing"&&order.pickupUpcoming)||
+        (next==="cancelled"?!canCancel(order):!canPrepare(order))} className={next==="cancelled"?"outline":"primary"} key={next}
         onClick={()=>{if(next!=="cancelled"||window.confirm("取消這張訂單？"))
           update("status",{id,from:status,to:next,...(table&&next==="completed"?{tableRevision}:{})});}}>{action[next]}</button>)}
     </div>
@@ -174,11 +178,13 @@ export default function Kitchen(){
   const overdueCount=queueAvailable?orders.filter(order=>order.overdue).length:0;
   const filtered=orders.filter(r=>{
     const statusMatches=filter==="all"||(filter==="active"&&Object.hasOwn(overdueStage,r.status))||
+      (filter==="booked"&&r.pickupSlot!=null&&Object.hasOwn(overdueStage,r.status))||
       (filter==="overdue"&&queueAvailable&&r.overdue)||r.status===filter;
     const scopeMatches=scope==="all"||scope===r.mode||scope===r.table||scope===r.source;
     return statusMatches&&scopeMatches&&validNumber&&(!exactNumber||exactNumber===String(r.id));
   });
   if(filter==="overdue")filtered.sort((a,b)=>b.overdue.overByMs-a.overdue.overByMs||a.id-b.id);
+  if(filter==="booked")filtered.sort((a,b)=>a.pickupSlot-b.pickupSlot||a.id-b.id);
   let content;
   if(pickup===""){
     content=<p role="alert">取餐 QR 碼的號碼無效。</p>;
@@ -204,7 +210,7 @@ export default function Kitchen(){
     <Intake key={"intake-"+key} staffKey={key}/>
     <ReturnReceipt key={key} staffKey={key}/>
     <PaymentSnapshot key={"payments-"+key} staffKey={key}/>
-    <nav className="tabs" aria-label="餐單狀態">{[["active","處理中"],["pending","待接單"],["ready","待交餐"],
+    <nav className="tabs" aria-label="餐單狀態">{[["active","處理中"],["pending","待接單"],["ready","待交餐"],["booked","預約自取"],
       ["overdue",overdueCount?"逾時 ("+overdueCount+")":"逾時"],["all","含近期結單"]].map(([v,n])=><button aria-pressed={v===filter} key={v} onClick={()=>setFilter(v)}>{n}</button>)}</nav>
     <div className="kitchenFilters">
       <label>管道或桌號<select value={scope} onChange={e=>setScope(e.target.value)}>

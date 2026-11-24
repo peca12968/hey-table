@@ -18,13 +18,14 @@ export function remainingStationItems(row) {
 }
 
 export async function stationQueue(db,station) {
-  const {results}=await db.prepare(`SELECT id,table_no,source,note,created,items,station_progress
+  const {results}=await db.prepare(`SELECT id,table_no,source,note,created,items,station_progress,pickup_slot
     FROM orders WHERE status='preparing' AND ${payableForKitchen} ORDER BY created,id`).all();
   return results.flatMap(row=>{
     const {groups,done}=stationProgress(row);
     if(!Object.hasOwn(groups,station))return [];
     return [{id:row.id,table:row.table_no,note:row.note,created:row.created,items:groups[station],
       ...(row.source==="staff"?{source:row.source}:{}),
+      ...(row.pickup_slot!=null?{pickupSlot:row.pickup_slot}:{}),
       doneAt:done[station]??null,doneStations:Object.keys(done).length,stations:Object.keys(groups).length}];
   });
 }

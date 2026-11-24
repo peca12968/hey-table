@@ -153,6 +153,12 @@ Stockroom 支援在一筆交易內保留多個 SKU。若其中一項缺貨，該
 
 店員可在暫停線上自取時繼續代建，代建單仍與自助餐單共用售完與每日限量規則。若送單後斷線，同一分頁重新整理可重試原餐單並找回同一個取餐號碼。測試涵蓋送單回覆遺失、售完後重試、店員權限及兩個入口搶最後一份。[手機與 D1 測試](qa/staff-pickup.spec.mjs)
 
+## 預約當天自取時段
+
+線上自取的購物車可展開「預約取餐時段」。示範設定為台灣時間當天 11:00 到 20:00，每 15 分鐘一個時段，需提前至少 30 分鐘。每段最多 12 份，預約單和即時單也共用餐點的每日限量。送單時會重新核對份數與時段，若時段剛滿，可以保留購物車並重選。線上付款保留到期或餐單取消時會釋放占用份數。已成立的餐單可按原資料重送找回收據。
+
+店員在接單台選「預約自取」可依時段查看餐單，取餐前 15 分鐘開始接單製作。收據、分站看板和交餐小票均顯示預約時段。待交餐的逾時計時最早從預約開始起算。[手機重選與接單測試](qa/pickup-slots.spec.mjs) · [容量、付款到期與時間邊界測試](qa/tappay.test.mjs)
+
 ## 從收據再次點餐
 
 已完成及已取消的收據可開啟「再次點餐」。確認桌號或自取管道後，菜單會列出可加入、已售完和達數量上限的品項。選擇加入後，系統會按當時菜單計價，現有備註與購物車仍可編輯，待確認送單的餐單會先保留。再次點餐只帶入品項與數量，送單仍需按「確認送出訂單」。[再次點餐的瀏覽器測試](qa/ordering.spec.mjs)
@@ -201,6 +207,7 @@ node --import ./scripts/sites-env.mjs ./node_modules/wrangler/bin/wrangler.js d1
 node --import ./scripts/sites-env.mjs ./node_modules/wrangler/bin/wrangler.js d1 execute DB --local --config dist/server/wrangler.json --persist-to .wrangler/state --file drizzle/0012_table_moves.sql
 node --import ./scripts/sites-env.mjs ./node_modules/wrangler/bin/wrangler.js d1 execute DB --local --config dist/server/wrangler.json --persist-to .wrangler/state --file drizzle/0013_staff_pickup_source.sql
 node --import ./scripts/sites-env.mjs ./node_modules/wrangler/bin/wrangler.js d1 execute DB --local --config dist/server/wrangler.json --persist-to .wrangler/state --file drizzle/0014_kitchen_payment_start.sql
+node --import ./scripts/sites-env.mjs ./node_modules/wrangler/bin/wrangler.js d1 execute DB --local --config dist/server/wrangler.json --persist-to .wrangler/state --file drizzle/0015_pickup_slots.sql
 npm start
 ```
 

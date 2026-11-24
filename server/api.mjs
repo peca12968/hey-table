@@ -8,6 +8,8 @@ import {dailyLimits,exceededPortions,readRemaining} from "./daily-limits.mjs";
 import {expirePaymentHolds,noBlockingPayment,paymentHoldMs} from "./payment-holds.mjs";
 import {dailyTiming,dailyTimingRows} from "./daily-timing.mjs";
 import {kitchenOverdue} from "./kitchen-overdue.mjs";
+import {bookablePickupSlots,pickupPrepLead,pickupSlotCapacity} from "../lib/pickup-slots.mjs";
+import {pickupSlots,usedAtPickupSlot} from "./pickup-slots.mjs";
 
 const json = (value, status=200) => Response.json(value,{status,headers:{"Cache-Control":"no-store"}});
 const fail = (message,status=400) => json({error:message},status);
@@ -45,6 +47,7 @@ function collectionId(url) {
 function receipt(row) {
   return {id:row.id, mode:row.mode, table:row.table_no, note:row.note, items:JSON.parse(row.items),
     ...(row.source === "staff" ? {source:row.source} : {}),
+    ...(row.pickup_slot!=null ? {pickupSlot:row.pickup_slot} : {}),
     ...(row.combo_quote ? {combo:JSON.parse(row.combo_quote)} : {}),
     paymentMethod:row.payment_method,paymentEnv:row.payment_env,paymentState:row.payment_state??'unpaid',total:row.total, status:row.status, created:row.created};
 }
@@ -89,12 +92,14 @@ function menuItems(lines, withNotes=false) {
   return dishes.filter(d => byId.has(d.id)).map(({id,name,price}) => ({id,name,price,...byId.get(id)}));
 }
 function prepare(input) {
+  const pickupSlot=input.pickupSlot??null;
   if (typeof input.token!=="string" || !uuid.test(input.token) || typeof input.mode!=="string" || !Object.hasOwn(intakeLabels,input.mode) ||
       (input.mode === "table" ? !tables.includes(input.table) : input.table != null) ||
+      (pickupSlot!==null&&(input.mode!=="pickup"||!Number.isSafeInteger(pickupSlot)||pickupSlot<1)) ||
       typeof input.note !== "string" || input.note.length > 160) return null;
   const items = menuItems(input.items,true);
   if (!items) return null;
-  return {token:input.token,mode:input.mode,table:input.table??null,note:input.note.trim(),items,
+  return {token:input.token,mode:input.mode,table:input.table??null,pickupSlot,note:input.note.trim(),items,
     total:items.reduce((sum,line) => sum + line.qty * line.price,0)};
 }
 
@@ -190,6 +195,8 @@ export async function api(request, env) {
       fail("供應上限已由其他店員更新，請重新載入後再儲存。",409);
   }
   const staffPickup=path === "/api/kitchen/create-pickup";
+  if(path === "/api/pickup-slots" && method === "GET")
+    return json({slots:await pickupSlots(db,Date.now())});
   if ((path === "/api/menu" || staffPickup) && method === "GET") {
     const now=Date.now(),date=businessDate(now);
     const [,stock,modes,seats,portions]=await db.batch([expirePaymentHolds(db,now),
@@ -224,6 +231,7 @@ export async function api(request, env) {
     return json({capturedAt:plan.capturedAt,seconds:plan.quote.seconds,timingSource});
   }
   if ((path === "/api/orders" || staffPickup) && method === "POST") {
+    if(staffPickup&&input.pickupSlot!=null)return fail("請使用線上自取預約時段");
     const order = prepare(staffPickup ? {...input,mode:"pickup",table:null} : input);
     if (!order) return fail("請確認桌號、餐點數量與備註");
     const source=staffPickup ? "staff" : null;
@@ -241,19 +249,25 @@ export async function api(request, env) {
     const available=config.methods.includes(method);
     const lines = JSON.stringify(order.items);
     const created=Date.now(),date=businessDate(created),range=businessDayRange(date);
-    const stmt = db.prepare(`INSERT INTO orders(token,mode,source,table_no,note,items,total,created,payment_method,payment_env,combo_quote,payment_due_at)
-      SELECT ?,?,?,?,?,?,?,?,?,?,?,? WHERE ? AND (? OR NOT ${modePaused}) AND NOT ${tablePaused}
+    const booked=order.pickupSlot!==null;
+    const validSlot=!booked||bookablePickupSlots(created).includes(order.pickupSlot);
+    const portions=booked?order.items.reduce((sum,item)=>sum+item.qty,0):0;
+    const slotGuard=booked?` AND ${usedAtPickupSlot}+?<=?`:"";
+    const stmt = db.prepare(`INSERT INTO orders(token,mode,source,table_no,note,items,total,created,payment_method,payment_env,combo_quote,payment_due_at,pickup_slot)
+      SELECT ?,?,?,?,?,?,?,?,?,?,?,?,? WHERE ? AND (? OR NOT ${modePaused}) AND NOT ${tablePaused}
       AND NOT EXISTS (SELECT 1 FROM unavailable u
       JOIN json_each(?) j ON u.dish=json_extract(j.value,'$.id'))
-      AND NOT EXISTS (${exceededPortions}) ON CONFLICT(token) DO NOTHING`);
-    const [,,savedOrder,intake,exceeded]=await db.batch([
+      AND NOT EXISTS (${exceededPortions})${slotGuard} ON CONFLICT(token) DO NOTHING`);
+    const [,,savedOrder,intake,exceeded,slotUsage]=await db.batch([
       expirePaymentHolds(db,created),
       stmt.bind(order.token,order.mode,source,order.table,order.note,lines,quote?.total??order.total,created,method,method==='cash'?'cash':config.mode,snapshot,
-        method==="cash"?null:created+paymentHoldMs,available&&validPrice?1:0,staffPickup?1:0,order.mode,order.table,lines,lines,date,...range),
+        method==="cash"?null:created+paymentHoldMs,order.pickupSlot,available&&validPrice&&validSlot?1:0,staffPickup?1:0,
+        order.mode,order.table,lines,lines,date,...range,...(booked?[order.pickupSlot,portions,pickupSlotCapacity]:[])),
       db.prepare(selectOrders+" WHERE token=?").bind(order.token),
       db.prepare(`SELECT ${modePaused} AS mode_paused, ${tablePaused} AS table_paused`).bind(order.mode,order.table),
       db.prepare(`SELECT dish FROM (${exceededPortions}) WHERE NOT EXISTS (SELECT 1 FROM orders WHERE token=?)`)
         .bind(lines,date,...range,order.token),
+      ...(booked?[db.prepare(`SELECT ${usedAtPickupSlot} AS used`).bind(order.pickupSlot)]:[]),
     ]);
     const row=savedOrder.results[0];
     if (!row && !validPrice) return fail(staffPickup?"菜單金額已變更，請重新整理後確認餐單。":"套餐優惠或金額已變更，請重新確認餐單",409);
@@ -264,6 +278,9 @@ export async function api(request, env) {
       return json({error:intakeNotice(order.mode,order.table),code:"table_paused"},409);
     if (!row && exceeded.results.length)
       return json({error:"部分餐點已超過今日剩餘份數，請調整餐單",code:"portion_limit"},409);
+    if (!row && !validSlot)return json({error:"這個取餐時段已停止預約，請重新選擇。",code:"pickup_slot_closed"},409);
+    if (!row && booked && slotUsage.results[0].used+portions>pickupSlotCapacity)
+      return json({error:"此時段剩餘份數不足，請改選時段或調整餐點。",code:"pickup_slot_full"},409);
     if (!row) return fail("部分餐點已售完，請重新確認菜單",409);
     const saved = receipt(row);
     const submittedTable=row.table_moves?JSON.parse(row.table_moves)[0]?.from??row.table_no:row.table_no;
@@ -271,7 +288,8 @@ export async function api(request, env) {
       order.items.some(item => item.id === line.id && item.qty === line.qty && (item.note??"")===(line.note??"")));
     if ((row.source??null)!==source || (!staffPickup && saved.combo?.version !== input.comboVersion) ||
         ((selected||staffPickup) && saved.total !== input.expectedTotal) ||
-        row.payment_method!==method || row.mode!==order.mode || submittedTable!==order.table || row.note!==order.note || !sameItems)
+        row.payment_method!==method || row.mode!==order.mode || submittedTable!==order.table || row.note!==order.note ||
+        (row.pickup_slot??null)!==order.pickupSlot || !sameItems)
       return fail("送單識別碼已用於另一張訂單",409);
     return json(saved);
   }
@@ -384,11 +402,12 @@ export async function api(request, env) {
   if (path === "/api/kitchen/handoff" && method === "GET") {
     const id = collectionId(url);
     if (id === null) return fail("請輸入有效的取餐號碼");
-    const row = await db.prepare("SELECT id,table_no,source,status,items FROM orders WHERE id=?").bind(id).first();
+    const row = await db.prepare("SELECT id,table_no,source,status,items,pickup_slot FROM orders WHERE id=?").bind(id).first();
     if (!row) return fail("找不到這個取餐號碼",404);
     if (!["ready","completed"].includes(row.status)) return fail("餐單尚無可列印的交餐小票。",409);
     const items = JSON.parse(row.items).map(({name,qty,note}) => ({name,qty,...(note?{note}:{})}));
-    return json({id:row.id,table:row.table_no,status:row.status,items,...(row.source==="staff"?{source:row.source}:{})});
+    return json({id:row.id,table:row.table_no,status:row.status,items,...(row.source==="staff"?{source:row.source}:{}),
+      ...(row.pickup_slot!=null?{pickupSlot:row.pickup_slot}:{})});
   }
   if (path === "/api/kitchen/pickup" && method === "GET") {
     const id = collectionId(url);
@@ -446,6 +465,7 @@ export async function api(request, env) {
       const overdue=kitchenOverdue(row,order,capturedAt);
       return {...order,...(row.station_progress?{stationProgress:true}:{}),
         ...(overdue?{overdue}:{}),
+        ...(order.status==="pending"&&order.pickupSlot!=null&&order.pickupSlot-pickupPrepLead>capturedAt?{pickupUpcoming:true}:{}),
         ...(row.table_moves?{tableRevision:JSON.parse(row.table_moves).length}:{})};
     }));
   }
@@ -494,11 +514,13 @@ export async function api(request, env) {
       return fail("桌號版本無效");
     const readyGuard=input.to==="ready"?" AND station_progress IS NULL":"";
     const tableGuard=expectedTable===undefined?"":" AND COALESCE(json_array_length(table_moves),0)=?";
+    const now=Date.now();
+    const prepGuard=input.to==="preparing"?" AND (pickup_slot IS NULL OR pickup_slot<=?)":"";
     const {meta} = await db.prepare(`UPDATE orders SET status=?,
       status_history=json_insert(COALESCE(status_history,'[]'),'$[#]',json_object('from',status,'status',?,'at',?))
       WHERE id=? AND status=? AND `+(input.to==="cancelled" ?
-      "(payment_method='cash' OR COALESCE("+latestState+",'unpaid') IN ('unpaid','failed','cancelled','refunded'))" : payableForKitchen)+readyGuard+tableGuard)
-      .bind(input.to,input.to,Date.now(),input.id,input.from,...(expectedTable===undefined?[]:[expectedTable])).run();
+      "(payment_method='cash' OR COALESCE("+latestState+",'unpaid') IN ('unpaid','failed','cancelled','refunded'))" : payableForKitchen)+readyGuard+tableGuard+prepGuard)
+      .bind(input.to,input.to,now,input.id,input.from,...(expectedTable===undefined?[]:[expectedTable]),...(prepGuard?[now+pickupPrepLead]:[])).run();
     return meta.changes ? json({ok:true}) : fail(input.to==="ready"?"訂單已更新，請重新整理或開啟分站看板":"訂單已更新，請重新整理",409);
   }
   if (path === "/api/kitchen/availability" && method === "PATCH") {

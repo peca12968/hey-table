@@ -6,6 +6,7 @@ export const orders = sqliteTable("orders", {
   token: text("token").notNull().unique(),
   mode: text("mode").notNull(),
   source: text("source"),
+  pickupSlot: integer("pickup_slot"),
   tableNo: text("table_no"),
   tableMoves: text("table_moves"),
   note: text("note").notNull(),
@@ -22,6 +23,7 @@ export const orders = sqliteTable("orders", {
 }, t => [
   index("orders_status_id").on(t.status,t.id),
   index("orders_created").on(t.created),
+  index("orders_pickup_slot").on(t.pickupSlot).where(sql`${t.pickupSlot} IS NOT NULL`),
   index("orders_pending_payment_due").on(t.paymentDueAt).where(sql`${t.status}='pending' AND ${t.paymentDueAt} IS NOT NULL`),
 ]);
 export const paymentAttempts = sqliteTable("payment_attempts", {

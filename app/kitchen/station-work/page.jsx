@@ -1,6 +1,6 @@
 "use client";
 import {useEffect,useState} from "react";
-import {Header,Footer,Mode,request} from "../../shared";
+import {Header,Footer,Mode,PickupAppointment,request} from "../../shared";
 import {ItemNote} from "../../item-notes";
 import {numberOf} from "../../../lib/menu.mjs";
 import {stationLabels} from "../../../lib/kitchen-timing.mjs";
@@ -67,6 +67,7 @@ export default function StationWork(){
     {rows?.length===0&&<p className="sheet">{stationLabels[station]}目前沒有製作中的餐單。</p>}
     <div className="kGrid">{rows?.map(order=><article className="sheet kitchenTicket" key={order.id}>
       <div className="menuTitle"><h2>#{numberOf(order.id)}</h2><Mode table={order.table} source={order.source}/></div>
+      <PickupAppointment start={order.pickupSlot}/>
       <p>已備妥 {order.doneStations}／{order.stations} 站</p>
       <ul className="orderLines">{order.items.map(({id,name,qty,note})=><li key={id}><div>{name}<ItemNote note={note}/></div><b>×{qty}</b></li>)}</ul>
       {order.note&&<p>備註　{order.note}</p>}

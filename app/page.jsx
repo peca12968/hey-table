@@ -10,6 +10,8 @@ import CartAddOn from "./cart-add-on";
 import CartQuote from "./cart-quote";
 import Reorder from "./reorder";
 import {ItemNotesEditor} from "./item-notes";
+import PickupSlots from "./pickup-slots";
+import {pickupSlotDuration} from "../lib/pickup-slots.mjs";
 
 import {methods,environmentLabel} from "../lib/payments.mjs";
 const groups=["全部","丼飯","小食","飲品"];
@@ -28,6 +30,7 @@ export default function Menu(){
   const [useCombo,setUseCombo]=useState(false);
   const [lookup,setLookup]=useState("");
   const [repeat,setRepeat]=useState("");
+  const [pickupSlot,setPickupSlot]=useState(null),[slotRevision,setSlotRevision]=useState(0);
   const refreshMenu=useCallback(async()=>{
     activeMenuRequest.current?.abort();
     const controller=new AbortController();
@@ -53,6 +56,8 @@ export default function Menu(){
       .map(id=>[id,old.lineNotes[id].slice(0,itemNoteLimit)]));
     setTable(param);setScope(key);setSelection({cart,lineNotes});setUseCombo(old.useCombo===true);
     setNote(old.note??"");setDraft(old.draft??null);setMethod(old.draft?.paymentMethod??old.method??'cash');
+    const savedSlot=old.draft?old.draft.pickupSlot:old.pickupSlot;
+    if(!param&&Number.isSafeInteger(savedSlot)&&savedSlot>0&&savedSlot<=8_640_000_000_000_000-pickupSlotDuration)setPickupSlot(savedSlot);
     const token=new URLSearchParams(location.hash.slice(1)).get("reorder")??"";
     setRepeat(token);
     if((old.draft||token)&&window.matchMedia("(max-width: 680px)").matches) setPanel(true);
@@ -67,7 +72,7 @@ export default function Menu(){
       window.removeEventListener("online",refreshMenu);
     };
   },[refreshMenu]);
-  useEffect(()=>{if(scope)save(scope,{cart,lineNotes,note,draft,method,useCombo});},[scope,cart,lineNotes,note,draft,method,useCombo]);
+  useEffect(()=>{if(scope)save(scope,{cart,lineNotes,note,draft,method,useCombo,pickupSlot});},[scope,cart,lineNotes,note,draft,method,useCombo,pickupSlot]);
   useEffect(()=>{
     if(!draft||busy||!scope)return;
     let current;
@@ -138,8 +143,8 @@ export default function Menu(){
     if(sending.current||invalid||!scope||!count||(!draft&&(paused||blocked)))return;
     sending.current=true;setBusy(true);setError("");
     const payload=draft??{token:crypto.randomUUID(),...(method==='cash'?{}:{paymentMethod:method}),mode,table,note,
-      items:withItemNotes(items,lineNotes),...(applied?{comboVersion,expectedTotal:total}:{})};
-    setDraft(payload);save(scope,{cart,lineNotes,note,draft:payload,method,useCombo});
+      items:withItemNotes(items,lineNotes),...(applied?{comboVersion,expectedTotal:total}:{}),...(pickupSlot!==null?{pickupSlot}:{})};
+    setDraft(payload);save(scope,{cart,lineNotes,note,draft:payload,method,useCombo,pickupSlot});
     try{
       const order=await request("/api/orders",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(payload)});
       openReceipt(scope,payload.token,order);
@@ -149,6 +154,7 @@ export default function Menu(){
         if(e.code==="intake_paused")setIntake(current=>({...current,[mode]:false}));
         else if(e.code==="table_paused")setTableIntake(current=>({...current,[table]:false}));
         else setError(e.message);
+        if(["pickup_slot_closed","pickup_slot_full"].includes(e.code))setSlotRevision(value=>value+1);
         refreshMenu();
       }
       sending.current=false;setBusy(false);
@@ -177,6 +183,8 @@ export default function Menu(){
     {count>0&&<ItemNotesEditor dishes={lines} notes={lineNotes} disabled={!!draft||busy} onChange={(id,value)=>
       setSelection(current=>({...current,lineNotes:{...current.lineNotes,[id]:value}}))}/>}
     {count>0&&<label className="note">訂單備註 <small>選填</small><textarea placeholder="例如：餐具數量" value={note} maxLength={160} disabled={!!draft||busy} onChange={e=>setNote(e.target.value)}/></label>}
+    {count>0&&scope&&mode==="pickup"&&<PickupSlots selected={pickupSlot} count={count} disabled={!!draft||busy||paused}
+      onChange={value=>{setPickupSlot(value);setError("");}} revision={slotRevision}/>}
     {count>0&&<label className="payChoice">付款方式<select value={method} disabled={!!draft||busy} onChange={e=>setMethod(e.target.value)}>
       {payments.methods.map(m=><option key={m} value={m}>{methods[m]}</option>)}</select>
       {method!=="cash"&&<small>{environmentLabel(payments.mode)}</small>}</label>}
@@ -185,7 +193,7 @@ export default function Menu(){
     <div className="total"><span>合計</span><b>NT$ {total}</b></div>
     {paused&&!invalid&&count>0&&!draft&&<p className="error">餐單已保留，恢復接單後可再送出。</p>}
     {limitBlocked&&!draft&&!error&&<p className="error" role="status">部分餐點已超過今日剩餘份數，請調整餐單。</p>}
-    {count>0&&loaded&&!invalid&&!blocked&&!paused&&!draft&&!busy&&<CartQuote key={quoteBody} body={quoteBody}/>}
+    {count>0&&loaded&&!invalid&&!blocked&&!paused&&!draft&&!busy&&pickupSlot===null&&<CartQuote key={quoteBody} body={quoteBody}/>}
     {error&&<p className="error" role="alert">{error}</p>}{draft&&!busy&&lookup&&<p role="status">{lookup}</p>}{scope&&!loaded&&<p role="status">正在確認餐點供應狀態…</p>}
     <button className="primary full" disabled={busy||!count||invalid||(!draft&&(paused||blocked||!loaded||!payments.methods.includes(method)))} onClick={submit}><Check size={17}/>{busy?"送單中…":draft?"重試同一張訂單":paused?"暫停接單":"確認送出訂單"}</button></aside></div>
     <span className="sr" aria-live="polite">{announcement}</span></main><Footer/>
