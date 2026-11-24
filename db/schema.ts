@@ -6,6 +6,7 @@ export const orders = sqliteTable("orders", {
   token: text("token").notNull().unique(),
   mode: text("mode").notNull(),
   tableNo: text("table_no"),
+  tableMoves: text("table_moves"),
   note: text("note").notNull(),
   items: text("items").notNull(),
   paymentMethod: text("payment_method").notNull().default("cash"),

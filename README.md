@@ -135,6 +135,8 @@ Stockroom 支援在一筆交易內保留多個 SKU。若其中一項缺貨，該
 
 切到「待交餐」後，可選線上自取、全部內用，或指定桌號。取餐號碼會精確比對，例如輸入 0007、#0007 或全形數字皆可找到同一張餐單。管道、桌號與取餐號碼會和狀態分頁一起篩選，店員完成交餐後可切到「含近期結單」核對結果。[手機接單台測試](qa/ordering.spec.mjs)
 
+店員可在進行中的內用餐單選「更換桌號」，核對後確認。換桌會保留餐單編號及原送單識別碼，並同步到分站、顧客收據和交餐小票。顧客查看收據時，本機查單紀錄也會更新桌號。店員確認換桌與交餐時會核對桌號版本。小票開啟後若遇換桌，按列印會先更新桌號，待再次確認後才列印。[換桌、原單重試與並行版本測試](qa/ordering.spec.mjs)
+
 ## 從收據再次點餐
 
 已完成及已取消的收據可開啟「再次點餐」。確認桌號或自取管道後，菜單會列出可加入、已售完和達數量上限的品項。選擇加入後，系統會按當時菜單計價，現有備註與購物車仍可編輯，待確認送單的餐單會先保留。再次點餐只帶入品項與數量，送單仍需按「確認送出訂單」。[再次點餐的瀏覽器測試](qa/ordering.spec.mjs)
@@ -180,6 +182,7 @@ node --import ./scripts/sites-env.mjs ./node_modules/wrangler/bin/wrangler.js d1
 node --import ./scripts/sites-env.mjs ./node_modules/wrangler/bin/wrangler.js d1 execute DB --local --config dist/server/wrangler.json --persist-to .wrangler/state --file drizzle/0009_station_progress.sql
 node --import ./scripts/sites-env.mjs ./node_modules/wrangler/bin/wrangler.js d1 execute DB --local --config dist/server/wrangler.json --persist-to .wrangler/state --file drizzle/0010_daily_portion_limits.sql
 node --import ./scripts/sites-env.mjs ./node_modules/wrangler/bin/wrangler.js d1 execute DB --local --config dist/server/wrangler.json --persist-to .wrangler/state --file drizzle/0011_payment_hold_expiry.sql
+node --import ./scripts/sites-env.mjs ./node_modules/wrangler/bin/wrangler.js d1 execute DB --local --config dist/server/wrangler.json --persist-to .wrangler/state --file drizzle/0012_table_moves.sql
 npm start
 ```
 

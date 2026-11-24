@@ -11,10 +11,28 @@ import Intake from "./intake";
 import {methods,paymentStates,environmentLabel,canPrepare,canCancel} from "../../lib/payments.mjs";
 const action={preparing:"接單製作",ready:"完成製作",completed:"完成交餐",cancelled:"取消訂單"};
 
+function TableMove({id,table,revision,busy,update}){
+  const [destination,setDestination]=useState("");
+  return <details className="tableMove">
+    <summary>更換桌號</summary>
+    <form className="actions" onSubmit={event=>{
+      event.preventDefault();
+      if(destination&&!busy)update("table",{id,from:table,to:destination,revision});
+    }}>
+      <label>新桌號<select required value={destination} disabled={busy} onChange={event=>setDestination(event.target.value)}>
+        <option value="">選擇桌號</option>
+        {tables.filter(value=>value!==table).map(value=><option key={value} value={value}>{value} 桌</option>)}
+      </select></label>
+      <button className="outline" disabled={busy||!destination}>確認換桌</button>
+    </form>
+  </details>;
+}
+
 function KitchenTicket({order,busy,update,handoffOnly=false}){
   const {id,status,table,created,items,note,paymentMethod,paymentEnv,paymentState,total}=order;
   const actions=handoffOnly ? transitions[status].filter(next=>next==="completed") : transitions[status];
   const workingByStation=order.stationProgress&&status==="preparing";
+  const tableRevision=order.tableRevision??0;
   return <article className="sheet kitchenTicket">
     <div className="menuTitle"><h2>#{numberOf(id)}</h2><Mode table={table}/></div>
     <p aria-live={handoffOnly?"polite":undefined}><b>{labels[status]}</b> · {new Date(created).toLocaleTimeString("zh-TW",{hour:"2-digit",minute:"2-digit",timeZone:"Asia/Taipei"})}</p>
@@ -27,8 +45,11 @@ function KitchenTicket({order,busy,update,handoffOnly=false}){
       {workingByStation&&<a className="primary" href="/kitchen/station-work">查看分站進度</a>}
       {!handoffOnly&&["sandbox","production"].includes(paymentEnv)&&<button className="outline" disabled={busy} onClick={()=>update("payment",{id})}>查詢金流</button>}
       {!workingByStation&&actions.map(next=><button disabled={busy||(next==="cancelled"?!canCancel(order):!canPrepare(order))} className={next==="cancelled"?"outline":"primary"} key={next}
-        onClick={()=>{if(next!=="cancelled"||window.confirm("取消這張訂單？"))update("status",{id,from:status,to:next});}}>{action[next]}</button>)}
+        onClick={()=>{if(next!=="cancelled"||window.confirm("取消這張訂單？"))
+          update("status",{id,from:status,to:next,...(table&&next==="completed"?{tableRevision}:{})});}}>{action[next]}</button>)}
     </div>
+    {table&&["pending","preparing","ready"].includes(status)&&<TableMove
+      key={table+":"+tableRevision} id={id} table={table} revision={tableRevision} busy={busy} update={update}/>}
   </article>;
 }
 
@@ -78,11 +99,15 @@ export default function Kitchen(){
     try{
       await request("/api/kitchen/"+endpoint,{method:"PATCH",headers:{"Content-Type":"application/json",...(key?{Authorization:"Bearer "+key}:{})},body:JSON.stringify(body)});
       if(focused){setRows(null);setActionMessage("已完成交餐。");}
+      if(endpoint==="table")setActionMessage("餐單 "+numberOf(body.id)+" 已換到 "+body.to+" 桌。");
       setRevision(v=>v+1);
     }catch(e){
       if(focused){
         setActionMessage(e.status===409?"餐單狀態已更新，請核對最新狀態。":e.message);
         setRows(null);
+        setRevision(v=>v+1);
+      }else if(endpoint==="table"||body.tableRevision!==undefined){
+        setActionMessage(e.message);
         setRevision(v=>v+1);
       }else setError(e.message);
     }finally{setBusy(false);}

@@ -256,10 +256,11 @@ export async function api(request, env) {
       return json({error:"部分餐點已超過今日剩餘份數，請調整餐單",code:"portion_limit"},409);
     if (!row) return fail("部分餐點已售完，請重新確認菜單",409);
     const saved = receipt(row);
+    const submittedTable=row.table_moves?JSON.parse(row.table_moves)[0]?.from??row.table_no:row.table_no;
     const sameItems = saved.items.length === order.items.length && saved.items.every(line =>
       order.items.some(item => item.id === line.id && item.qty === line.qty));
     if (saved.combo?.version !== input.comboVersion || (selected && saved.total !== input.expectedTotal) ||
-        row.payment_method!==method || row.mode!==order.mode || row.table_no!==order.table || row.note!==order.note || !sameItems)
+        row.payment_method!==method || row.mode!==order.mode || submittedTable!==order.table || row.note!==order.note || !sameItems)
       return fail("送單識別碼已用於另一張訂單",409);
     return json(saved);
   }
@@ -292,6 +293,7 @@ export async function api(request, env) {
     if (url.searchParams.get("progress") === "1") {
       saved.statusHistory = statusHistory(row);
       if(row.payment_due_at!==null)saved.paymentDueAt=row.payment_due_at;
+      if(row.table_moves)saved.tableMoves=JSON.parse(row.table_moves);
     }
     if(withTiming&&row.status==="preparing"){
       const quote=receiptTiming(row,queue,timing);
@@ -424,17 +426,37 @@ export async function api(request, env) {
           id,created,mode,table,note,status,items:items.map(({id,name,qty}) => ({id,name,qty}))
         }))});
     }
-    return json(orders.map((order,index)=>results[index].station_progress?{...order,stationProgress:true}:order));
+    return json(orders.map((order,index)=>{
+      const row=results[index];
+      return {...order,...(row.station_progress?{stationProgress:true}:{}),
+        ...(row.table_moves?{tableRevision:JSON.parse(row.table_moves).length}:{})};
+    }));
+  }
+  if (path === "/api/kitchen/table" && method === "PATCH") {
+    const {id,from,to,revision}=input;
+    if(!Number.isSafeInteger(id)||id<1||!tables.includes(from)||!tables.includes(to)||from===to||
+      !Number.isSafeInteger(revision)||revision<0||revision>=Number.MAX_SAFE_INTEGER)
+      return fail("餐單、桌號或版本無效");
+    const {meta}=await db.prepare(`UPDATE orders SET table_no=?,
+      table_moves=json_insert(COALESCE(table_moves,'[]'),'$[#]',json_object('from',table_no,'to',?,'at',?))
+      WHERE id=? AND mode='table' AND table_no=? AND status IN ('pending','preparing','ready')
+      AND COALESCE(json_array_length(table_moves),0)=?`).bind(to,to,Date.now(),id,from,revision).run();
+    return meta.changes?json({id,table:to,tableRevision:revision+1}):
+      fail("餐單或桌號已更新，請核對後再換桌。",409);
   }
   if (path === "/api/kitchen/status" && method === "PATCH") {
     if (!Number.isSafeInteger(input.id) || !Object.hasOwn(transitions,input.from) ||
         !transitions[input.from].includes(input.to)) return fail("無效的訂單狀態轉換");
+    const expectedTable=input.tableRevision;
+    if(expectedTable!==undefined&&(input.to!=="completed"||!Number.isSafeInteger(expectedTable)||expectedTable<0))
+      return fail("桌號版本無效");
     const readyGuard=input.to==="ready"?" AND station_progress IS NULL":"";
+    const tableGuard=expectedTable===undefined?"":" AND COALESCE(json_array_length(table_moves),0)=?";
     const {meta} = await db.prepare(`UPDATE orders SET status=?,
       status_history=json_insert(COALESCE(status_history,'[]'),'$[#]',json_object('from',status,'status',?,'at',?))
       WHERE id=? AND status=? AND `+(input.to==="cancelled" ?
-      "(payment_method='cash' OR COALESCE("+latestState+",'unpaid') IN ('unpaid','failed','cancelled','refunded'))" : payableForKitchen)+readyGuard)
-      .bind(input.to,input.to,Date.now(),input.id,input.from).run();
+      "(payment_method='cash' OR COALESCE("+latestState+",'unpaid') IN ('unpaid','failed','cancelled','refunded'))" : payableForKitchen)+readyGuard+tableGuard)
+      .bind(input.to,input.to,Date.now(),input.id,input.from,...(expectedTable===undefined?[]:[expectedTable])).run();
     return meta.changes ? json({ok:true}) : fail(input.to==="ready"?"訂單已更新，請重新整理或開啟分站看板":"訂單已更新，請重新整理",409);
   }
   if (path === "/api/kitchen/availability" && method === "PATCH") {

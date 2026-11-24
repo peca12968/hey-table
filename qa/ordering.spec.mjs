@@ -8,6 +8,76 @@ import jsQR from "jsqr";
 import {PNG} from "pngjs";
 import {businessDate} from "../lib/business-day.mjs";
 
+test("table moves keep the original order retry and guard stale handoff and printing",async({page,browser,request})=>{
+  const headers={Authorization:"Bearer local-test-kitchen"};
+  const input={token:randomUUID(),mode:"table",table:"A03",note:"換桌測試備註",items:[{id:"oyakodon",qty:1}]};
+  const post=data=>request.post("/api/orders",{data});
+  const created=await post(input);
+  expect(created.ok()).toBe(true);
+  const original=await created.json(),number=String(original.id).padStart(4,"0");
+  const move=(from,to,revision)=>request.patch("/api/kitchen/table",{headers,data:{id:original.id,from,to,revision}});
+  const advance=(from,to,tableRevision)=>request.patch("/api/kitchen/status",{headers,data:{id:original.id,from,to,tableRevision}});
+  expect((await request.patch("/api/kitchen/table",{data:{id:original.id,from:"A03",to:"A04",revision:0}})).status()).toBe(403);
+  expect((await move("A03","A03",0)).status()).toBe(400);
+  await page.setViewportSize({width:360,height:780});
+  await page.addInitScript(()=>{
+    sessionStorage.setItem("he-ri-staff","local-test-kitchen");
+    window.printCalls=0;
+    window.print=()=>{window.printCalls++;};
+  });
+  const guest=await browser.newContext({viewport:{width:360,height:780}});
+  try{
+    const receipt=await guest.newPage();
+    await receipt.addInitScript(token=>{
+      if(!localStorage.getItem("he-ri-last"))localStorage.setItem("he-ri-last",JSON.stringify(token));
+    },input.token);
+    await receipt.goto("/ticket#"+input.token);
+    await expect(receipt.getByText("A03 桌內用",{exact:true})).toBeVisible();
+    await expect(receipt.locator(".receiptHistory")).toHaveCount(1);
+    await page.goto("/kitchen");
+    const card=page.locator(".kitchenTicket").filter({has:page.getByRole("heading",{name:"#"+number,exact:true})});
+    await card.getByText("更換桌號",{exact:true}).click();
+    await card.getByLabel("新桌號").selectOption("A04");
+    await card.getByRole("button",{name:"確認換桌"}).click();
+    await expect(card.getByText("A04 桌內用",{exact:true})).toBeVisible();
+    await expect(page.getByRole("status")).toContainText("已換到 A04 桌");
+    expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBe(360);
+    await receipt.getByRole("button",{name:"更新進度"}).click();
+    await expect(receipt.getByText("店家已將餐單從 A03 桌移到 A04 桌。")).toBeVisible();
+    await receipt.getByText("最近餐單",{exact:false}).click();
+    await expect(receipt.locator(".receiptHistory").getByText(/A04 桌內用/)).toBeVisible();
+    const retry=await post(input);
+    expect(retry.ok()).toBe(true);
+    expect(await retry.json()).toEqual({...original,table:"A04"});
+    expect((await post({...input,table:"A04"})).status()).toBe(409);
+    expect((await advance("pending","preparing")).ok()).toBe(true);
+    const station=await (await request.get("/api/kitchen/station-work?station=hot",{headers})).json();
+    expect(station.orders.find(order=>order.id===original.id)?.table).toBe("A04");
+    const outcomes=await Promise.all([move("A04","A05",1),move("A04","A06",1)]);
+    expect(outcomes.map(response=>response.status()).sort()).toEqual([200,409]);
+    const {table:current}=await outcomes.find(response=>response.ok()).json();
+    expect((await advance("preparing","ready")).ok()).toBe(true);
+    await page.getByRole("button",{name:"更新",exact:true}).click();
+    await card.getByRole("link",{name:"交餐小票"}).click();
+    const slip=page.getByRole("article",{name:"交餐小票內容"});
+    await expect(slip.getByText(current+" 桌內用",{exact:true})).toBeVisible();
+    expect((await move(current,"A04",2)).ok()).toBe(true);
+    expect((await move("A04","A03",1)).status()).toBe(409);
+    expect((await advance("ready","completed",2)).status()).toBe(409);
+    const print=page.getByRole("button",{name:"列印交餐小票"});
+    await print.click();
+    await expect(page.getByRole("status")).toHaveText("桌號已更新，請核對後再列印。");
+    await expect(slip.getByText("A04 桌內用",{exact:true})).toBeVisible();
+    expect(await page.evaluate(()=>window.printCalls)).toBe(0);
+    await print.click();
+    await expect.poll(()=>page.evaluate(()=>window.printCalls)).toBe(1);
+    expect((await advance("ready","completed",3)).ok()).toBe(true);
+    expect((await move("A04","A02",3)).status()).toBe(409);
+    const ticket=await (await request.get("/api/ticket?progress=1",{headers:{"X-Ticket":input.token}})).json();
+    expect(ticket.tableMoves.map(({from,to})=>[from,to])).toEqual([["A03","A04"],["A04",current],[current,"A04"]]);
+  }finally{await guest.close();}
+});
+
 test("the pickup screen follows station readiness, clears stale numbers, and hides collected orders",async({page,request})=>{
   const headers={Authorization:"Bearer local-test-kitchen"};
   const url="/api/kitchen/pickup-display";

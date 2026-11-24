@@ -41,9 +41,9 @@ export default function Handoff(){
     setMessage("");
     try{
       const latest=await fetchSlip(number);
-      if(latest.status!==slip.status){
+      if(latest.status!==slip.status||latest.table!==slip.table){
         setSlip(latest);
-        setMessage("交餐狀態已更新，請核對後再列印。");
+        setMessage(latest.table!==slip.table?"桌號已更新，請核對後再列印。":"交餐狀態已更新，請核對後再列印。");
       }else{
         window.print();
       }
