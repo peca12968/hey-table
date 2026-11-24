@@ -4,7 +4,7 @@ import {dishes} from "../lib/menu.mjs";
 import {reorderable,reorderPlan} from "../lib/reorder.mjs";
 import {request} from "./shared";
 
-export default function Reorder({token,table,sold,loaded,cart,blocked,onAdd,onClose}){
+export default function Reorder({token,table,sold,remaining,loaded,cart,blocked,onAdd,onClose}){
   const [order,setOrder]=useState(null),[error,setError]=useState("");
   const [retry,setRetry]=useState(0);
   useEffect(()=>{
@@ -22,7 +22,7 @@ export default function Reorder({token,table,sold,loaded,cart,blocked,onAdd,onCl
     });
     return ()=>controller.abort();
   },[token,table,retry]);
-  const plan=order&&loaded?reorderPlan(order.items,dishes,sold,cart):null;
+  const plan=order&&loaded?reorderPlan(order.items,dishes,sold,cart,remaining):null;
   const available=plan?.some(row=>row.added>0);
   return <section className="reorder" aria-labelledby="reorder-title">
     <h3 id="reorder-title">再次點餐</h3>

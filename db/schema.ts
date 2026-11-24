@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { check, index, integer, sqliteTable, text } from "drizzle-orm/sqlite-core";
+import { check, index, integer, primaryKey, sqliteTable, text } from "drizzle-orm/sqlite-core";
 
 export const orders = sqliteTable("orders", {
   id: integer("id").primaryKey({ autoIncrement: true }),
@@ -31,6 +31,16 @@ export const paymentAttempts = sqliteTable("payment_attempts", {
 export const unavailable = sqliteTable("unavailable", {
   dish: text("dish").primaryKey(),
 });
+export const dailyPortionLimits = sqliteTable("daily_portion_limits", {
+  date: text("date").notNull(),
+  dish: text("dish").notNull(),
+  capacity: integer("capacity"),
+  revision: integer("revision").notNull(),
+}, t => [
+  primaryKey({columns:[t.date,t.dish]}),
+  check("daily_portion_capacity",sql`${t.capacity} IS NULL OR ${t.capacity} >= 0`),
+  check("daily_portion_revision",sql`${t.revision} > 0`),
+]);
 export const kitchenTiming = sqliteTable("kitchen_timing", {
   revision: integer("revision").primaryKey(),
   config: text("config").notNull(),

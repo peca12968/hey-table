@@ -15,6 +15,7 @@ const groups=["全部","丼飯","小食","飲品"];
 export default function Menu(){
   const [table,setTable]=useState(null),[scope,setScope]=useState(""),[group,setGroup]=useState("全部");
   const [cart,setCart]=useState({}),[note,setNote]=useState(""),[sold,setSold]=useState([]),[loaded,setLoaded]=useState(false);
+  const [remaining,setRemaining]=useState({});
   const [draft,setDraft]=useState(null),[busy,setBusy]=useState(false),[error,setError]=useState(""),[panel,setPanel]=useState(false);
   const [announcement,setAnnouncement]=useState(""); const sending=useRef(false);
   const [method,setMethod]=useState("cash"),[payments,setPayments]=useState({methods:["cash"]});
@@ -32,6 +33,7 @@ export default function Menu(){
       const data=await request("/api/menu",{signal:controller.signal});
       if(controller.signal.aborted)return;
       setSold(data.unavailable);
+      setRemaining(data.remaining??{});
       setPayments(data.payments??{methods:["cash"]});
       setIntake(data.accepting??{});
       setTableIntake(data.acceptingTables??{});
@@ -90,7 +92,19 @@ export default function Menu(){
     ? priceCombos(items) : null;
   const applied=draft ? draft.comboVersion===comboVersion : useCombo && offer?.discount>0;
   const total=applied ? draft?.expectedTotal??offer.total : subtotal;
-  function change(id,delta){if(draft||busy)return;setCart(old=>({...old,[id]:Math.max(0,Math.min(20,(old[id]||0)+delta))}));setError("");setAnnouncement((dishes.find(d=>d.id===id)?.name??"")+"數量已更新");}
+  const maxFor=id=>Math.min(20,remaining[id]??20);
+  const limitBlocked=lines.some(({id})=>cart[id]>(remaining[id]??20));
+  const blocked=limitBlocked||lines.some(({id})=>sold.includes(id));
+  const cannotAdd=id=>sold.includes(id)||(cart[id]||0)>=maxFor(id);
+  function change(id,delta){
+    if(draft||busy||(delta>0&&cannotAdd(id)))return;
+    setCart(old=>{
+      const current=old[id]||0;
+      if(delta>0&&current>=maxFor(id))return old;
+      return {...old,[id]:Math.max(0,current+delta)};
+    });
+    setError("");setAnnouncement((dishes.find(d=>d.id===id)?.name??"")+"數量已更新");
+  }
   function dismissRepeat(){
     setRepeat("");
     history.replaceState(history.state,"",location.pathname+location.search);
@@ -99,7 +113,10 @@ export default function Menu(){
     if(draft||busy||sending.current||read(scope,{}).draft)return false;
     setCart(current=>{
       const next={...current};
-      for(const {id,added} of plan)if(added)next[id]=Math.min(20,(next[id]||0)+added);
+      for(const {id,added} of plan){
+        const current=next[id]||0;
+        if(added&&!sold.includes(id)&&current<maxFor(id))next[id]=Math.min(maxFor(id),current+added);
+      }
       return next;
     });
     dismissRepeat();
@@ -107,7 +124,7 @@ export default function Menu(){
     return true;
   }
   async function submit(){
-    if(sending.current||invalid||!scope||!count||(!draft&&paused))return;
+    if(sending.current||invalid||!scope||!count||(!draft&&(paused||blocked)))return;
     sending.current=true;setBusy(true);setError("");
     const payload=draft??{token:crypto.randomUUID(),...(method==='cash'?{}:{paymentMethod:method}),mode,table,note,items,...(applied?{comboVersion,expectedTotal:total}:{})};
     setDraft(payload);save(scope,{cart,note,draft:payload,method,useCombo});
@@ -125,24 +142,26 @@ export default function Menu(){
       sending.current=false;setBusy(false);
     }
   }
-  const hero=dishes[0],blocked=lines.some(d=>sold.includes(d.id));
+  const hero=dishes[0],unavailableForAddOn=dishes.filter(d=>cannotAdd(d.id)).map(d=>d.id);
   const quoteBody=JSON.stringify({items});
-  function addButton(d){return <button className="add" aria-label={"加入"+d.name} disabled={!loaded||busy||!!draft||sold.includes(d.id)||(cart[d.id]||0)>=20||invalid} onClick={()=>change(d.id,1)}><Plus size={18}/></button>;}
+  function addButton(d){return <button className="add" aria-label={"加入"+d.name} disabled={!loaded||busy||!!draft||cannotAdd(d.id)||invalid} onClick={()=>change(d.id,1)}><Plus size={18}/></button>;}
   return <><Header home/><main className="shell">
-    <section className="hero"><div className="heroCopy"><p className="kicker"><span/> 本日主廚推薦</p><h1>{hero.name}</h1><p>{hero.description}</p><button className="heroAction" onClick={()=>change(hero.id,1)} disabled={!loaded||busy||!!draft||sold.includes(hero.id)||(cart[hero.id]||0)>=20||invalid}><Plus size={16}/> 加入餐單 <b>NT$ {hero.price}</b></button></div><img className="heroImg" src="/food/katsudon.webp" alt="滑蛋豬排丼"/></section>
+    <section className="hero"><div className="heroCopy"><p className="kicker"><span/> 本日主廚推薦</p><h1>{hero.name}</h1><p>{hero.description}</p><button className="heroAction" onClick={()=>change(hero.id,1)} disabled={!loaded||busy||!!draft||cannotAdd(hero.id)||invalid}><Plus size={16}/> 加入餐單 <b>NT$ {hero.price}</b></button></div><img className="heroImg" src="/food/katsudon.webp" alt="滑蛋豬排丼"/></section>
     {invalid&&<p className="error" role="alert">桌號無效，請重新掃描桌牌。也可<a href="/">改為線上自取</a>。</p>}
     {paused&&!invalid&&<p className="error" role="status">{intakeNotice(mode,intake[mode]===false?null:pausedTable)}</p>}
     <div className="columns"><section><div className="menuTitle"><div><p className="eyebrow">OUR MENU</p><h2>點餐菜單</h2></div><Mode table={table}/></div>
     <nav className="tabs" aria-label="餐點分類">{groups.map(g=><button key={g} aria-pressed={group===g} onClick={()=>setGroup(g)}>{g}</button>)}</nav>
-    <div className="grid">{dishes.filter(d=>group==="全部"||d.group===group).map(d=><article className="dish" key={d.id}><img src={"/food/"+d.id+".webp"} alt={d.name} loading="lazy"/><div className="dishInfo"><small>{d.group}</small><h3>{d.name}</h3><p>{d.description}</p><div className="price"><strong>NT$ {d.price}</strong>{sold.includes(d.id)?<span>已售完</span>:addButton(d)}</div></div></article>)}</div></section>
+    <div className="grid">{dishes.filter(d=>group==="全部"||d.group===group).map(d=><article className="dish" key={d.id}><img src={"/food/"+d.id+".webp"} alt={d.name} loading="lazy"/><div className="dishInfo"><small>{d.group}</small><h3>{d.name}</h3><p>{d.description}</p>
+      {!sold.includes(d.id)&&remaining[d.id]>0&&<p className="muted">今日剩餘 {remaining[d.id]} 份</p>}
+      <div className="price"><strong>NT$ {d.price}</strong>{sold.includes(d.id)||remaining[d.id]===0?<span>已售完</span>:addButton(d)}</div></div></article>)}</div></section>
     {panel&&<button className="shade" aria-label="關閉餐單" onClick={()=>setPanel(false)}/>}
     <aside className={"cart "+(panel?"opened":"")} aria-label="我的餐單"><div className="cartHead"><h2><ShoppingBag size={21}/> 我的餐單</h2><span>{count} 件</span><button className="mobileClose" aria-label="關閉" onClick={()=>setPanel(false)}><X size={19}/></button></div>
     <div className="cartMode"><Mode table={table}/><span>{methods[method]}</span></div>
-    {repeat&&scope&&!invalid&&<Reorder token={repeat} table={table} sold={sold} loaded={loaded} cart={cart}
+    {repeat&&scope&&!invalid&&<Reorder token={repeat} table={table} sold={sold} remaining={remaining} loaded={loaded} cart={cart}
       blocked={!!draft||busy} onAdd={addRepeat} onClose={dismissRepeat}/>}
-    {!count?<div className="empty"><Utensils size={30}/><strong>餐單還是空的</strong><p>從菜單加入想吃的餐點</p></div>:<ul className="orderLines">{lines.map(d=><li key={d.id}><div><b>{d.name}{sold.includes(d.id)?"（售完）":""}</b><small>NT$ {d.price*cart[d.id]}</small></div><div className="stepper"><button disabled={!!draft||busy} aria-label={"減少"+d.name} onClick={()=>change(d.id,-1)}><Minus size={14}/></button><span>{cart[d.id]}</span><button disabled={!!draft||busy||sold.includes(d.id)||cart[d.id]>=20} aria-label={"增加"+d.name} onClick={()=>change(d.id,1)}><Plus size={14}/></button></div></li>)}</ul>}
+    {!count?<div className="empty"><Utensils size={30}/><strong>餐單還是空的</strong><p>從菜單加入想吃的餐點</p></div>:<ul className="orderLines">{lines.map(d=><li key={d.id}><div><b>{d.name}{sold.includes(d.id)||remaining[d.id]===0?"（售完）":""}</b><small>NT$ {d.price*cart[d.id]}</small></div><div className="stepper"><button disabled={!!draft||busy} aria-label={"減少"+d.name} onClick={()=>change(d.id,-1)}><Minus size={14}/></button><span>{cart[d.id]}</span><button disabled={!!draft||busy||cannotAdd(d.id)} aria-label={"增加"+d.name} onClick={()=>change(d.id,1)}><Plus size={14}/></button></div></li>)}</ul>}
     {loaded&&!invalid&&!blocked&&!draft&&!busy&&lines.some(d=>d.group==="丼飯")&&
-      <CartAddOn key={quoteBody+JSON.stringify(sold)} body={quoteBody} sold={sold} onAdd={id=>change(id,1)}/>}
+      <CartAddOn key={quoteBody+JSON.stringify(unavailableForAddOn)} body={quoteBody} sold={unavailableForAddOn} onAdd={id=>change(id,1)}/>}
     {count>0&&<label className="note">訂單備註 <small>選填</small><textarea placeholder="例如：餐具數量" value={note} maxLength={160} disabled={!!draft||busy} onChange={e=>setNote(e.target.value)}/></label>}
     {count>0&&<label className="payChoice">付款方式<select value={method} disabled={!!draft||busy} onChange={e=>setMethod(e.target.value)}>
       {payments.methods.map(m=><option key={m} value={m}>{methods[m]}</option>)}</select>
@@ -151,6 +170,7 @@ export default function Menu(){
       onChange={e=>setUseCombo(e.target.checked)}/><span>套用套餐優惠 <small>省 NT$ {offer.discount}</small></span></label>}
     <div className="total"><span>合計</span><b>NT$ {total}</b></div>
     {paused&&!invalid&&count>0&&!draft&&<p className="error">餐單已保留，恢復接單後可再送出。</p>}
+    {limitBlocked&&!draft&&!error&&<p className="error" role="status">部分餐點已超過今日剩餘份數，請調整餐單。</p>}
     {count>0&&loaded&&!invalid&&!blocked&&!paused&&!draft&&!busy&&<CartQuote key={quoteBody} body={quoteBody}/>}
     {error&&<p className="error" role="alert">{error}</p>}{draft&&!busy&&lookup&&<p role="status">{lookup}</p>}{scope&&!loaded&&<p role="status">正在確認餐點供應狀態…</p>}
     <button className="primary full" disabled={busy||!count||invalid||(!draft&&(paused||blocked||!loaded||!payments.methods.includes(method)))} onClick={submit}><Check size={17}/>{busy?"送單中…":draft?"重試同一張訂單":paused?"暫停接單":"確認送出訂單"}</button></aside></div>

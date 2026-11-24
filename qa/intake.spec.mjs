@@ -1,5 +1,6 @@
 import {test,expect} from "@playwright/test";
 import {randomUUID} from "node:crypto";
+import {businessDate} from "../lib/business-day.mjs";
 
 const staff={Authorization:"Bearer local-test-kitchen"};
 const config="/api/kitchen/intake";
@@ -20,6 +21,67 @@ async function ensureOpenTable(request,table){
 }
 const order=(mode,fields={})=>({token:randomUUID(),mode,table:mode==="table"?"A03":null,
   note:"",items:[{id:"katsudon",qty:1}],...fields});
+
+test("daily portions serialize the last serving across pickup and tables and release it on cancellation",async({page,browser,request})=>{
+  const date=businessDate(Date.now()),tomorrow=businessDate(Date.now()+86400000),dish="gyoza";
+  const endpoint="/api/kitchen/daily-limits";
+  const settings=async day=>(await request.get(endpoint+"?date="+day,{headers:staff})).json();
+  const save=(day,capacity,revision)=>request.patch(endpoint,{headers:staff,data:{date:day,dish,capacity,revision}});
+  const menu=async()=>(await request.get("/api/menu")).json();
+  const post=data=>request.post("/api/orders",{data});
+  const cancel=id=>request.patch("/api/kitchen/status",{headers:staff,data:{id,from:"pending",to:"cancelled"}});
+  expect((await request.get(endpoint+"?date="+date)).status()).toBe(403);
+  expect((await request.get(endpoint+"?date=2026-02-30",{headers:staff})).status()).toBe(400);
+  expect((await save(tomorrow,0,0)).ok()).toBe(true);
+  expect((await menu()).remaining?.[dish]).toBeUndefined();
+  const initial=(await settings(date)).limits[dish],one=initial.used+1;
+
+  await page.setViewportSize({width:360,height:780});
+  await page.addInitScript(()=>sessionStorage.setItem("he-ri-staff","local-test-kitchen"));
+  await page.goto("/kitchen");
+  await page.getByRole("link",{name:"每日限量供應"}).click();
+  const card=page.getByRole("article",{name:"海苔柴魚煎餃"});
+  await card.getByLabel("供應上限").fill(String(one));
+  await card.getByRole("button",{name:"儲存上限"}).click();
+  await expect(card.getByText("已占用 "+initial.used+" 份 · 剩餘 1 份")).toBeVisible();
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBe(360);
+  expect((await save(date,one+1,initial.revision)).status()).toBe(409);
+  const guest=await browser.newContext({viewport:{width:360,height:780}});
+  try{
+    const mobile=await guest.newPage();
+    await mobile.goto("/");
+    const available=mobile.locator(".dish").filter({has:mobile.getByRole("heading",{name:"海苔柴魚煎餃"})});
+    await expect(available.getByText("今日剩餘 1 份")).toBeVisible();
+    await available.getByRole("button",{name:"加入海苔柴魚煎餃"}).click();
+    await mobile.getByRole("button",{name:/我的餐單/}).click();
+    await expect(mobile.getByRole("button",{name:"增加海苔柴魚煎餃"})).toBeDisabled();
+    const [pickup,table]=["pickup","table"].map(mode=>order(mode,{items:[{id:dish,qty:1}]}));
+    const attempted=await Promise.all([post(pickup),post(table)]);
+    expect(attempted.map(response=>response.status()).sort()).toEqual([200,409]);
+    const accepted=attempted.findIndex(response=>response.ok());
+    const winner=await attempted[accepted].json(),loser=[pickup,table][1-accepted];
+    expect((await attempted[1-accepted].json()).code).toBe("portion_limit");
+    expect(await (await post([pickup,table][accepted])).json()).toEqual(winner);
+    expect((await menu()).remaining[dish]).toBe(0);
+    expect((await request.post("/api/quote",{data:{items:[{id:dish,qty:1}]}})).status()).toBe(409);
+    await mobile.evaluate(()=>window.dispatchEvent(new Event("online")));
+    await expect(mobile.getByText("部分餐點已超過今日剩餘份數，請調整餐單。")).toBeVisible();
+    await expect(mobile.getByRole("button",{name:"確認送出訂單"})).toBeDisabled();
+    expect((await cancel(winner.id)).ok()).toBe(true);
+    const released=await post(loser);
+    expect(released.status()).toBe(200);
+    expect((await cancel((await released.json()).id)).ok()).toBe(true);
+    const {revision}= (await settings(date)).limits[dish];
+    const concurrent=await Promise.all([save(date,null,revision),save(date,one+2,revision)]);
+    expect(concurrent.map(result=>result.status()).sort()).toEqual([200,409]);
+    const current=(await settings(date)).limits[dish];
+    if(current.capacity!==null)expect((await save(date,null,current.revision)).ok()).toBe(true);
+    expect((await menu()).remaining?.[dish]).toBeUndefined();
+  }finally{
+    await save(tomorrow,null,1);
+    await guest.close();
+  }
+});
 
 test("mobile guest keeps a draft through a pause and a second staff browser needs a fresh revision",async({browser,context,page,request})=>{
   const guest=await browser.newContext({viewport:{width:390,height:844}});

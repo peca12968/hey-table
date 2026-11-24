@@ -71,6 +71,13 @@
       "when": 1795548610619,
       "tag": "0009_station_progress",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "6",
+      "when": 1795549836112,
+      "tag": "0010_daily_portion_limits",
+      "breakpoints": true
     }
   ]
 }

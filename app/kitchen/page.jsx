@@ -121,6 +121,7 @@ export default function Kitchen(){
       <a className="outline" href="/kitchen/daily">每日訂單摘要</a>
       <a className="outline" href="/kitchen/station-work">分站看板</a>
       <a className="outline" href="/kitchen/pickup-display">櫃台取餐看板</a>
+      <a className="outline" href="/kitchen/daily-limits">每日限量供應</a>
       <button className="outline" disabled={exporting} onClick={exportStations}>{exporting?"正在擷取訂單…":"下載分站出單檔"}</button></div>
     {exportMessage&&<p role="status">{exportMessage}</p>}
     <Intake key={"intake-"+key} staffKey={key}/>

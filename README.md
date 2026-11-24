@@ -72,6 +72,12 @@ Stockroom 支援在一筆交易內保留多個 SKU。若其中一項缺貨，該
 
 店員可從接單台開啟「每日訂單摘要」，按台灣日期查詢當天成立的餐單。摘要分開統計自取與掃碼內用，並依實際交餐狀態加總份數。金額以已交餐單的成交金額計算，包含示範單及當時的套餐折抵。按「下載摘要 JSON」可保存畫面上的同一份快照。日期範圍從台灣時間當日 00:00 起算，到隔日 00:00 前。摘要只包含彙總值。[台灣日期邊界測試](qa/tappay.test.mjs) · [手機匯出測試](qa/ordering.spec.mjs)
 
+## 每日限量供應
+
+店員可從接單台開啟「每日限量供應」，依台灣日期設定各品項總份數。空白表示不限量，0 表示當日停止供應。自取與內用共用上限，已成立餐單會占用份數，取消後釋回。若上限低於已占用量，菜單會顯示售完，直到加量或取消釋出。手動標記售完也會阻擋送單。
+
+顧客在菜單可看到限量品項的剩餘份數。送單會在同一筆 D1 寫入比對份數，避免同時搶最後一份時超賣。已成功餐單用原送單識別碼重試會取得原收據。店家編輯也會比對載入時的設定版本。[限量供應併發測試](qa/intake.spec.mjs)
+
 ### 串接 TapPay 商店
 
 付款後切回收據，或裝置恢復連線時，頁面會重新查詢原交易。測試讓 LINE Pay 與全支付的模擬金流在收到付款請求後斷線。第一次查無紀錄時保留「付款確認中」，同時重送八次仍只發起一次金流請款。待交易紀錄可查後，原收據會顯示已付款。[交易中斷測試](qa/tappay.test.mjs) · [收據恢復測試](qa/payments.spec.mjs)
@@ -166,6 +172,7 @@ node --import ./scripts/sites-env.mjs ./node_modules/wrangler/bin/wrangler.js d1
 node --import ./scripts/sites-env.mjs ./node_modules/wrangler/bin/wrangler.js d1 execute DB --local --config dist/server/wrangler.json --persist-to .wrangler/state --file drizzle/0007_receipt_progress.sql
 node --import ./scripts/sites-env.mjs ./node_modules/wrangler/bin/wrangler.js d1 execute DB --local --config dist/server/wrangler.json --persist-to .wrangler/state --file drizzle/0008_order_created_index.sql
 node --import ./scripts/sites-env.mjs ./node_modules/wrangler/bin/wrangler.js d1 execute DB --local --config dist/server/wrangler.json --persist-to .wrangler/state --file drizzle/0009_station_progress.sql
+node --import ./scripts/sites-env.mjs ./node_modules/wrangler/bin/wrangler.js d1 execute DB --local --config dist/server/wrangler.json --persist-to .wrangler/state --file drizzle/0010_daily_portion_limits.sql
 npm start
 ```
 

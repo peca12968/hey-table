@@ -3,7 +3,8 @@ import {comboVersion,priceCombos} from "../lib/combo-pricing.mjs";
 import qrcode from "qrcode-generator";
 import {dishes, tables, transitions} from "../lib/menu.mjs";
 import {intakeLabels,intakeNotice} from "../lib/order-intake.mjs";
-import {businessDayRange} from "../lib/business-day.mjs";
+import {businessDate,businessDayRange} from "../lib/business-day.mjs";
+import {dailyLimits,exceededPortions,readRemaining} from "./daily-limits.mjs";
 
 const json = (value, status=200) => Response.json(value,{status,headers:{"Cache-Control":"no-store"}});
 const fail = (message,status=400) => json({error:message},status);
@@ -162,10 +163,32 @@ export async function api(request, env) {
     if (!meta.changes) return fail("接單設定已由其他店員更新，請載入最新狀態。",409);
     return json({...(byTable ? {table} : {mode}),accepting,revision:revision+1});
   }
+  if (path === "/api/kitchen/daily-limits" && method === "GET") {
+    const date=url.searchParams.get("date"),range=businessDayRange(date);
+    if(!range)return fail("請選擇有效的供應日期");
+    return json({date,limits:await dailyLimits(db,date,range)});
+  }
+  if (path === "/api/kitchen/daily-limits" && method === "PATCH") {
+    const {date,dish,capacity,revision}=input;
+    if(typeof date!=="string"||!businessDayRange(date)||!dishes.some(item=>item.id===dish)||
+      (capacity!==null&&(!Number.isSafeInteger(capacity)||capacity<0))||
+      !Number.isSafeInteger(revision)||revision<0||revision>=Number.MAX_SAFE_INTEGER)
+      return fail("供應日期、餐點、份數或版本無效");
+    const {meta}=await db.prepare(`INSERT INTO daily_portion_limits(date,dish,capacity,revision)
+      SELECT ?,?,?,? WHERE COALESCE((SELECT revision FROM daily_portion_limits WHERE date=? AND dish=?),0)=?
+      ON CONFLICT(date,dish) DO UPDATE SET capacity=excluded.capacity,revision=excluded.revision`)
+      .bind(date,dish,capacity,revision+1,date,dish,revision).run();
+    return meta.changes?json({date,dish,capacity,revision:revision+1}):
+      fail("供應上限已由其他店員更新，請重新載入後再儲存。",409);
+  }
   if (path === "/api/menu" && method === "GET") {
-    const [stock,modes,seats]=await db.batch([db.prepare("SELECT dish FROM unavailable"),db.prepare(intakeRows),db.prepare(tableIntakeRows)]);
+    const date=businessDate(Date.now());
+    const [stock,modes,seats,portions]=await db.batch([db.prepare("SELECT dish FROM unavailable"),db.prepare(intakeRows),
+      db.prepare(tableIntakeRows),readRemaining(db,date,businessDayRange(date))]);
+    const remaining=Object.fromEntries(portions.results.map(row=>[row.dish,row.remaining]));
     return json({payments:settings(env),unavailable:stock.results.map(r=>r.dish),
-      accepting:acceptingOnly(modeState(modes.results)),acceptingTables:acceptingOnly(tableState(seats.results))});
+      accepting:acceptingOnly(modeState(modes.results)),acceptingTables:acceptingOnly(tableState(seats.results)),
+      ...(portions.results.length?{remaining}:{})});
   }
   if (path === "/api/add-on" && method === "POST") {
     const items = menuItems(input.items);
@@ -175,13 +198,17 @@ export async function api(request, env) {
   if (path === "/api/quote" && method === "POST") {
     const items = menuItems(input.items);
     if (!items) return fail("請確認餐點與數量");
-    const [stock, queue, timing] = await db.batch([
+    const date=businessDate(Date.now());
+    const [stock, queue, timing, exceeded] = await db.batch([
       db.prepare("SELECT dish FROM unavailable"),
       db.prepare("SELECT id,created,items,status,station_progress FROM orders WHERE status='preparing' ORDER BY id DESC"),
-      db.prepare(timingRows+" LIMIT 1")
+      db.prepare(timingRows+" LIMIT 1"),
+      db.prepare(exceededPortions).bind(JSON.stringify(items),date,...businessDayRange(date)),
     ]);
     if (stock.results.some(row => items.some(item => item.id === row.dish)))
       return fail("餐單中有已售完餐點，請調整數量後再試算",409);
+    if (exceeded.results.length)
+      return fail("餐單中有餐點超過今日剩餘份數，請調整後再試算",409);
     const {plan,timingSource}=kitchenSchedule(queue.results,timing.results[0],{cart:{items}});
     return json({capturedAt:plan.capturedAt,seconds:plan.quote.seconds,timingSource});
   }
@@ -199,14 +226,18 @@ export async function api(request, env) {
     const snapshot = quote && validPrice ? JSON.stringify({version:comboVersion,quote}) : null;
     const available=config.methods.includes(method);
     const lines = JSON.stringify(order.items);
+    const created=Date.now(),date=businessDate(created),range=businessDayRange(date);
     const stmt = db.prepare(`INSERT INTO orders(token,mode,table_no,note,items,total,created,payment_method,payment_env,combo_quote)
       SELECT ?,?,?,?,?,?,?,?,?,? WHERE ? AND NOT ${modePaused} AND NOT ${tablePaused}
       AND NOT EXISTS (SELECT 1 FROM unavailable u
-      JOIN json_each(?) j ON u.dish=json_extract(j.value,'$.id')) ON CONFLICT(token) DO NOTHING`);
-    const [,savedOrder,intake] = await db.batch([
-      stmt.bind(order.token,order.mode,order.table,order.note,lines,quote?.total??order.total,Date.now(),method,method==='cash'?'cash':config.mode,snapshot,available&&validPrice?1:0,order.mode,order.table,lines),
+      JOIN json_each(?) j ON u.dish=json_extract(j.value,'$.id'))
+      AND NOT EXISTS (${exceededPortions}) ON CONFLICT(token) DO NOTHING`);
+    const [,savedOrder,intake,exceeded] = await db.batch([
+      stmt.bind(order.token,order.mode,order.table,order.note,lines,quote?.total??order.total,created,method,method==='cash'?'cash':config.mode,snapshot,available&&validPrice?1:0,order.mode,order.table,lines,lines,date,...range),
       db.prepare(selectOrders+" WHERE token=?").bind(order.token),
-      db.prepare(`SELECT ${modePaused} AS mode_paused, ${tablePaused} AS table_paused`).bind(order.mode,order.table)
+      db.prepare(`SELECT ${modePaused} AS mode_paused, ${tablePaused} AS table_paused`).bind(order.mode,order.table),
+      db.prepare(`SELECT dish FROM (${exceededPortions}) WHERE NOT EXISTS (SELECT 1 FROM orders WHERE token=?)`)
+        .bind(lines,date,...range,order.token),
     ]);
     const row=savedOrder.results[0];
     if (!row && !validPrice) return fail("套餐優惠或金額已變更，請重新確認餐單",409);
@@ -215,6 +246,8 @@ export async function api(request, env) {
       return json({error:intakeNotice(order.mode),code:"intake_paused"},409);
     if (!row && intake.results[0].table_paused)
       return json({error:intakeNotice(order.mode,order.table),code:"table_paused"},409);
+    if (!row && exceeded.results.length)
+      return json({error:"部分餐點已超過今日剩餘份數，請調整餐單",code:"portion_limit"},409);
     if (!row) return fail("部分餐點已售完，請重新確認菜單",409);
     const saved = receipt(row);
     const sameItems = saved.items.length === order.items.length && saved.items.every(line =>

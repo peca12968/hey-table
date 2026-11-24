@@ -1,5 +1,7 @@
 import {MenuPairs} from "@peca12968/menu-pairs";
 import {dishes} from "../lib/menu.mjs";
+import {businessDate,businessDayRange} from "../lib/business-day.mjs";
+import {readRemaining} from "./daily-limits.mjs";
 
 const offers = dishes.filter(dish => dish.group !== "丼飯").map(dish => dish.id);
 const mains = new Set(dishes.filter(dish => dish.group === "丼飯").map(dish => dish.id));
@@ -9,11 +11,13 @@ export async function addOnFor(db, items) {
   const cart = items.map(item => item.id);
   const anchors = cart.filter(id => mains.has(id));
   if (!anchors.length) return null;
-  const [stock, history] = await db.batch([
+  const date=businessDate(Date.now());
+  const [stock, history, limits] = await db.batch([
     db.prepare("SELECT dish FROM unavailable"),
-    db.prepare("SELECT items FROM orders WHERE status='completed' ORDER BY id DESC LIMIT 200")
+    db.prepare("SELECT items FROM orders WHERE status='completed' ORDER BY id DESC LIMIT 200"),
+    readRemaining(db,date,businessDayRange(date)),
   ]);
-  const unavailable = stock.results.map(row => row.dish);
+  const unavailable = [...stock.results.map(row=>row.dish),...limits.results.filter(row=>row.remaining===0).map(row=>row.dish)];
   if (cart.some(id => unavailable.includes(id))) return null;
   if (history.results.length >= 5) {
     const model = new MenuPairs({offers, k: offers.length, minPair: 2});
