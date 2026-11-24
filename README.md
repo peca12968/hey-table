@@ -33,7 +33,7 @@ broker 在示範全程持續運作，session 存於記憶體。測試驗證的�
 ```sh
 npm ci
 git worktree add --detach ../coldroom-legacy 320c6586eaeb233e127ba999e5903f95d37fa38c
-git clone https://github.com/peca12968/thaw-window.git ../thaw-window
+git clone https://github.com/peca12968/coldroom-inbox.git ../thaw-window
 git -C ../thaw-window checkout 8183b10d648d90f3cdc445298abb58e1a2ca560e
 node coverage-demo.mjs ../coldroom-legacy/inbox.mjs ../thaw-window/thaw.py
 ```
@@ -49,3 +49,5 @@ node consumer.mjs mqtt://127.0.0.1:1883 freezer-sink readings.db
 以 QoS 1 發布至 `coldroom/north/reading`，UTF-8 JSON 本文例如 `{"id":"n-1","timeMs":5000,"milliC":-18000}`。一次觀測以裝置與事件 ID 共同識別，時間用非負整數毫秒，溫度用千分之一攝氏度。相同觀測重送會輸出 `duplicate`。若同鍵對應不同時間或溫度，保留先前讀值並將新本文摘要記為 `conflict`。格式錯誤的本文記為 `invalid`。拒收紀錄按主題與原始本文的 SHA-256 去重。
 
 處理成功或拒收紀錄提交後，收集器才讓 MQTT.js 發送確認。SQLite 寫入失敗則回滾並中斷連線，讓 broker 保留重送機會。可用 `SELECT device,id,time_ms,milli_c FROM readings ORDER BY device,time_ms,id` 查觀測，或用 `SELECT topic,reason,digest FROM rejected` 查拒收原因。測試資料為合成資料，專案以 AI 輔助開發。[真實傳輸演練](demo.mjs) · [交易與錯誤測試](inbox.test.mjs) · [MQTT.js 訊息處理介面](https://github.com/mqttjs/MQTT.js#mqttclienthandlemessagepacket-callback)
+
+[同庫模組與整合測試](modules/README.md)
