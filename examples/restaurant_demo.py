@@ -130,6 +130,38 @@ def seed_funding(directory, migrations=None):
     return db_path, *paths
 
 
+def seed_activity(directory, migrations=None):
+    db_path, _ = seed(directory, migrations)
+    with closing(sqlite3.connect(db_path)) as db, db:
+        # The LINE Pay order was started yesterday. Its two refunds are today's bank activity.
+        db.execute("UPDATE payment_attempts SET created=? WHERE reference='L2'", (START - 1000,))
+        db.execute("UPDATE orders SET created=? WHERE id=2", (START - 1000,))
+        db.execute("UPDATE payment_attempts SET merchant=? WHERE reference='P1'", (WALLET,))
+        db.execute("UPDATE orders SET total=95 WHERE id=3")
+    scope = {"environment":"sandbox", "merchant_ids":sorted([MERCHANT,WALLET]),
+             "start_time_millis":START, "end_time_millis":START + DAY_MS - 1,
+             "transaction_actions":["CAPTURE","REFUND"]}
+
+    def row(merchant, ref, trade, method, action, amount, auth, at, success=True, refund_ref=None):
+        return dict(merchant_id=merchant, bank_transaction_id=ref, rec_trade_id=trade,
+                    payment_method=method, transaction_action=action, trade_amount=amount,
+                    auth_amount=auth, bank_transaction_millis=at, millis=at-10, transaction_result=success,
+                    bank_refund_order_number=refund_ref, currency="TWD", partial_card_number="fixture-sensitive")
+
+    rows = [
+        row(MERCHANT,"L2","L-TWO","line_pay","REFUND",20,120,START),
+        row(WALLET,"P1","P-ONE","px_pay_plus","CAPTURE",95,95,START+50),
+        row(MERCHANT,"L2","L-TWO","line_pay","REFUND",30,120,START+100),
+        row(MERCHANT,"L2","L-TWO","line_pay","REFUND",10,120,START+150,success=False),
+        row(WALLET,"P1","P-ONE","px_pay_plus","REFUND",15,95,START+DAY_MS-1,refund_ref="PX-R-1"),
+    ]
+    pages = [dict(status=0, page=index, total_page_count=2, number_of_transactions=5,
+                  reconciliation_datas=rows[index*3:index*3+3]) for index in range(2)]
+    path = directory / "bank-activity.json"
+    path.write_text(json.dumps({"scope":scope, "pages":pages}, indent=2), encoding="utf8")
+    return db_path, path
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("directory", type=Path)
@@ -137,9 +169,12 @@ if __name__ == "__main__":
     scenario = parser.add_mutually_exclusive_group()
     scenario.add_argument("--split-merchants", action="store_true", help="place a payment retry in a second merchant account")
     scenario.add_argument("--wallet-funding", action="store_true", help="generate six wallet funding and refund examples")
+    scenario.add_argument("--bank-activity", action="store_true", help="generate captures and cross-day refunds")
     args = parser.parse_args()
     if args.wallet_funding:
         seed_funding(args.directory, args.migrations)
+    elif args.bank_activity:
+        seed_activity(args.directory, args.migrations)
     elif args.split_merchants:
         seed_split(args.directory, args.migrations)
     else:

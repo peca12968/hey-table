@@ -2,6 +2,27 @@
 
 電商訂單可能分兩次入帳、發生退款，或被支付平台重複列入檔案。這個 Python CLI 將兩種 CSV 載入 SQLite，按訂單與幣別彙總，列出需要追查的差異。只使用 Python 標準函式庫。
 
+## 昨天付款，今天退款
+
+用 `bank_activity.py` 按銀行處理時間查指定台灣日期的請款與退款。報表比對商店、金流交易號、付款參考號、支付方式與授權金額，連回原餐單。付款較早發起、退款今天才處理時，退款列在今天，並標示原付款嘗試來自前一個日期。
+
+```sh
+python examples/restaurant_demo.py activity-demo --bank-activity
+python bank_activity.py activity-demo/restaurant.db --day 2026-11-23 --environment sandbox --merchant demo-restaurant --merchant demo-wallet --snapshot activity-demo/bank-activity.json
+```
+
+| 合成案例 | 成功請款 | 成功退款 | 當日淨額 |
+| --- | ---: | ---: | ---: |
+| LINE Pay | 0 | 50 | −50 |
+| 全支付 | 95 | 15 | 80 |
+| 合計（新台幣） | **95** | **65** | **30** |
+
+LINE Pay 的同一筆交易在今天有兩筆成功退款，分別為 20 元與 30 元。另一次 10 元退款失敗，會列在待查清單。樣本同時驗證台灣時間午夜整點與當日最後一毫秒，以及銀行處理時間與請求觸發時間跨日的情形。
+
+離線檔使用 `scope` 與 `pages`，格式見上方指令產生的樣本。查詢範圍包含 `CAPTURE`、`REFUND` 及指定商店的整個台灣日。傳入多個商店時，`scope.merchant_ids` 依商店編號排序。每筆使用原始的 `bank_transaction_millis`、`transaction_result` 和非負整數的 `trade_amount`。報表依動作決定正負，並單列其他幣別的筆數。缺頁、總筆數不符或兩筆款項的公開欄位無法區分時，程式停止並回傳 2。`--strict` 會在有待查項目時輸出完整報表並回傳 3。[TapPay Reconciliation API](https://docs.tappaysdk.com/tutorial/en/advanced.html#reconciliation-api)
+
+若商店已具備 TapPay 銀行對帳查詢權限，可設定本機環境變數 `TAPPAY_PARTNER_KEY`，用 `--fetch` 取代 `--snapshot`。驗證使用本機替身與合成金流。報表中的金額是金流端回報的銀行處理結果，實際撥入帳戶的款項可用 `bank_close.py` 核對。原有 `restaurant_close.py` 報表仍可用來查看按付款發起日期歸組的最新交易狀態。[跨日退款與分頁測試](test_bank_activity.py)
+
 ## 禾日食堂的電子支付日結
 
 若客人第一次付款顯示失敗、重試後成功，店員可以用這個指令確認金流端到底收了幾筆。指令以唯讀方式開啟禾日食堂的 SQLite 備份，逐次比對付款參考號、金流交易號、支付工具、原始金額與狀態。支援 LINE Pay、全支付、街口支付、悠遊付、Pi 拍錢包、全盈+PAY 及信用卡。另支援下方的通用電商 CSV 月結。
