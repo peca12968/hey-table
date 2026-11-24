@@ -15,7 +15,7 @@ jobs:
           python-version: '3.12'
       - uses: actions/checkout@v7
         with:
-          repository: peca12968/stockroom-reservations
+          repository: peca12968/hey-table
           ref: 34165f1adceb2baceaa53997b7a79a86656e959b
           path: stockroom-src
           persist-credentials: false

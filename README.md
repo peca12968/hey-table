@@ -7,7 +7,7 @@
 使用 Python 3.12 虛擬環境，在此專案目錄執行下列命令。工具預設從相鄰的 Stockroom 目錄載入服務，其他位置可用 `STOCKROOM_SOURCE` 指定。
 
 ```sh
-git clone https://github.com/peca12968/stockroom-reservations ../stockroom-reservations
+git clone https://github.com/peca12968/hey-table ../stockroom-reservations
 git -C ../stockroom-reservations checkout 34165f1adceb2baceaa53997b7a79a86656e959b
 python -m pip install -r ../stockroom-reservations/requirements-dev.txt
 python check.py --seed 1 --runs 24 --steps 48
@@ -16,7 +16,7 @@ python -m unittest -v
 
 這 24 組合成操作共 1,152 步，包含 49 次建立續期收據、10 次重送取得收據、31 次續期衝突，以及 107 次服務重啟。公開的驗證流程在 Windows 和 Ubuntu 上重跑同一組種子。[跨平台 CI](.github/workflows/check.yml)
 
-每步交替由一個實例送出操作，再從另一個實例查詢庫存與所有已建立的保留單。時鐘可由案例推進到到期邊界，重啟會重建兩個應用實例並重新開啟同一個資料庫。這組測試涵蓋有明確先後順序的跨實例操作。真正同時爭用寫入鎖的情境另見 [Stockroom 的並行測試](https://github.com/peca12968/stockroom-reservations/blob/34165f1adceb2baceaa53997b7a79a86656e959b/tests/test_api.py)。
+每步交替由一個實例送出操作，再從另一個實例查詢庫存與所有已建立的保留單。時鐘可由案例推進到到期邊界，重啟會重建兩個應用實例並重新開啟同一個資料庫。這組測試涵蓋有明確先後順序的跨實例操作。真正同時爭用寫入鎖的情境另見 [Stockroom 的並行測試](https://github.com/peca12968/hey-table/blob/34165f1adceb2baceaa53997b7a79a86656e959b/tests/test_api.py)。
 
 ## 把八步故障縮成三步
 
