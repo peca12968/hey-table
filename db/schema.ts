@@ -61,6 +61,14 @@ export const pickupSlotLimits = sqliteTable("pickup_slot_limits", {
   check("pickup_slot_limit_capacity",sql`${t.capacity} IS NULL OR ${t.capacity} >= 0`),
   check("pickup_slot_limit_revision",sql`${t.revision} > 0`),
 ]);
+export const pickupDayIntake = sqliteTable("pickup_day_intake", {
+  date: text("date").primaryKey().notNull(),
+  accepting: integer("accepting", {mode:"boolean"}).notNull(),
+  revision: integer("revision").notNull(),
+}, t => [
+  check("pickup_day_accepting",sql`${t.accepting} IN (0,1)`),
+  check("pickup_day_revision",sql`${t.revision} > 0`),
+]);
 export const kitchenTiming = sqliteTable("kitchen_timing", {
   revision: integer("revision").primaryKey(),
   config: text("config").notNull(),

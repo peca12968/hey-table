@@ -32,6 +32,7 @@ export default function Menu(){
   const [repeat,setRepeat]=useState("");
   const [pickupSlot,setPickupSlot]=useState(null),[slotRevision,setSlotRevision]=useState(0);
   const [pickupDate,setPickupDate]=useState("");
+  const [pickupPaused,setPickupPaused]=useState(false);
   const today=usePickupToday();
   const bookingDay=pickupDate===today?"":pickupDate;
   const refreshMenu=useCallback(async()=>{
@@ -46,6 +47,7 @@ export default function Menu(){
       setPayments(data.payments??{methods:["cash"]});
       setIntake(data.accepting??{});
       setTableIntake(data.acceptingTables??{});
+      setPickupPaused(data.pickupPaused===true);
       setLoaded(true);
     }catch{
       if(!controller.signal.aborted)setLoaded(false);
@@ -114,6 +116,7 @@ export default function Menu(){
   const maxFor=id=>Math.min(20,remaining[id]??20);
   const limitBlocked=lines.some(({id})=>cart[id]>(remaining[id]??20));
   const needsPickupSlot=!!bookingDay&&pickupSlot===null;
+  const bookingPaused=pickupPaused&&(!!bookingDay||pickupSlot!==null);
   const blocked=limitBlocked||lines.some(({id})=>sold.includes(id));
   const cannotAdd=id=>sold.includes(id)||(cart[id]||0)>=maxFor(id);
   function change(id,delta){
@@ -147,10 +150,10 @@ export default function Menu(){
     return true;
   }
   function selectPickupDate(day){
-    setPickupDate(day);setPickupSlot(null);setError("");setRemaining({});setLoaded(false);
+    setPickupDate(day);setPickupSlot(null);setError("");setRemaining({});setPickupPaused(false);setLoaded(false);
   }
   async function submit(){
-    if(sending.current||invalid||!scope||!count||(!draft&&(paused||blocked||needsPickupSlot||!loaded)))return;
+    if(sending.current||invalid||!scope||!count||(!draft&&(paused||blocked||needsPickupSlot||bookingPaused||!loaded)))return;
     sending.current=true;setBusy(true);setError("");
     const payload=draft??{token:crypto.randomUUID(),...(method==='cash'?{}:{paymentMethod:method}),mode,table,note,
       items:withItemNotes(items,lineNotes),...(applied?{comboVersion,expectedTotal:total}:{}),...(pickupSlot!==null?{pickupSlot}:{})};
@@ -164,7 +167,7 @@ export default function Menu(){
         if(e.code==="intake_paused")setIntake(current=>({...current,[mode]:false}));
         else if(e.code==="table_paused")setTableIntake(current=>({...current,[table]:false}));
         else setError(e.message);
-        if(["pickup_slot_closed","pickup_slot_full"].includes(e.code))setSlotRevision(value=>value+1);
+        if(["pickup_slot_closed","pickup_slot_full","pickup_day_paused"].includes(e.code))setSlotRevision(value=>value+1);
         refreshMenu();
       }
       sending.current=false;setBusy(false);
@@ -180,7 +183,7 @@ export default function Menu(){
     {invalid&&<p className="error" role="alert">桌號無效，請重新掃描桌牌。也可<a href="/">改為線上自取</a>。</p>}
     {paused&&!invalid&&<p className="error" role="status">{intakeNotice(mode,intake[mode]===false?null:pausedTable)}</p>}
     <div className="columns"><section><div className="menuTitle"><div><p className="eyebrow">OUR MENU</p><h2>點餐菜單</h2></div><Mode table={table}/></div>
-    {scope&&mode==="pickup"&&<PickupDate value={pickupDate} disabled={busy||!!draft} onChange={selectPickupDate}/>}
+    {scope&&mode==="pickup"&&<PickupDate value={pickupDate} disabled={busy||!!draft} paused={pickupPaused} onChange={selectPickupDate}/>}
     <nav className="tabs" aria-label="餐點分類">{groups.map(g=><button key={g} aria-pressed={group===g} onClick={()=>setGroup(g)}>{g}</button>)}</nav>
     <div className="grid">{dishes.filter(d=>group==="全部"||d.group===group).map(d=><article className="dish" key={d.id}><img src={"/food/"+d.id+".webp"} alt={d.name} loading="lazy"/><div className="dishInfo"><small>{d.group}</small><h3>{d.name}</h3><p>{d.description}</p>
       {!sold.includes(d.id)&&remaining[d.id]>0&&<p className="muted">{supplyLabel}剩餘 {remaining[d.id]} 份</p>}
@@ -208,7 +211,7 @@ export default function Menu(){
     {limitBlocked&&!draft&&!error&&<p className="error" role="status">部分餐點已超過{supplyLabel}剩餘份數，請調整餐單。</p>}
     {count>0&&loaded&&!invalid&&!blocked&&!paused&&!draft&&!busy&&!bookingDay&&pickupSlot===null&&<CartQuote key={quoteBody} body={quoteBody}/>}
     {error&&<p className="error" role="alert">{error}</p>}{draft&&!busy&&lookup&&<p role="status">{lookup}</p>}{scope&&!loaded&&<p role="status">正在確認餐點供應狀態…</p>}
-    <button className="primary full" disabled={busy||!count||invalid||(!draft&&(paused||blocked||needsPickupSlot||!loaded||!payments.methods.includes(method)))} onClick={submit}><Check size={17}/>{busy?"送單中…":draft?"重試同一張訂單":paused?"暫停接單":"確認送出訂單"}</button></aside></div>
+    <button className="primary full" disabled={busy||!count||invalid||(!draft&&(paused||blocked||needsPickupSlot||bookingPaused||!loaded||!payments.methods.includes(method)))} onClick={submit}><Check size={17}/>{busy?"送單中…":draft?"重試同一張訂單":paused?"暫停接單":"確認送出訂單"}</button></aside></div>
     <span className="sr" aria-live="polite">{announcement}</span></main><Footer/>
     <button className="mobileCart" onClick={()=>setPanel(true)}><ShoppingBag size={18}/> 我的餐單 · {count} 件 <b>NT$ {total}</b></button></>;
 }

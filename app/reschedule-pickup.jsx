@@ -21,7 +21,7 @@ export default function ReschedulePickup({order,canReschedule=order.canReschedul
     if(!opened)return;
     const controller=new AbortController();
     request("/api/pickup-slots"+(day?"?date="+day:""),{signal:controller.signal}).then(result=>{
-      if(!controller.signal.aborted){setSlots({day,entries:result.slots});setListError(false);}
+      if(!controller.signal.aborted){setSlots({day,entries:result.slots,paused:result.paused});setListError(false);}
     }).catch(()=>{if(!controller.signal.aborted){setSlots(null);setListError(true);}});
     return ()=>controller.abort();
   },[opened,day,reload]);
@@ -53,8 +53,8 @@ export default function ReschedulePickup({order,canReschedule=order.canReschedul
   }
   if(!opened)return canReschedule?<button className="outline pickupSlotsButton" disabled={disabled} onClick={showChoices}>更改取餐時段</button>:null;
 
-  const current=slots?.day===day?slots.entries:null;
-  const alternatives=(current??[]).filter(slot=>slot.start!==review.from&&slot.remaining>=count);
+  const current=slots?.day===day?slots:null;
+  const alternatives=(current?.entries??[]).filter(slot=>slot.start!==review.from&&slot.remaining>=count);
   return <form className="pickupSlots pickupReschedule" aria-label="更改取餐時段" onSubmit={confirm}>
     {validReview?<>
       <PickupDate label="新的取餐日期" value={day} disabled={locked||review.uncertain} onChange={value=>{
@@ -68,7 +68,8 @@ export default function ReschedulePickup({order,canReschedule=order.canReschedul
         {alternatives.map(slot=><option key={slot.start} value={slot.start}>{pickupWindow(slot.start)} · 剩 {slot.remaining} 份</option>)}
       </select></label>
       {!busy&&!review.uncertain&&<p className="muted">改期確認後，才會釋放原預約。</p>}
-      {current&&alternatives.length===0&&!review.uncertain&&<p role="status">目前沒有可容納這張餐單的其他時段。</p>}
+      {current&&alternatives.length===0&&!review.uncertain&&<p role="status">{current.paused?
+        "這個日期已暫停時段預約。":"目前沒有可容納這張餐單的其他時段。"}</p>}
       {!current&&!listError&&<p role="status">正在讀取可選時段…</p>}
       {listError&&<p role="status">暫時無法讀取時段。</p>}
     </>:<p role="status">餐單已更新，請核對最新預約時段。</p>}

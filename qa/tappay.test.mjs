@@ -490,6 +490,76 @@ test("D1 reserves supply by pickup day and moves that supply atomically across d
   assert.match(await calendar.text(),/DTSTART:20261127T040000Z/);
 });
 
+test("D1 serializes date pauses with bookings and retains existing orders and slot presets",async t=>{
+  const host=await pickupWorkerOrigin(t);
+  const staff={Authorization:"Bearer fixture-staff"};
+  const call=(path,headers={})=>fetch(host+path,{headers});
+  const write=(path,body,headers={},method="POST")=>fetch(host+path,{method,
+    headers:{"Content-Type":"application/json",...headers},body:JSON.stringify(body)});
+  const date="2026-11-26",today="2026-11-25",other="2026-11-27";
+  const start=Date.parse(date+"T12:00:00+08:00"),next=start+900_000;
+  const setter="/api/kitchen/pickup-day",limits="/api/kitchen/pickup-slots";
+  const setDay=(accepting,revision,day=date,headers=staff)=>write(setter,{date:day,accepting,revision},headers,"PATCH");
+  const snapshot=async(day=date)=>(await (await call(limits+"?date="+day,staff)).json());
+  const menu=async(day)=>(await (await call("/api/menu?date="+day)).json());
+  const slots=async(day)=>(await (await call("/api/pickup-slots?date="+day)).json());
+  const booking=(pickupSlot,fields={})=>({token:crypto.randomUUID(),mode:"pickup",pickupSlot,note:"",
+    items:[{id:"sencha",qty:2}],expectedTotal:90,...fields});
+  const guestOrder=order=>write("/api/orders",order);
+  const staffOrder=order=>write("/api/kitchen/create-pickup",order,staff);
+  assert.deepEqual((await snapshot()).intake,{accepting:true,revision:0,editable:true});
+  assert.equal((await setDay(false,0,date,{})).status,403);
+  assert.equal((await setDay(false,0,"2026-11-24")).status,409);
+  assert.equal((await setDay("false",0)).status,400);
+  assert.equal((await write(limits,{date,start,capacity:5,revision:0},staff,"PATCH")).status,200);
+  const original=booking(start,{paymentMethod:"line_pay"});
+  const saved=await guestOrder(original);
+  assert.equal(saved.status,200);
+  const originalId=(await saved.json()).id;
+  const originalTicket={"X-Ticket":original.token};
+
+  const concurrentBooking=booking(next);
+  const [closed,racing]=await Promise.all([setDay(false,0),staffOrder(concurrentBooking)]);
+  assert.equal(closed.status,200);
+  assert.ok([200,409].includes(racing.status));
+  if(!racing.ok)assert.equal((await racing.json()).code,"pickup_day_paused");
+  assert.deepEqual(await slots(date),{slots:[],paused:true});
+  assert.equal((await menu(date)).pickupPaused,true);
+  assert.equal((await staffOrder(concurrentBooking)).status,racing.status);
+  assert.equal((await (await staffOrder(booking(start))).json()).code,"pickup_day_paused");
+  assert.equal((await (await guestOrder(booking(next))).json()).code,"pickup_day_paused");
+  assert.equal((await guestOrder(original)).status,200);
+  const closedDashboard=await snapshot();
+  assert.deepEqual(closedDashboard.intake,{accepting:false,revision:1,editable:true});
+  assert.deepEqual(closedDashboard.slots.find(slot=>slot.start===start),
+    {start,end:next,capacity:5,used:2,remaining:0,revision:1,editable:true});
+  assert.equal((await slots(other)).slots.length,36);
+
+  const {attempt}=await (await write("/api/payments/start",{},originalTicket)).json();
+  assert.equal((await write("/api/payments/demo",{ref:attempt.ref,outcome:"paid"},originalTicket)).status,200);
+  assert.equal((await call("/api/ticket/calendar",originalTicket)).status,200);
+  const incoming=booking(Date.parse(other+"T12:00:00+08:00"));
+  const incomingReceipt=await (await guestOrder(incoming)).json();
+  const fromAnotherDay=await write("/api/kitchen/pickup-reschedule",
+    {id:incomingReceipt.id,from:incoming.pickupSlot,to:start,revision:0},staff,"PATCH");
+  assert.equal(fromAnotherDay.status,409);
+  assert.equal((await fromAnotherDay.json()).code,"pickup_day_paused");
+  const {pickupSlot}=await (await call("/api/ticket",{"X-Ticket":incoming.token})).json();
+  assert.equal(pickupSlot,incoming.pickupSlot);
+  const prep=await (await call("/api/kitchen/prep?date="+date,staff)).json();
+  assert.ok(prep.orders.some(order=>order.id===originalId));
+
+  const reopen=await Promise.all([setDay(true,1),setDay(true,1)]);
+  assert.deepEqual(reopen.map(response=>response.status).sort(),[200,409]);
+  const reopened=await snapshot();
+  assert.deepEqual(reopened.intake,{accepting:true,revision:2,editable:true});
+  assert.equal(reopened.slots.find(slot=>slot.start===start).remaining,3);
+  assert.equal((await slots(date)).slots.find(slot=>slot.start===start).remaining,3);
+  assert.equal((await setDay(false,0,today)).status,200);
+  assert.equal((await guestOrder(booking(null))).status,200);
+  assert.equal((await staffOrder(booking(null))).status,200);
+});
+
 test("pickup slots reserve portions atomically, release expired payments and gate kitchen preparation",async t=>{
   const db=database();
   t.after(()=>db.sqlite.close());

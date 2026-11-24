@@ -21,7 +21,7 @@ export function usePickupToday(){
   return useSyncExternalStore(listenForDayChange,getToday,serverToday);
 }
 
-export function PickupDate({value,disabled,onChange,label="取餐日期"}){
+export function PickupDate({value,disabled,onChange,label="取餐日期",paused=false}){
   const id=useId();
   const today=usePickupToday();
   const future=today?pickupBookingDays(businessDayRange(today)[0]).slice(1):[];
@@ -32,6 +32,8 @@ export function PickupDate({value,disabled,onChange,label="取餐日期"}){
       {value&&value!==today&&!future.includes(value)&&<option value={value}>{value}（已過期）</option>}
       {future.map(day=><option key={day} value={day}>{day}</option>)}
     </select>
+    {paused&&<p className="muted" role="status">{!value||value===today?
+      "今天已暫停時段預約，仍可選擇盡快自取。":"這個日期已暫停預約，請改選日期。"}</p>}
   </div>;
 }
 
@@ -44,8 +46,8 @@ export default function PickupSlots({selected,count,disabled,onChange,revision,d
   useEffect(()=>{
     if(!opened)return;
     const controller=new AbortController();
-    request("/api/pickup-slots"+(day?"?date="+day:""),{signal:controller.signal}).then(({slots})=>{
-      if(!controller.signal.aborted){setSnapshot({day,slots});setError("");}
+    request("/api/pickup-slots"+(day?"?date="+day:""),{signal:controller.signal}).then(({slots,paused})=>{
+      if(!controller.signal.aborted){setSnapshot({day,slots,paused});setError("");}
     }).catch(()=>{
       if(!controller.signal.aborted){setSnapshot(null);setError("暫時無法讀取自取時段。");}
     });
@@ -73,8 +75,9 @@ export default function PickupSlots({selected,count,disabled,onChange,revision,d
     </select></label>
     {disabled?null:<>
       <p className="muted">台灣時間，至少提前 30 分鐘。</p>
-      {needsChoice&&<p role="status">請重新選擇可容納這張餐單的時段。</p>}
-      {!needsChoice&&current&&!available&&<p role="status">目前沒有可容納這張餐單的預約時段。</p>}
+      {current?.paused&&<p role="status">這個日期已暫停時段預約。</p>}
+      {!current?.paused&&needsChoice&&<p role="status">請重新選擇可容納這張餐單的時段。</p>}
+      {!needsChoice&&current&&!available&&!current.paused&&<p role="status">目前沒有可容納這張餐單的預約時段。</p>}
       {error?<p role="status">{error} <button className="outline" type="button" onClick={()=>setReload(value=>value+1)}>重讀時段</button></p>:
         !current&&<p role="status">正在讀取時段…</p>}
     </>}

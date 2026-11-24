@@ -62,12 +62,13 @@ export default function CreatePickup(){
   const total=lines.reduce((amount,dish)=>amount+dish.price*Number(quantities[dish.id]),0);
   const exceedsSupply=menu&&lines.some(dish=>Number(quantities[dish.id])>availableQuantity(menu,dish.id));
   const needsPickupSlot=!!bookingDay&&pickupSlot===null;
+  const bookingPaused=menu?.pickupPaused&&(!!bookingDay||pickupSlot!==null);
   const locked=busy||Boolean(attempt);
   const receiptLink=result?"/ticket#"+result.token:"";
 
   async function submit(event){
     event.preventDefault();
-    if(busy||!menu||(!attempt&&(!lines.length||exceedsSupply||needsPickupSlot)))return;
+    if(busy||!menu||(!attempt&&(!lines.length||exceedsSupply||needsPickupSlot||bookingPaused)))return;
     setError("");
     const payload=attempt??{token:crypto.randomUUID(),note:note.trim(),expectedTotal:total,
       items:withItemNotes(lines.map(dish=>({id:dish.id,qty:Number(quantities[dish.id])})),lineNotes),
@@ -124,7 +125,7 @@ export default function CreatePickup(){
       </div>
       {message&&<p role="status">{message}</p>}
     </section>}
-    {draft&&!result&&!denied&&<PickupDate value={pickupDate} disabled={locked} onChange={day=>{
+    {draft&&!result&&!denied&&<PickupDate value={pickupDate} disabled={locked} paused={menu?.pickupPaused} onChange={day=>{
       setError("");setMenuError("");setDraft({...draft,pickupDate:day,pickupSlot:null});
     }}/>}
     {menu&&draft&&!result&&<form className="sheet pickupForm" onSubmit={submit}>
@@ -151,7 +152,7 @@ export default function CreatePickup(){
       {error&&<p className="error" role="alert">{error}</p>}
       {attempt&&!busy&&!error&&<p role="status">這張餐單的送單結果尚待確認。</p>}
       {exceedsSupply&&!attempt&&<p className="error" role="status">部分餐點已超過可供應份數，請調整餐單。</p>}
-      <button className="primary full" disabled={busy||(!attempt&&(!lines.length||exceedsSupply||needsPickupSlot))}>
+      <button className="primary full" disabled={busy||(!attempt&&(!lines.length||exceedsSupply||needsPickupSlot||bookingPaused))}>
         {busy?"送單中…":attempt?"重試同一張自取單":"確認建立自取單"}
       </button>
     </form>}

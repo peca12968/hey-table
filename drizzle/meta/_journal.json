@@ -134,6 +134,13 @@
       "when": 1795560948466,
       "tag": "0018_pickup_supply_dates",
       "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "6",
+      "when": 1795561948521,
+      "tag": "0019_pickup_day_intake",
+      "breakpoints": true
     }
   ]
 }

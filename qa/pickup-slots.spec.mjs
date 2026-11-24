@@ -279,6 +279,61 @@ test("mobile staff refresh a stale slot limit, close it and restore the default"
   expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBe(360);
 });
 
+test("mobile staff pause and reopen a date without displacing orders or erasing a slot limit",async({page,request})=>{
+  page.setDefaultTimeout(9000);
+  const day=businessDate(Date.now()+3*86_400_000),start=Date.parse(day+"T12:00:00+08:00");
+  const headers={Authorization:"Bearer local-test-kitchen"};
+  const settings="/api/kitchen/pickup-day",limits="/api/kitchen/pickup-slots";
+  const inspect=async()=>(await (await request.get(limits+"?date="+day,{headers})).json());
+  const token=randomUUID();
+  const setDay=(accepting,revision)=>request.patch(settings,{headers,data:{date:day,accepting,revision}});
+  const setLimit=(capacity,revision)=>request.patch(limits,{headers,data:{date:day,start,capacity,revision}});
+  await page.setViewportSize({width:360,height:780});
+  await page.addInitScript(()=>sessionStorage.setItem("he-ri-staff","local-test-kitchen"));
+  const setup=await inspect(),preset=setup.slots.find(slot=>slot.start===start);
+  const openSettings=async()=>{
+    await page.goto("/kitchen/pickup-slots");
+    await page.getByLabel("取餐日期").fill(day);
+  };
+  try{
+    expect((await setLimit(5,preset.revision)).status()).toBe(200);
+    const ordered=await request.post("/api/orders",{data:{token,mode:"pickup",pickupSlot:start,note:"",items:[{id:"sencha",qty:1}]}});
+    expect(ordered.status()).toBe(200);
+    await openSettings();
+    const dayPanel=page.getByRole("region",{name:"整日預約"});
+    const pause=dayPanel.getByRole("button",{name:"暫停整日預約"});
+    const slot=page.getByRole("article",{name:"12:00～12:15",exact:true});
+    await expect(slot.getByText("已占用 1 份 · 剩餘 4 份")).toBeVisible();
+    expect((await setDay(true,setup.intake.revision)).status()).toBe(200);
+    await pause.click();
+    await expect(page.getByRole("alert")).toHaveText("整日預約狀態已由其他店員更新，請重新載入。");
+    await pause.click();
+    await expect(dayPanel.getByRole("button",{name:"恢復整日預約"})).toBeVisible();
+    await expect(slot.getByText("已占用 1 份 · 剩餘 0 份")).toBeVisible();
+    await expect(slot.getByLabel("份數上限")).toHaveValue("5");
+    expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBe(360);
+
+    await page.goto("/");
+    await page.getByRole("combobox",{name:"取餐日期",exact:true}).selectOption(day);
+    await expect(page.getByText("這個日期已暫停預約，請改選日期。")).toBeVisible();
+    await page.getByRole("button",{name:"加入日式熱煎茶"}).click();
+    await page.getByRole("button",{name:/我的餐單/}).click();
+    await expect(page.getByText("這個日期已暫停時段預約。")).toBeVisible();
+    await expect(page.getByRole("button",{name:"確認送出訂單"})).toBeDisabled();
+    await openSettings();
+    await dayPanel.getByRole("button",{name:"恢復整日預約"}).click();
+    await expect(slot.getByText("已占用 1 份 · 剩餘 4 份")).toBeVisible();
+    const response=await request.get("/api/ticket",{headers:{"X-Ticket":token}});
+    expect(await response.json()).toMatchObject({pickupSlot:start,status:"pending"});
+  }finally{
+    await request.post("/api/ticket/cancel",{headers:{"X-Ticket":token},data:{}});
+    const current=await inspect();
+    if(current.intake.accepting!==setup.intake.accepting)await setDay(setup.intake.accepting,current.intake.revision);
+    const currentSlot=current.slots.find(slot=>slot.start===start);
+    if(currentSlot.capacity!==preset.capacity)await setLimit(preset.capacity,currentSlot.revision);
+  }
+});
+
 test("a mobile pickup receipt downloads the current calendar file and its cancellation",async({page})=>{
   const token=randomUUID(),start=Date.parse("2026-11-25T12:00:00+08:00"),created=start-3_600_000;
   const order={id:233,mode:"pickup",table:null,pickupSlot:start,pickupChanges:[],canReschedulePickup:true,

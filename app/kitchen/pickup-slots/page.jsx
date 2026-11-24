@@ -49,13 +49,13 @@ export default function PickupSlotLimits(){
   function refresh(){
     setNotice("");setSaveError("");setLoadError("");setRevision(value=>value+1);
   }
-  async function save(slot,capacity){
-    if(busy||!current)return;
+  async function save(path,input,message){
+    if(busy)return;
     setBusy(true);setNotice("");setSaveError("");
     try{
-      await request(endpoint,{method:"PATCH",headers:{"Content-Type":"application/json",...staffHeaders()},
-        body:JSON.stringify({date:current.date,start:slot.start,capacity,revision:slot.revision})});
-      setNotice(pickupWindow(slot.start)+" 的份數上限已儲存。");
+      await request(path,{method:"PATCH",headers:{"Content-Type":"application/json",...staffHeaders()},
+        body:JSON.stringify(input)});
+      setNotice(message);
     }catch(error){setSaveError(error.message);}
     finally{setRevision(value=>value+1);}
   }
@@ -73,9 +73,22 @@ export default function PickupSlotLimits(){
     {notice&&<p role="status">{notice}</p>}
     {(loadError||saveError)&&<p className="error" role="alert">{loadError||saveError}</p>}
     {!current&&!loadError&&date!==""&&<p role="status">正在讀取時段…</p>}
+    {current&&<section className="sheet pickupDayIntake" aria-label="整日預約">
+      <div>
+        <h2>整日預約</h2>
+        <p>{current.intake.accepting?"依各時段上限受理預約。":"已暫停這天的新預約與改入。既有預約及各時段上限已保留。"}</p>
+      </div>
+      {current.intake.editable&&<button className="outline" disabled={busy} onClick={()=>{
+        const accepting=!current.intake.accepting;
+        save("/api/kitchen/pickup-day",{date:current.date,accepting,revision:current.intake.revision},
+          current.date+(accepting?" 已恢復預約。":" 已暫停整日預約。"));
+      }}>{current.intake.accepting?"暫停整日預約":"恢復整日預約"}</button>}
+    </section>}
     {current&&rows.length===0&&<p role="status">這天目前沒有可調整的時段。</p>}
     {current&&rows.length>0&&<div className="pickupLimitGrid">
-      {rows.map(slot=><SlotLimit key={slot.start+":"+slot.revision} slot={slot} defaultCapacity={current.defaultCapacity} busy={busy} onSave={save}/>)}
+      {rows.map(slot=><SlotLimit key={slot.start+":"+slot.revision} slot={slot} defaultCapacity={current.defaultCapacity} busy={busy}
+        onSave={(slot,capacity)=>save(endpoint,{date:current.date,start:slot.start,capacity,revision:slot.revision},
+          pickupWindow(slot.start)+" 的份數上限已儲存。")}/>)}
     </div>}
   </main><Footer/></>;
 }
