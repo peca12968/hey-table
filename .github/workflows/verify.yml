@@ -1,0 +1,29 @@
+name: Verify dish costs and receipt credits
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  cost:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - run: python -m unittest -v
+      - uses: actions/checkout@v7
+        with:
+          repository: peca12968/prep-sheet
+          ref: 00e56da3bf47a32819652a69bdcc9862fa6f56e7
+          path: prep-sheet
+          persist-credentials: false
+      - uses: actions/checkout@v7
+        with:
+          repository: peca12968/receipt-returns
+          ref: 30c97e932f2a8b60144d583295e1983f9f2c086d
+          path: receipt-returns
+          persist-credentials: false
+      - run: python demo.py prep-sheet receipt-returns
