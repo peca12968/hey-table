@@ -1,16 +1,17 @@
 import {useEffect,useRef,useState} from "react";
-import {pickupWindow} from "../../lib/pickup-slots.mjs";
-import {request} from "../shared";
+import {pickupWindow} from "../lib/pickup-slots.mjs";
+import {request} from "./shared";
 
-export default function ReschedulePickup({order,token,onChange}){
+export default function ReschedulePickup({order,canReschedule=order.canReschedulePickup,disabled=false,submit,onChange}){
   const [review,setReview]=useState(null),[slots,setSlots]=useState(null),[reload,setReload]=useState(0);
   const [busy,setBusy]=useState(false),[failure,setFailure]=useState(""),[listError,setListError]=useState(false);
   const inFlight=useRef(false);
-  const changes=order.pickupChanges??[];
-  const latest=changes.at(-1);
-  const confirmed=review?.uncertain&&changes.length===review.revision+1&&latest?.from===review.from&&latest.to===review.to;
+  const revision=order.pickupRevision??order.pickupChanges?.length??0;
+  const latest=order.latestPickupChange??order.pickupChanges?.at(-1);
+  const locked=busy||disabled;
+  const confirmed=review?.uncertain&&revision===review.revision+1&&latest?.from===review.from&&latest.to===review.to;
   const opened=!!review&&!confirmed;
-  const validReview=opened&&order.canReschedulePickup&&review.from===order.pickupSlot&&review.revision===changes.length;
+  const validReview=opened&&canReschedule&&review.from===order.pickupSlot&&review.revision===revision;
   const count=order.items.reduce((sum,item)=>sum+item.qty,0);
 
   useEffect(()=>{
@@ -24,16 +25,15 @@ export default function ReschedulePickup({order,token,onChange}){
 
   function showChoices(){
     setFailure("");setListError(false);setSlots(null);setReload(value=>value+1);
-    setReview({from:order.pickupSlot,to:null,revision:changes.length,uncertain:false});
+    setReview({from:order.pickupSlot,to:null,revision,uncertain:false});
   }
   async function confirm(event){
     event.preventDefault();
-    if(inFlight.current||!validReview||review.to===null)return;
+    if(inFlight.current||disabled||!validReview||review.to===null)return;
     inFlight.current=true;setBusy(true);setFailure("");
     const {from,to,revision}=review;
     try{
-      await request("/api/ticket/reschedule",{method:"POST",headers:{"Content-Type":"application/json","X-Ticket":token},
-        body:JSON.stringify({from,to,revision}),signal:AbortSignal.timeout(15_000)});
+      await submit({from,to,revision},AbortSignal.timeout(15_000));
       setReview(null);
     }catch(error){
       if(error.status===409||error.status===400){
@@ -46,12 +46,12 @@ export default function ReschedulePickup({order,token,onChange}){
       }
     }finally{inFlight.current=false;setBusy(false);onChange();}
   }
-  if(!opened)return order.canReschedulePickup?<button className="outline pickupSlotsButton" onClick={showChoices}>更改取餐時段</button>:null;
+  if(!opened)return canReschedule?<button className="outline pickupSlotsButton" disabled={disabled} onClick={showChoices}>更改取餐時段</button>:null;
 
   const alternatives=(slots??[]).filter(slot=>slot.start!==review.from&&slot.remaining>=count);
   return <form className="pickupSlots pickupReschedule" aria-label="更改取餐時段" onSubmit={confirm}>
     {validReview?<>
-      <label>新的取餐時段<select value={review.to??""} disabled={busy||review.uncertain} onChange={event=>{
+      <label>新的取餐時段<select value={review.to??""} disabled={locked||review.uncertain} onChange={event=>{
         setFailure("");setReview({...review,to:event.target.value===""?null:Number(event.target.value)});
       }}>
         <option value="">選擇時段</option>
@@ -65,10 +65,10 @@ export default function ReschedulePickup({order,token,onChange}){
     </>:<p role="status">餐單已更新，請核對最新預約時段。</p>}
     {failure&&<p className="error" role="alert">{failure}</p>}
     <div className="actions">
-      {validReview&&<button className="primary" disabled={busy||review.to===null}>{busy?"改期確認中…":review.uncertain?"重試同一次改期":"確認改期"}</button>}
-      {validReview&&listError&&<button type="button" className="outline" disabled={busy} onClick={()=>setReload(value=>value+1)}>重讀時段</button>}
-      {!validReview&&order.canReschedulePickup&&<button type="button" className="outline" disabled={busy} onClick={showChoices}>重新選擇時段</button>}
-      <button type="button" className="outline" disabled={busy} onClick={()=>setReview(null)}>關閉改期</button>
+      {validReview&&<button className="primary" disabled={locked||review.to===null}>{busy?"改期確認中…":review.uncertain?"重試同一次改期":"確認改期"}</button>}
+      {validReview&&listError&&<button type="button" className="outline" disabled={locked} onClick={()=>setReload(value=>value+1)}>重讀時段</button>}
+      {!validReview&&canReschedule&&<button type="button" className="outline" disabled={locked} onClick={showChoices}>重新選擇時段</button>}
+      <button type="button" className="outline" disabled={locked} onClick={()=>setReview(null)}>關閉改期</button>
     </div>
   </form>;
 }

@@ -2,8 +2,9 @@
 import {useEffect,useState} from "react";
 import {RefreshCw} from "lucide-react";
 import {Header,Footer,Mode,PickupAppointment,request} from "../shared";
-import {pickupPrepLead,pickupTime} from "../../lib/pickup-slots.mjs";
+import {pickupPrepLead,pickupTime,pickupWindow} from "../../lib/pickup-slots.mjs";
 import {ItemNote} from "../item-notes";
+import ReschedulePickup from "../reschedule-pickup";
 import {dishes,labels,numberOf,tables,transitions} from "../../lib/menu.mjs";
 import {downloadJson} from "../../lib/download-json.mjs";
 import Timing from "./timing";
@@ -62,15 +63,17 @@ function TableHandoff({table,orders,busy,update}){
   </section>;
 }
 
-function KitchenTicket({order,busy,update,showOverdue=false,handoffOnly=false}){
+function KitchenTicket({order,busy,update,movePickup,refresh,showOverdue=false,handoffOnly=false}){
   const {id,status,table,created,items,note,paymentMethod,paymentEnv,paymentState,total}=order;
   const actions=handoffOnly ? transitions[status].filter(next=>next==="completed") : transitions[status];
   const workingByStation=order.stationProgress&&status==="preparing";
   const tableRevision=order.tableRevision??0;
+  const latestPickup=order.latestPickupChange;
   return <article className="sheet kitchenTicket">
     <div className="menuTitle"><h2>#{numberOf(id)}</h2><Mode table={table} source={order.source}/></div>
     <p aria-live={handoffOnly?"polite":undefined}><b>{labels[status]}</b> · {new Date(created).toLocaleTimeString("zh-TW",{hour:"2-digit",minute:"2-digit",timeZone:"Asia/Taipei"})}</p>
     <PickupAppointment start={order.pickupSlot}/>
+    {latestPickup&&<p className="muted" role="status">{latestPickup.actor==="staff"?"店員":"顧客"}已將取餐時段從 {pickupWindow(latestPickup.from)} 改到 {pickupWindow(latestPickup.to)}。</p>}
     {order.pickupUpcoming&&<p className="muted">{pickupTime(order.pickupSlot-pickupPrepLead)} 後可接單製作。</p>}
     {showOverdue&&order.overdue&&<p className="kitchenOverdue">逾時 · {overdueStage[status]} {Math.floor(order.overdue.elapsedMs/60_000)} 分鐘</p>}
     <ul className="orderLines">{items.map(dish=><li key={dish.id}><div>{dish.name}<ItemNote note={dish.note}/></div><b>×{dish.qty}</b></li>)}</ul>
@@ -89,6 +92,8 @@ function KitchenTicket({order,busy,update,showOverdue=false,handoffOnly=false}){
     </div>
     {table&&["pending","preparing","ready"].includes(status)&&<TableMove
       key={table+":"+tableRevision} id={id} table={table} revision={tableRevision} busy={busy} update={update}/>}
+    {!handoffOnly&&order.pickupSlot!=null&&<ReschedulePickup order={order} canReschedule={Boolean(order.pickupUpcoming)} disabled={busy}
+      submit={(change,signal)=>movePickup(id,change,signal)} onChange={refresh}/>}
   </article>;
 }
 
@@ -162,6 +167,10 @@ export default function Kitchen(){
       return false;
     }finally{setBusy(false);}
   }
+  function movePickup(id,change,signal){
+    return request("/api/kitchen/pickup-reschedule",{method:"PATCH",headers:{"Content-Type":"application/json",
+      ...(key?{Authorization:"Bearer "+key}:{})},body:JSON.stringify({id,...change}),signal});
+  }
   async function exportStations(){
     setExporting(true);setExportMessage("");
     try{
@@ -231,7 +240,8 @@ export default function Kitchen(){
         <button className="outline" key={table} onClick={()=>setScope(table)}>{table} 桌 · {count} 張待交餐</button>)}
     </div>}
     {showTableHandoff&&tables.includes(scope)&&<TableHandoff key={scope} table={scope} orders={readyAt(scope)} busy={busy} update={update}/>}
-    <div className="kGrid">{filtered.map(order=><KitchenTicket key={order.id} order={order} busy={busy} update={update} showOverdue={queueAvailable}/>)}</div>
+    <div className="kGrid">{filtered.map(order=><KitchenTicket key={order.id} order={order} busy={busy} update={update}
+      movePickup={movePickup} refresh={()=>setRevision(value=>value+1)} showOverdue={queueAvailable}/>)}</div>
     <section className="sheet stock"><h2>餐點供應</h2>{dishes.map(d=><div key={d.id}><span>{d.name}</span><button className="outline" disabled={busy} onClick={()=>update("availability",{id:d.id,available:sold.includes(d.id)})}>{sold.includes(d.id)?"已售完 · 恢復供應":"供應中 · 標記售完"}</button></div>)}</section>
     <Timing staffKey={key}/>
     {key&&<button className="outline" onClick={()=>{sessionStorage.removeItem("he-ri-staff");setKey("");}}>登出金鑰</button>}

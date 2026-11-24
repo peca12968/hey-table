@@ -355,7 +355,7 @@ test("same-day pickup slots use Taipei opening, notice and closing boundaries",(
   assert.deepEqual(bookablePickupSlots(taipei("19:15:00")+1),[]);
   assert.deepEqual(bookablePickupSlots(taipei("23:59:59")),[]);
 });
-test("the Worker and D1 serialize staff and guest bookings, capacity edits and conflicting reschedules",async t=>{
+test("D1 serializes shared bookings, capacity edits and competing staff and customer reschedules",async t=>{
   const {build}=await import("esbuild");
   const {Miniflare}=await import("miniflare");
   const root=fileURLToPath(new URL("../",import.meta.url));
@@ -385,13 +385,17 @@ test("the Worker and D1 serialize staff and guest bookings, capacity edits and c
   assert.equal(await remaining(pickupSlot),0);
   const index=responses.findIndex(response=>response.ok),original=requests[index];
   const targets=[pickupSlot+900_000,pickupSlot+1_800_000];
-  const reschedule=to=>post("/api/ticket/reschedule",{from:pickupSlot,to,revision:0},{"X-Ticket":original.token});
+  const acceptedId=results[index].id;
+  const reschedule=(to,channel)=>channel===0?post("/api/ticket/reschedule",{from:pickupSlot,to,revision:0},{"X-Ticket":original.token}):
+    fetch(host+"/api/kitchen/pickup-reschedule",{method:"PATCH",headers:{"Content-Type":"application/json",...staff},
+      body:JSON.stringify({id:acceptedId,from:pickupSlot,to,revision:0})});
   const moved=await Promise.all(targets.map(reschedule));
   assert.deepEqual(moved.map(response=>response.status).sort(),[200,409]);
   const winner=moved.findIndex(response=>response.ok),changed=await moved[winner].json();
   assert.equal(changed.pickupSlot,targets[winner]);
   assert.equal(changed.pickupChanges.length,1);
-  assert.deepEqual(await (await reschedule(changed.pickupSlot)).json(),changed);
+  assert.equal(changed.pickupChanges[0].actor,winner===1?"staff":undefined);
+  assert.deepEqual(await (await reschedule(changed.pickupSlot,winner)).json(),changed);
   assert.equal(await remaining(pickupSlot),3);
   assert.equal(await remaining(changed.pickupSlot),9);
   assert.equal(await remaining(targets[1-winner]),12);
@@ -482,7 +486,7 @@ test("pickup slots reserve portions atomically, release expired payments and gat
   const handoff=await (await call("/api/kitchen/handoff?id="+accepted.id,{headers:staff})).json();
   assert.equal(handoff.pickupSlot,pickupSlot);
 });
-test("pickup rescheduling preserves payment and requires staff to use the new version",async t=>{
+test("staff pickup rescheduling preserves receipt and payment and requires the new version to prepare",async t=>{
   const db=database();
   t.after(()=>db.sqlite.close());
   const taipei=time=>Date.parse("2026-11-25T"+time+"+08:00");
@@ -499,21 +503,26 @@ test("pickup rescheduling preserves payment and requires staff to use the new ve
   const input=booking(first,4,{token,paymentMethod:"line_pay"});
   const original=await (await post(input)).json();
   const shift=(from,to,revision=0,headers=guest)=>send("POST","/api/ticket/reschedule",{from,to,revision},headers);
+  const staffShift=(from,to,revision=0,headers=staff,id=original.id)=>
+    send("PATCH","/api/kitchen/pickup-reschedule",{id,from,to,revision},headers);
   const ticket=async()=> (await call("/api/ticket?progress=1",{headers:guest})).json();
   const advance=pickupRevision=>send("PATCH","/api/kitchen/status",{id:original.id,from:"pending",to:"preparing",pickupRevision},staff);
   assert.equal(await (await ticket()).canReschedulePickup,true);
   assert.equal((await shift(first,next,0,{})).status,404);
   assert.equal((await shift(first,next,0,{"X-Ticket":crypto.randomUUID()})).status,404);
+  assert.equal((await staffShift(first,next,0,guest)).status,403);
+  assert.equal((await staffShift(first,next,0,staff,"1")).status,400);
+  assert.equal((await staffShift(first,next,0,staff,999)).status,404);
   const {attempt}=await (await send("POST","/api/payments/start",{},guest)).json();
   assert.equal((await send("POST","/api/payments/demo",{ref:attempt.ref,outcome:"paid"},guest)).status,200);
   const paid=await ticket();
   assert.equal((await post(booking(full,9))).status,200);
-  const blocked=await shift(first,full);
+  const blocked=await staffShift(first,full);
   assert.equal(blocked.status,409);
   assert.equal((await blocked.json()).code,"pickup_slot_full");
   assert.deepEqual(await ticket(),paid);
-  const newTime=await (await shift(first,next)).json();
-  assert.deepEqual(newTime,{pickupSlot:next,pickupChanges:[{from:first,to:next,at:now}],canReschedulePickup:true});
+  const newTime=await (await staffShift(first,next)).json();
+  assert.deepEqual(newTime,{pickupSlot:next,pickupChanges:[{from:first,to:next,at:now,actor:"staff"}],canReschedulePickup:true});
   assert.deepEqual(await ticket(),{...paid,...newTime});
   const payment=await (await send("POST","/api/payments/check",{},guest)).json();
   assert.equal(payment.attempt.ref,attempt.ref);
@@ -522,13 +531,17 @@ test("pickup rescheduling preserves payment and requires staff to use the new ve
   now=taipei("12:00:00");
   assert.equal((await ticket()).canReschedulePickup,false);
   assert.equal((await shift(next,taipei("13:00:00"),1)).status,409);
+  assert.equal((await staffShift(next,taipei("13:00:00"),1)).status,409);
   assert.equal((await advance(0)).status,409);
   assert.equal((await advance()).status,409);
   const board=await (await call("/api/kitchen",{headers:staff})).json();
-  assert.equal(board.find(row=>row.id===original.id).pickupRevision,1);
+  const card=board.find(row=>row.id===original.id);
+  assert.equal(card.pickupRevision,1);
+  assert.deepEqual(card.latestPickupChange,newTime.pickupChanges[0]);
   assert.equal((await advance(1)).status,200);
   assert.equal((await ticket()).status,"preparing");
   assert.deepEqual(await (await shift(first,next)).json(),{...newTime,canReschedulePickup:false});
+  assert.deepEqual(await (await staffShift(first,next)).json(),{...newTime,canReschedulePickup:false});
 });
 test("staff reservations share slot capacity, survive a lost response and keep the kitchen lead time",async t=>{
   const db=database();

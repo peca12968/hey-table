@@ -12,7 +12,7 @@ import {methods,canPrepare,canCustomerCancel} from "../../lib/payments.mjs";
 import {reorderable} from "../../lib/reorder.mjs";
 import {QuoteSummary} from "../cart-quote";
 import CancelReceipt from "./cancel-receipt";
-import ReschedulePickup from "./reschedule-pickup";
+import ReschedulePickup from "../reschedule-pickup";
 import PickupCalendar from "./pickup-calendar";
 import {pickupCalendarStatus,pickupWindow} from "../../lib/pickup-slots.mjs";
 const progressLabels={
@@ -137,10 +137,12 @@ export default function Ticket(){
     <ReceiptHistory entries={recent} active={route?.token} open={route&&!route.direct} onRemove={forget}/>
     {error&&<p role="status">{error}</p>}{order&&<><div className="receiptMeta"><Mode table={order.table} source={order.source}/><b aria-live="polite">{order.status==='pending'&&!payable?'等待付款':labels[order.status]}</b></div>
     <PickupAppointment start={order.pickupSlot}/>
-    {latestPickup&&<p className="muted" role="status">取餐時段已從 {pickupWindow(latestPickup.from)} 改到 {pickupWindow(latestPickup.to)}。</p>}
+    {latestPickup&&<p className="muted" role="status">{latestPickup.actor==="staff"?"店家已將取餐時段從":"取餐時段已從"} {pickupWindow(latestPickup.from)} 改到 {pickupWindow(latestPickup.to)}。</p>}
     {calendarStatus&&<PickupCalendar key={"pickup-calendar-"+route.token+calendarStatus} id={order.id} token={route.token}
       status={calendarStatus} onChange={refreshReceipt}/>}
-    {order.pickupSlot!=null&&<ReschedulePickup key={"pickup-reschedule-"+route.token} order={order} token={route.token} onChange={refreshReceipt}/>}
+    {order.pickupSlot!=null&&<ReschedulePickup key={"pickup-reschedule-"+route.token} order={order} onChange={refreshReceipt}
+      submit={(change,signal)=>request("/api/ticket/reschedule",{method:"POST",headers:{"Content-Type":"application/json","X-Ticket":route.token},
+        body:JSON.stringify(change),signal})}/>}
     {latestMove&&<p className="muted" role="status">店家已將餐單從 {latestMove.from} 桌移到 {latestMove.to} 桌。</p>}
     <p>{({pending:pendingMessage,preparing:"廚房正在準備餐點。",ready:order.table?"餐點已完成，請留意桌邊送餐。":"餐點已完成，請出示取餐號碼。",completed:"這張餐單已完成。",cancelled:cancellationMessages[cancellationActor]??"店家已取消這張餐單。"})[order.status]}</p>
     {showHold&&<p className="muted">付款保留至 <time dateTime={new Date(order.paymentDueAt).toISOString()}>{progressTime.format(order.paymentDueAt)}</time></p>}

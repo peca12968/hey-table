@@ -121,6 +121,65 @@ test("a mobile receipt preserves its booking across a full slot and retries one 
   expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBe(360);
 });
 
+test("mobile staff find a booking by number, recover a full slot and reconcile a lost reschedule reply",async({page})=>{
+  const first=Date.parse("2026-11-25T12:00:00+08:00"),interval=900_000,token=randomUUID();
+  const full=first+interval,next=full+interval;
+  const immediate={id:242,mode:"pickup",source:"staff",table:null,
+    note:"電話預約",items:[{id:"sencha",name:"日式熱煎茶",price:45,qty:1}],status:"pending",total:45,
+    created:first-3_600_000,paymentMethod:"cash",paymentEnv:"cash",paymentState:"unpaid"};
+  const order={...immediate,id:241,pickupSlot:first,pickupRevision:0,pickupUpcoming:true};
+  const change={from:first,to:next,at:first-2_400_000,actor:"staff"};
+  const moved={...order,pickupSlot:next,pickupRevision:1,latestPickupChange:change};
+  let closed=false,accepted=false;
+  await page.setViewportSize({width:360,height:780});
+  await page.addInitScript(()=>sessionStorage.setItem("he-ri-staff","local-test-kitchen"));
+  await page.route("**/api/kitchen",route=>route.fulfill({json:[immediate,accepted?moved:order]}));
+  await page.route("**/api/pickup-slots",route=>route.fulfill({json:{slots:[
+    {start:full,end:next,remaining:closed?0:1},{start:next,end:next+interval,remaining:12},
+  ]}}));
+  await page.route("**/api/kitchen/pickup-reschedule",route=>{
+    const req=route.request();
+    expect(req.method()).toBe("PATCH");
+    expect(req.headers().authorization).toBe("Bearer local-test-kitchen");
+    expect(req.headers()["x-ticket"]).toBeUndefined();
+    if(!closed){
+      expect(req.postDataJSON()).toEqual({id:241,from:first,to:full,revision:0});
+      closed=true;
+      return route.fulfill({status:409,json:{error:"此時段剩餘份數不足，原預約仍有效。",code:"pickup_slot_full"}});
+    }
+    expect(req.postDataJSON()).toEqual({id:241,from:first,to:next,revision:0});
+    accepted=true;
+    return route.abort("connectionreset");
+  });
+  await page.route(url=>url.pathname==="/api/ticket",route=>{
+    expect(route.request().headers()["x-ticket"]).toBe(token);
+    return route.fulfill({json:{...moved,pickupChanges:[change],canReschedulePickup:true}});
+  });
+  await page.goto("/kitchen");
+  const number=page.getByRole("searchbox",{name:"取餐號碼"});
+  await number.fill("0241");
+  const card=page.locator(".kitchenTicket");
+  await expect(card).toHaveCount(1);
+  await expect(card.getByRole("heading",{name:"#0241"})).toBeVisible();
+  await card.getByRole("button",{name:"更改取餐時段"}).click();
+  const selector=card.getByLabel("新的取餐時段");
+  await selector.selectOption(String(full));
+  await card.getByRole("button",{name:"確認改期"}).click();
+  await expect(card.getByRole("alert")).toHaveText("此時段剩餘份數不足，原預約仍有效。");
+  await expect(card.locator(".pickupSlotTime")).toContainText("12:00～12:15");
+  await expect(selector.getByRole("option",{name:/12:15/})).toHaveCount(0);
+  await selector.selectOption(String(next));
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBe(360);
+  await card.getByRole("button",{name:"確認改期"}).click();
+  await expect(card.locator(".pickupSlotTime")).toContainText("12:30～12:45");
+  await expect(card.getByText("店員已將取餐時段從 12:00～12:15 改到 12:30～12:45。")).toBeVisible();
+  await expect(selector).toHaveCount(0);
+  await page.goto("/ticket#"+token);
+  await expect(page.getByRole("heading",{name:"取餐號碼 0241"})).toBeVisible();
+  await expect(page.getByText("店家已將取餐時段從 12:00～12:15 改到 12:30～12:45。")).toBeVisible();
+  await expect(page.getByRole("button",{name:"下載取餐行事曆檔"})).toBeVisible();
+});
+
 test("mobile staff refresh a stale slot limit, close it and restore the default",async({page,request})=>{
   const headers={Authorization:"Bearer local-test-kitchen"};
   const now=Date.now(),tomorrow=businessDate(now+86_400_000),yesterday=businessDate(now-86_400_000);

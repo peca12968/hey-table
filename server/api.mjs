@@ -369,23 +369,28 @@ export async function api(request, env) {
     }
     return json(saved);
   }
-  if(path==="/api/ticket/reschedule"&&method==="POST"){
-    const token=request.headers.get("X-Ticket");
-    if(!uuid.test(token))return fail("找不到訂單",404);
+  const staffReschedule=path==="/api/kitchen/pickup-reschedule"&&method==="PATCH";
+  if(staffReschedule||(path==="/api/ticket/reschedule"&&method==="POST")){
+    const orderRef=staffReschedule?input.id:request.headers.get("X-Ticket");
+    if(staffReschedule){
+      if(!Number.isSafeInteger(orderRef)||orderRef<1)return fail("請輸入有效的取餐號碼");
+    }else if(!uuid.test(orderRef))return fail("找不到訂單",404);
     const {from,to,revision}=input;
     if(!Number.isSafeInteger(from)||from<1||!Number.isSafeInteger(to)||to<1||from===to||
       !Number.isSafeInteger(revision)||revision<0||revision>=Number.MAX_SAFE_INTEGER)
       return fail("請選擇另一個有效的預約時段。");
     const now=Date.now(),validDestination=bookablePickupSlots(now).includes(to);
+    const orderKey=staffReschedule?"id":"token";
+    const actor=staffReschedule?",'actor','staff'":"";
     const [,,current,target]=await db.batch([
       expirePaymentHolds(db,now),
       db.prepare(`UPDATE orders SET pickup_slot=?, pickup_changes=json_insert(COALESCE(pickup_changes,'[]'),'$[#]',
-        json_object('from',pickup_slot,'to',?,'at',?))
-        WHERE token=? AND mode='pickup' AND status='pending' AND pickup_slot=? AND pickup_slot>?
+        json_object('from',pickup_slot,'to',?,'at',?${actor}))
+        WHERE ${orderKey}=? AND mode='pickup' AND status='pending' AND pickup_slot=? AND pickup_slot>?
         AND COALESCE(json_array_length(pickup_changes),0)=? AND ?
         AND ${usedAtPickupSlot}+${orderPortions}<=${capacityAtPickupSlot}`)
-        .bind(to,to,now,token,from,now+pickupPrepLead,revision,validDestination?1:0,to,to),
-      db.prepare(`SELECT mode,status,pickup_slot,pickup_changes,${orderPortions} AS portions FROM orders WHERE token=?`).bind(token),
+        .bind(to,to,now,orderRef,from,now+pickupPrepLead,revision,validDestination?1:0,to,to),
+      db.prepare(`SELECT mode,status,pickup_slot,pickup_changes,${orderPortions} AS portions FROM orders WHERE ${orderKey}=?`).bind(orderRef),
       pickupSlotUsage(db,to),
     ]);
     const row=current.results[0];
@@ -395,11 +400,12 @@ export async function api(request, env) {
       return json({pickupSlot:to,pickupChanges:changes,canReschedulePickup:canReschedulePickup(row,now)});
     if(row.pickup_slot==null)return fail("這張餐單沒有可改期的預約時段。",409);
     if(!canReschedulePickup(row,now))return fail("這張餐單已進入備餐時間或已結單，無法更改時段。",409);
-    if(row.pickup_slot!==from||changes.length!==revision)return fail("取餐時段已更新，請先核對收據。",409);
+    const stale=()=>fail(staffReschedule?"取餐時段已更新，請核對接單台。":"取餐時段已更新，請先核對收據。",409);
+    if(row.pickup_slot!==from||changes.length!==revision)return stale();
     if(!validDestination)return json({error:"這個取餐時段已停止預約，請重新選擇。",code:"pickup_slot_closed"},409);
     if(target.results[0].used+row.portions>target.results[0].capacity)
       return json({error:"此時段剩餘份數不足，原預約仍有效。",code:"pickup_slot_full"},409);
-    return fail("取餐時段已更新，請先核對收據。",409);
+    return stale();
   }
   if (path === "/api/ticket/cancel" && method === "POST") {
     const token=request.headers.get("X-Ticket");
@@ -535,9 +541,11 @@ export async function api(request, env) {
       const row=results[index];
       const overdue=kitchenOverdue(row,order,capturedAt);
       const booked=order.status==="pending"&&order.pickupSlot!=null;
+      const changes=booked?pickupChanges(row):[];
       return {...order,...(row.station_progress?{stationProgress:true}:{}),
         ...(overdue?{overdue}:{}),
-        ...(booked?{pickupRevision:pickupChanges(row).length,...(canReschedulePickup(row,capturedAt)?{pickupUpcoming:true}:{})}:{}),
+        ...(booked?{pickupRevision:changes.length,...(changes.length?{latestPickupChange:changes.at(-1)}:{}),
+          ...(canReschedulePickup(row,capturedAt)?{pickupUpcoming:true}:{})}:{}),
         ...(row.table_moves?{tableRevision:JSON.parse(row.table_moves).length}:{})};
     }));
   }
