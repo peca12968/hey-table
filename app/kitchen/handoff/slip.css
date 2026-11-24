@@ -1,0 +1,12 @@
+.handoffSlip{margin-top:20px}
+.handoffSlip .slipPaper{margin:12px 0}
+.slipPaper>p,.slipPaper h2{margin:0 0 8px}
+.slipPaper .orderLines strong{white-space:nowrap}
+@media print{
+  @page{margin:5mm}
+  .handoffSlip{width:100%;max-width:70mm;margin:0;color:#000}
+  .handoffSlip .slipControl{display:none}
+  .handoffSlip .slipPaper{margin:0;padding:0;border:0;border-radius:0;background:#fff}
+  .handoffSlip .slipPaper h2{font-size:18pt}
+  .handoffSlip .slipPaper li{break-inside:avoid}
+}

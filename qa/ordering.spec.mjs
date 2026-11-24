@@ -7,6 +7,53 @@ import {fileURLToPath} from "node:url";
 import jsQR from "jsqr";
 import {PNG} from "pngjs";
 
+test("a staff handoff slip rechecks concurrent handoff and prints only the selected order",async({page,request})=>{
+  await page.setViewportSize({width:360,height:800});
+  const headers={Authorization:"Bearer local-test-kitchen"};
+  await page.addInitScript(()=>{
+    sessionStorage.setItem("he-ri-staff","local-test-kitchen");
+    window.printCalls=0;
+    window.print=()=>{window.printCalls++;};
+  });
+  const token=randomUUID();
+  const created=await request.post("/api/orders",{data:{token,mode:"table",table:"A03",note:"店內備註",
+    items:[{id:"karaage",qty:2}]}});
+  expect(created.ok()).toBe(true);
+  const {id}=await created.json();
+  const number=String(id).padStart(4,"0"), api="/api/kitchen/handoff?id=";
+  expect((await request.get(api+number)).status()).toBe(403);
+  expect((await request.get(api+"1e1",{headers})).status()).toBe(400);
+  expect((await request.get(api+"999999999",{headers})).status()).toBe(404);
+  expect((await request.get(api+number,{headers})).status()).toBe(409);
+  for(const [from,to] of [["pending","preparing"],["preparing","ready"]])
+    expect((await request.patch("/api/kitchen/status",{headers,data:{id,from,to}})).ok()).toBe(true);
+  const result=await request.get(api+number,{headers});
+  expect(result.headers()["cache-control"]).toBe("no-store");
+  expect(await result.json()).toEqual({id,table:"A03",status:"ready",items:[{name:"日式唐揚雞",qty:2}]});
+  await page.goto("/kitchen");
+  const card=page.locator(".kitchenTicket").filter({has:page.getByRole("heading",{name:"#"+number,exact:true})});
+  await card.getByRole("link",{name:"交餐小票"}).click();
+  const slip=page.getByRole("article",{name:"交餐小票內容"});
+  const button=page.getByRole("button",{name:"列印交餐小票"});
+  await expect(slip.getByText("A03 桌內用")).toBeVisible();
+  await expect(slip.getByText("待交餐")).toBeVisible();
+  expect((await request.patch("/api/kitchen/status",{headers,data:{id,from:"ready",to:"completed"}})).ok()).toBe(true);
+  await button.click();
+  await expect(slip.getByText("已交餐")).toBeVisible();
+  await expect(page.getByRole("status")).toHaveText("交餐狀態已更新，請核對後再列印。");
+  expect(await page.evaluate(()=>window.printCalls)).toBe(0);
+  await button.click();
+  await expect.poll(()=>page.evaluate(()=>window.printCalls)).toBe(1);
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBe(360);
+  await page.emulateMedia({media:"print"});
+  await expect(button).toBeHidden();
+  await expect(page.getByRole("link",{name:"返回店家接單台"})).toBeHidden();
+  await expect(slip.getByRole("heading",{name:"取餐號碼 "+number})).toBeVisible();
+  await expect(slip.getByText("日式唐揚雞")).toBeVisible();
+  await expect(slip.getByText("× 2")).toBeVisible();
+  await expect(page.getByText("店內備註")).toHaveCount(0);
+});
+
 test("reorder adds available quantities at today's prices and submits only after confirmation",async({page,request})=>{
   await page.setViewportSize({width:360,height:800});
   const staff={Authorization:"Bearer local-test-kitchen"};

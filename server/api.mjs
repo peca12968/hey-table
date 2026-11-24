@@ -30,6 +30,11 @@ function intakeState(rows,key,scopes) {
 const modeState=rows=>intakeState(rows,"mode",Object.keys(intakeLabels));
 const tableState=rows=>intakeState(rows,"table_no",tables);
 const acceptingOnly=states=>Object.fromEntries(Object.entries(states).map(([scope,state])=>[scope,state.accepting]));
+function collectionId(url) {
+  const number = url.searchParams.get("id");
+  const id = Number(number);
+  return /^[0-9]+$/.test(number ?? "") && Number.isSafeInteger(id) && id > 0 ? id : null;
+}
 function receipt(row) {
   return {id:row.id, mode:row.mode, table:row.table_no, note:row.note, items:JSON.parse(row.items),
     ...(row.combo_quote ? {combo:JSON.parse(row.combo_quote)} : {}),
@@ -220,11 +225,18 @@ export async function api(request, env) {
     }));
     return json({capturedAt: Date.now(), orders});
   }
+  if (path === "/api/kitchen/handoff" && method === "GET") {
+    const id = collectionId(url);
+    if (id === null) return fail("請輸入有效的取餐號碼");
+    const row = await db.prepare("SELECT id,table_no,status,items FROM orders WHERE id=?").bind(id).first();
+    if (!row) return fail("找不到這個取餐號碼",404);
+    if (!["ready","completed"].includes(row.status)) return fail("餐單尚無可列印的交餐小票。",409);
+    const items = JSON.parse(row.items).map(({name,qty}) => ({name,qty}));
+    return json({id:row.id,table:row.table_no,status:row.status,items});
+  }
   if (path === "/api/kitchen/return-receipt" && method === "GET") {
-    const number = url.searchParams.get("id");
-    const id = Number(number);
-    if (!/^[0-9]+$/.test(number ?? "") || !Number.isSafeInteger(id) || id < 1)
-      return fail("請輸入有效的取餐號碼");
+    const id = collectionId(url);
+    if (id === null) return fail("請輸入有效的取餐號碼");
     const row = await db.prepare("SELECT id,created,items,total,combo_quote FROM orders WHERE id=?").bind(id).first();
     if (!row) return fail("找不到這個取餐號碼",404);
     const items = JSON.parse(row.items).map(({id,name,price,qty}) => ({id,name,price,qty}));
