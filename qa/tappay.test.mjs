@@ -321,6 +321,27 @@ test("pickup display omits refunded orders even if their kitchen status is still
   assert.ok(Number.isSafeInteger(capturedAt));
   assert.deepEqual(numbers,{ready:[paid],preparing:[]});
 });
+test("a payment refund blocks the entire reviewed table handoff",async t=>{
+  const db=database();
+  t.after(()=>db.sqlite.close());
+  const add=db.sqlite.prepare(`INSERT INTO orders
+    (token,mode,table_no,note,items,total,created,status,payment_method,payment_env)
+    VALUES (?,'table','A05','','[]',100,1,'ready',?,?)`);
+  const {lastInsertRowid:wallet}=add.run(crypto.randomUUID(),"line_pay","sandbox");
+  const {lastInsertRowid:cash}=add.run(crypto.randomUUID(),"cash","cash");
+  db.sqlite.prepare("INSERT INTO payment_attempts(order_id,reference,merchant,state,created) VALUES (?,?,?,?,1)")
+    .run(wallet,"fixture-handoff","fixture","refunded");
+  const orders=[wallet,cash].map(id=>({id,tableRevision:0}));
+  const handoff=()=>api(new Request("https://order.example/api/kitchen/table-handoff",{method:"PATCH",
+    headers:{Authorization:"Bearer local-test-key","Content-Type":"application/json"},body:JSON.stringify({table:"A05",orders}),
+  }),{DB:db,STAFF_KEY:"local-test-key"});
+  const statuses=()=>db.sqlite.prepare("SELECT status FROM orders ORDER BY id").all().map(row=>row.status);
+  assert.equal((await handoff()).status,409);
+  assert.deepEqual(statuses(),["ready","ready"]);
+  db.sqlite.prepare("UPDATE payment_attempts SET state='partial' WHERE order_id=?").run(wallet);
+  assert.equal((await handoff()).status,200);
+  assert.deepEqual(statuses(),["completed","completed"]);
+});
 test("unpaid holds release at the boundary but preserve active payment attempts",async t=>{
   const db=database();
   t.after(()=>db.sqlite.close());

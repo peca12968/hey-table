@@ -28,6 +28,37 @@ function TableMove({id,table,revision,busy,update}){
   </details>;
 }
 
+function TableHandoff({table,orders,busy,update}){
+  const [review,setReview]=useState(null);
+  const eligible=orders.length>=2&&orders.every(canPrepare);
+  const current=eligible&&review?.length===orders.length&&review.every((order,index)=>
+    order.id===orders[index].id&&(order.tableRevision??0)===(orders[index].tableRevision??0));
+  if(!review&&orders.length<2)return null;
+  return <section className="sheet tableHandoff" aria-label={table+" 桌同桌交餐"}>
+    <h2>{table} 桌同桌交餐</h2>
+    {!review&&<button className="outline" disabled={busy||!eligible} onClick={()=>setReview(orders)}>
+      核對 {orders.length} 張待交餐餐單
+    </button>}
+    {!review&&!eligible&&<p>請先核對這桌餐單的付款狀態。</p>}
+    {review&&<>
+      <ul className="tableHandoffOrders">{review.map(order=><li key={order.id}>
+        <b>#{numberOf(order.id)}</b>
+        <ul className="orderLines">{order.items.map(dish=><li key={dish.id}><span>{dish.name}</span><b>×{dish.qty}</b></li>)}</ul>
+        {order.note&&<p>備註　{order.note}</p>}
+      </li>)}</ul>
+      {!current&&<p role="status">這桌的待交餐餐單已更新，請重新核對。</p>}
+      <div className="actions">
+        <button className="primary" disabled={busy||!current} onClick={async()=>{
+          const confirmed=await update("table-handoff",{table,orders:review.map(order=>({id:order.id,tableRevision:order.tableRevision??0}))});
+          if(confirmed)setReview(null);
+        }}>確認交餐 {review.length} 張餐單</button>
+        {!current&&eligible&&<button className="outline" disabled={busy} onClick={()=>setReview(orders)}>重新核對這桌</button>}
+        <button className="outline" disabled={busy} onClick={()=>setReview(null)}>關閉核對</button>
+      </div>
+    </>}
+  </section>;
+}
+
 function KitchenTicket({order,busy,update,handoffOnly=false}){
   const {id,status,table,created,items,note,paymentMethod,paymentEnv,paymentState,total}=order;
   const actions=handoffOnly ? transitions[status].filter(next=>next==="completed") : transitions[status];
@@ -97,19 +128,26 @@ export default function Kitchen(){
   async function update(endpoint,body){
     setBusy(true);setError("");setActionMessage("");
     try{
-      await request("/api/kitchen/"+endpoint,{method:"PATCH",headers:{"Content-Type":"application/json",...(key?{Authorization:"Bearer "+key}:{})},body:JSON.stringify(body)});
+      const result=await request("/api/kitchen/"+endpoint,{method:"PATCH",headers:{"Content-Type":"application/json",...(key?{Authorization:"Bearer "+key}:{})},body:JSON.stringify(body)});
       if(focused){setRows(null);setActionMessage("已完成交餐。");}
       if(endpoint==="table")setActionMessage("餐單 "+numberOf(body.id)+" 已換到 "+body.to+" 桌。");
+      if(endpoint==="table-handoff"){
+        const ids=new Set(body.orders.map(order=>order.id));
+        setRows(rows=>rows?.map(order=>ids.has(order.id)?{...order,status:"completed"}:order)??null);
+        setActionMessage(result.table+" 桌已完成 "+result.completed+" 張餐單的交餐。");
+      }
       setRevision(v=>v+1);
+      return true;
     }catch(e){
       if(focused){
         setActionMessage(e.status===409?"餐單狀態已更新，請核對最新狀態。":e.message);
         setRows(null);
         setRevision(v=>v+1);
-      }else if(endpoint==="table"||body.tableRevision!==undefined){
+      }else if(endpoint==="table"||endpoint==="table-handoff"||body.tableRevision!==undefined){
         setActionMessage(e.message);
         setRevision(v=>v+1);
       }else setError(e.message);
+      return false;
     }finally{setBusy(false);}
   }
   async function exportStations(){
@@ -141,6 +179,8 @@ export default function Kitchen(){
   }else if(focused){
     content=<KitchenTicket order={rows[0]} busy={busy} update={update} handoffOnly/>;
   }else{
+    const showTableHandoff=filter==="ready"&&!search.trim();
+    const readyAt=table=>filtered.filter(order=>order.table===table&&order.mode==="table");
     content=<>
     <div className="actions"><a className="outline" href="/kitchen/prep">查看備料單</a>
       <a className="outline" href="/kitchen/daily">每日訂單摘要</a>
@@ -164,6 +204,12 @@ export default function Kitchen(){
     </div>
     <p id="kitchen-filter-count" className="muted" aria-live="polite">{!validNumber?"請輸入完整的取餐號碼。":
       filtered.length?"符合條件 "+filtered.length+" 張餐單":"目前沒有符合條件的訂單。"}</p>
+    {actionMessage&&<p role="status">{actionMessage}</p>}
+    {showTableHandoff&&["all","table"].includes(scope)&&<div className="actions">
+      {tables.map(table=>[table,readyAt(table).length]).filter(([,count])=>count>=2).map(([table,count])=>
+        <button className="outline" key={table} onClick={()=>setScope(table)}>{table} 桌 · {count} 張待交餐</button>)}
+    </div>}
+    {showTableHandoff&&tables.includes(scope)&&<TableHandoff key={scope} table={scope} orders={readyAt(scope)} busy={busy} update={update}/>}
     <div className="kGrid">{filtered.map(order=><KitchenTicket key={order.id} order={order} busy={busy} update={update}/>)}</div>
     <section className="sheet stock"><h2>餐點供應</h2>{dishes.map(d=><div key={d.id}><span>{d.name}</span><button className="outline" disabled={busy} onClick={()=>update("availability",{id:d.id,available:sold.includes(d.id)})}>{sold.includes(d.id)?"已售完 · 恢復供應":"供應中 · 標記售完"}</button></div>)}</section>
     <Timing staffKey={key}/>
@@ -176,7 +222,7 @@ export default function Kitchen(){
     <div className="menuTitle"><div>{!focused&&<p className="eyebrow">KITCHEN</p>}<h1>{focused?"自取交餐":"店家接單台"}</h1></div>
       {pickup!==""&&<button className="outline" onClick={()=>setRevision(v=>v+1)}><RefreshCw size={16}/> 更新</button>}</div>
     {error&&<p className="error" role="alert">{error}</p>}
-    {actionMessage&&<p role="status">{actionMessage}</p>}
+    {focused&&actionMessage&&<p role="status">{actionMessage}</p>}
     {content}
   </main><Footer/></>;
 }

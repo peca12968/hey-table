@@ -70,3 +70,9 @@
 .tableMove form{align-items:end;gap:8px}
 .tableMove label{display:grid;gap:4px}
 .tableMove select,.tableMove button{min-height:40px}
+.tableHandoff{margin:14px 0;background:var(--pale)}
+.tableHandoff h2,.tableHandoff p{margin:0 0 8px}
+.tableHandoffOrders{list-style:none;margin:0 0 12px;padding:0}
+.tableHandoffOrders>li{padding:8px 0;border-top:1px solid var(--line)}
+.tableHandoffOrders .orderLines{margin:4px 0 0}
+.tableHandoff button{min-height:40px}

@@ -444,6 +444,31 @@ export async function api(request, env) {
     return meta.changes?json({id,table:to,tableRevision:revision+1}):
       fail("餐單或桌號已更新，請核對後再換桌。",409);
   }
+  if (path === "/api/kitchen/table-handoff" && method === "PATCH") {
+    const {table,orders}=input;
+    if (!tables.includes(table) || !Array.isArray(orders) || orders.length<2 ||
+        orders.some(order=>!order || !Number.isSafeInteger(order.id) || order.id<1 ||
+          !Number.isSafeInteger(order.tableRevision) || order.tableRevision<0) ||
+        new Set(orders.map(order=>order.id)).size!==orders.length)
+      return fail("請提供同桌待交餐的餐單及桌號版本。");
+    const reviewed=orders.map(({id,tableRevision})=>[id,tableRevision]);
+    // Freeze the reviewed set before changing any of the rows it reads.
+    const {meta}=await db.prepare(`WITH expected AS (
+        SELECT json_extract(value,'$[0]') AS id, json_extract(value,'$[1]') AS revision FROM json_each(?)
+      ), ready AS MATERIALIZED (
+        SELECT orders.id, expected.id IS NOT NULL AND expected.revision=COALESCE(json_array_length(table_moves),0)
+          AND ${payableForKitchen} AS reviewed
+        FROM orders LEFT JOIN expected ON expected.id=orders.id
+        WHERE orders.mode='table' AND table_no=? AND status='ready'
+      )
+      UPDATE orders SET status='completed',
+        status_history=json_insert(COALESCE(status_history,'[]'),'$[#]',json_object('from','ready','status','completed','at',?))
+      WHERE id IN (SELECT id FROM ready WHERE (SELECT COUNT(*) FROM ready)=?
+        AND (SELECT COUNT(*) FROM ready WHERE reviewed)=?)`)
+      .bind(JSON.stringify(reviewed),table,Date.now(),orders.length,orders.length).run();
+    return meta.changes ? json({table,completed:meta.changes}) :
+      fail("待交餐餐單已更新或付款狀態有變，請重新核對整桌。",409);
+  }
   if (path === "/api/kitchen/status" && method === "PATCH") {
     if (!Number.isSafeInteger(input.id) || !Object.hasOwn(transitions,input.from) ||
         !transitions[input.from].includes(input.to)) return fail("無效的訂單狀態轉換");

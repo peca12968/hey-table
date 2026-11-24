@@ -8,6 +8,76 @@ import jsQR from "jsqr";
 import {PNG} from "pngjs";
 import {businessDate} from "../lib/business-day.mjs";
 
+test("staff recheck a changed table and complete its reviewed orders together",async({page,request})=>{
+  const headers={Authorization:"Bearer local-test-kitchen"};
+  const path="/api/kitchen/table-handoff";
+  async function create(table,dish,qty){
+    const token=randomUUID();
+    const response=await request.post("/api/orders",{data:{token,mode:"table",table,note:"",items:[{id:dish,qty}]}});
+    expect(response.ok()).toBe(true);
+    return {id:(await response.json()).id,token,tableRevision:0};
+  }
+  async function advance(order,from,to){
+    expect((await request.patch("/api/kitchen/status",{headers,data:{id:order.id,from,to}})).ok()).toBe(true);
+  }
+  async function prepare(order){
+    await advance(order,"pending","preparing");
+    await advance(order,"preparing","ready");
+  }
+  const progress=order=>request.get("/api/ticket?progress=1",{headers:{"X-Ticket":order.token}}).then(r=>r.json());
+  const review=(...orders)=>({table:"A07",orders:orders.map(({id,tableRevision})=>({id,tableRevision}))});
+  const submit=(data,auth=headers)=>request.patch(path,{headers:auth,data});
+  const first=await create("A07","oyakodon",1),second=await create("A07","sencha",2);
+  const third=await create("A07","edamame",1),other=await create("A08","gyoza",1);
+  const pending=await create("A07","sencha",1);
+  await prepare(first);await prepare(second);await prepare(other);
+  expect((await submit(review(first,second),{})).status()).toBe(403);
+  expect((await submit(review(first,first))).status()).toBe(400);
+  expect((await submit(review(first,other))).status()).toBe(409);
+  expect((await submit(review(first,{...second,tableRevision:1}))).status()).toBe(409);
+
+  await page.setViewportSize({width:360,height:780});
+  await page.addInitScript(()=>sessionStorage.setItem("he-ri-staff","local-test-kitchen"));
+  await page.goto("/kitchen");
+  await page.getByRole("button",{name:"待交餐",exact:true}).click();
+  await page.getByRole("button",{name:"A07 桌 · 2 張待交餐"}).click();
+  const group=page.getByRole("region",{name:"A07 桌同桌交餐"});
+  await group.getByRole("button",{name:"核對 2 張待交餐餐單"}).click();
+  await expect(group.getByText("雞肉親子丼",{exact:true})).toBeVisible();
+  await expect(group.getByText("×2",{exact:true})).toBeVisible();
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBe(360);
+
+  await page.route("**"+path,async route=>{
+    await prepare(third);
+    await route.continue();
+  },{times:1});
+  await group.getByRole("button",{name:"確認交餐 2 張餐單"}).click();
+  await expect(page.getByText("待交餐餐單已更新或付款狀態有變，請重新核對整桌。")).toBeVisible();
+  await expect(group.getByRole("button",{name:"確認交餐 2 張餐單"})).toBeDisabled();
+  for(const order of [first,second,third])expect((await progress(order)).status).toBe("ready");
+  await group.getByRole("button",{name:"重新核對這桌"}).click();
+  await expect(group.getByText("鹽味毛豆",{exact:true})).toBeVisible();
+  await group.getByRole("button",{name:"確認交餐 3 張餐單"}).click();
+  await expect(page.getByText("A07 桌已完成 3 張餐單的交餐。")).toBeVisible();
+  await expect(group).toHaveCount(0);
+  const completed=await Promise.all([first,second,third].map(progress));
+  const handoffs=completed.map(order=>order.statusHistory.filter(event=>event.status==="completed"));
+  expect(handoffs[0]).toHaveLength(1);
+  expect(handoffs).toEqual([handoffs[0],handoffs[0],handoffs[0]]);
+  expect((await progress(pending)).status).toBe("pending");
+  expect((await progress(other)).status).toBe("ready");
+  expect((await submit(review(first,second,third))).status()).toBe(409);
+
+  const next=await create("A08","sencha",1);
+  await prepare(next);
+  const race={...review(other,next),table:"A08"};
+  const outcomes=await Promise.all([submit(race),submit(race)]);
+  expect(outcomes.map(r=>r.status()).sort()).toEqual([200,409]);
+  expect(await outcomes.find(r=>r.ok()).json()).toEqual({table:"A08",completed:2});
+  expect((await progress(other)).statusHistory.filter(event=>event.status==="completed")).toHaveLength(1);
+  await advance(pending,"pending","cancelled");
+});
+
 test("table moves keep the original order retry and guard stale handoff and printing",async({page,browser,request})=>{
   const headers={Authorization:"Bearer local-test-kitchen"};
   const input={token:randomUUID(),mode:"table",table:"A03",note:"換桌測試備註",items:[{id:"oyakodon",qty:1}]};
