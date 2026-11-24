@@ -234,6 +234,12 @@ export async function api(request, env) {
     const items = JSON.parse(row.items).map(({name,qty}) => ({name,qty}));
     return json({id:row.id,table:row.table_no,status:row.status,items});
   }
+  if (path === "/api/kitchen/pickup" && method === "GET") {
+    const id = collectionId(url);
+    if (id === null) return fail("請輸入有效的取餐號碼");
+    const row = await db.prepare(`${selectOrders} WHERE id=? AND mode='pickup'`).bind(id).first();
+    return row ? json(receipt(row)) : fail("找不到這張自取餐單",404);
+  }
   if (path === "/api/kitchen/return-receipt" && method === "GET") {
     const id = collectionId(url);
     if (id === null) return fail("請輸入有效的取餐號碼");

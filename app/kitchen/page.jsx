@@ -10,34 +10,80 @@ import PaymentSnapshot from "./payment-snapshot";
 import Intake from "./intake";
 import {methods,paymentStates,environmentLabel,canPrepare,canCancel} from "../../lib/payments.mjs";
 const action={preparing:"接單製作",ready:"完成製作",completed:"完成交餐",cancelled:"取消訂單"};
+
+function KitchenTicket({order,busy,update,handoffOnly=false}){
+  const {id,status,table,created,items,note,paymentMethod,paymentEnv,paymentState,total}=order;
+  const actions=handoffOnly ? transitions[status].filter(next=>next==="completed") : transitions[status];
+  return <article className="sheet kitchenTicket">
+    <div className="menuTitle"><h2>#{numberOf(id)}</h2><Mode table={table}/></div>
+    <p aria-live={handoffOnly?"polite":undefined}><b>{labels[status]}</b> · {new Date(created).toLocaleTimeString("zh-TW",{hour:"2-digit",minute:"2-digit",timeZone:"Asia/Taipei"})}</p>
+    <ul className="orderLines">{items.map(dish=><li key={dish.id}>{dish.name}<b>×{dish.qty}</b></li>)}</ul>
+    {note&&<p>備註　{note}</p>}
+    <p>{methods[paymentMethod]} {paymentMethod!=="cash"&&[environmentLabel(paymentEnv),paymentStates[paymentState]].join(" · ")}</p>
+    <div className="total"><span>合計</span><b>NT$ {total}</b></div>
+    <div className="actions">
+      {["ready","completed"].includes(status)&&<a className="outline" href={"/kitchen/handoff?id="+numberOf(id)}>交餐小票</a>}
+      {!handoffOnly&&["sandbox","production"].includes(paymentEnv)&&<button className="outline" disabled={busy} onClick={()=>update("payment",{id})}>查詢金流</button>}
+      {actions.map(next=><button disabled={busy||(next==="cancelled"?!canCancel(order):!canPrepare(order))} className={next==="cancelled"?"outline":"primary"} key={next}
+        onClick={()=>{if(next!=="cancelled"||window.confirm("取消這張訂單？"))update("status",{id,from:status,to:next});}}>{action[next]}</button>)}
+    </div>
+  </article>;
+}
+
 export default function Kitchen(){
   const [key,setKey]=useState(""),[entry,setEntry]=useState(""),[denied,setDenied]=useState(false),[rows,setRows]=useState(null);
   const [sold,setSold]=useState([]),[filter,setFilter]=useState("active"),[error,setError]=useState(""),[revision,setRevision]=useState(0),[busy,setBusy]=useState(false);
   const [exporting,setExporting]=useState(false),[exportMessage,setExportMessage]=useState("");
   const [scope,setScope]=useState("all"),[search,setSearch]=useState("");
-  const [signInTarget,setSignInTarget]=useState("/kitchen");
+  const [pickup,setPickup]=useState(undefined),[actionMessage,setActionMessage]=useState("");
+  const focused=typeof pickup==="string";
+  const signInTarget=pickup?"/kitchen?pickup="+pickup:"/kitchen";
   useEffect(()=>{
     setKey(sessionStorage.getItem("he-ri-staff")||"");
-    const pickup=new URLSearchParams(location.search).get("pickup");
-    const id=Number(pickup);
-    if(!/^[0-9]+$/.test(pickup??"")||!Number.isSafeInteger(id)||id<1)return;
-    const number=numberOf(id);
-    setSignInTarget("/kitchen?pickup="+number);
-    setScope("pickup");
-    setSearch(number);
-    setFilter("all");
+    const number=new URLSearchParams(location.search).get("pickup");
+    const id=Number(number);
+    setPickup(number===null ? null : /^[0-9]+$/.test(number)&&Number.isSafeInteger(id)&&id>0 ? numberOf(id) : "");
   },[]);
   useEffect(()=>{
-    let live=true,inFlight=false;
-    const load=async()=>{if(inFlight)return;inFlight=true;try{const [orders,menu]=await Promise.all([request("/api/kitchen",{headers:key?{Authorization:"Bearer "+key}:{}}),request("/api/menu")]);
-      if(live){setRows(orders);setSold(menu.unavailable);setDenied(false);setError("");}
-    }catch(e){if(live){if(e.status===403){setDenied(true);setRows(null);}setError(e.message);}}finally{inFlight=false;}};
-    load();const t=setInterval(load,5000);return()=>{live=false;clearInterval(t);};
-  },[key,revision]);
+    if(pickup===undefined||pickup==="")return;
+    const controller=new AbortController();
+    const options={headers:key?{Authorization:"Bearer "+key}:{},signal:controller.signal};
+    let inFlight=false;
+    async function load(){
+      if(inFlight)return;
+      inFlight=true;
+      try{
+        if(focused){
+          const order=await request("/api/kitchen/pickup?id="+pickup,options);
+          if(!controller.signal.aborted)setRows([order]);
+        }else{
+          const [orders,menu]=await Promise.all([request("/api/kitchen",options),request("/api/menu",{signal:controller.signal})]);
+          if(!controller.signal.aborted){setRows(orders);setSold(menu.unavailable);}
+        }
+        if(!controller.signal.aborted){setDenied(false);setError("");}
+      }catch(e){
+        if(!controller.signal.aborted){
+          setDenied(e.status===403);
+          if(e.status===403||focused)setRows(null);
+          setError(e.message);
+        }
+      }finally{inFlight=false;}
+    }
+    load();const t=setInterval(load,5000);return()=>{controller.abort();clearInterval(t);};
+  },[key,revision,pickup,focused]);
   async function update(endpoint,body){
-    setBusy(true);setError("");
-    try{await request("/api/kitchen/"+endpoint,{method:"PATCH",headers:{"Content-Type":"application/json",...(key?{Authorization:"Bearer "+key}:{})},body:JSON.stringify(body)});setRevision(v=>v+1);}
-    catch(e){setError(e.message);}finally{setBusy(false);}
+    setBusy(true);setError("");setActionMessage("");
+    try{
+      await request("/api/kitchen/"+endpoint,{method:"PATCH",headers:{"Content-Type":"application/json",...(key?{Authorization:"Bearer "+key}:{})},body:JSON.stringify(body)});
+      if(focused){setRows(null);setActionMessage("已完成交餐。");}
+      setRevision(v=>v+1);
+    }catch(e){
+      if(focused){
+        setActionMessage(e.status===409?"餐單狀態已更新，請核對最新狀態。":e.message);
+        setRows(null);
+        setRevision(v=>v+1);
+      }else setError(e.message);
+    }finally{setBusy(false);}
   }
   async function exportStations(){
     setExporting(true);setExportMessage("");
@@ -57,10 +103,18 @@ export default function Kitchen(){
     const scopeMatches=scope==="all"||scope===r.mode||scope===r.table;
     return statusMatches&&scopeMatches&&validNumber&&(!exactNumber||exactNumber===String(r.id));
   });
-  return <><Header/><main className="shell section"><div className="menuTitle"><div><p className="eyebrow">KITCHEN</p><h1>店家接單台</h1></div><button className="outline" onClick={()=>setRevision(v=>v+1)}><RefreshCw size={16}/> 更新</button></div>
-    {error&&<p className="error" role="alert">{error}</p>}
-    {denied?<div className="sheet"><h2>店員登入</h2><p>託管網站請使用獲授權的店主帳號。</p><a className="primary" href={"/signin-with-chatgpt?return_to="+encodeURIComponent(signInTarget)} target="_top">使用 ChatGPT 登入</a>
-      <details><summary>使用自架店員金鑰</summary><form onSubmit={e=>{e.preventDefault();sessionStorage.setItem("he-ri-staff",entry);setKey(entry);setEntry("");setRevision(v=>v+1);}}><label>店員金鑰<input type="password" value={entry} onChange={e=>setEntry(e.target.value)} required/></label><button className="outline">登入</button></form></details></div>:rows===null?<p>正在讀取接單台…</p>:<>
+  let content;
+  if(pickup===""){
+    content=<p role="alert">取餐 QR 碼的號碼無效。</p>;
+  }else if(denied){
+    content=<div className="sheet"><h2>店員登入</h2><p>託管網站請使用獲授權的店主帳號。</p><a className="primary" href={"/signin-with-chatgpt?return_to="+encodeURIComponent(signInTarget)} target="_top">使用 ChatGPT 登入</a>
+      <details><summary>使用自架店員金鑰</summary><form onSubmit={e=>{e.preventDefault();sessionStorage.setItem("he-ri-staff",entry);setKey(entry);setEntry("");setRevision(v=>v+1);}}><label>店員金鑰<input type="password" value={entry} onChange={e=>setEntry(e.target.value)} required/></label><button className="outline">登入</button></form></details></div>;
+  }else if(rows===null){
+    content=!error&&<p>正在讀取{focused?"自取餐單":"接單台"}…</p>;
+  }else if(focused){
+    content=<KitchenTicket order={rows[0]} busy={busy} update={update} handoffOnly/>;
+  }else{
+    content=<>
     <div className="actions"><a className="outline" href="/kitchen/prep">查看備料單</a>
       <button className="outline" disabled={exporting} onClick={exportStations}>{exporting?"正在擷取訂單…":"下載分站出單檔"}</button></div>
     {exportMessage&&<p role="status">{exportMessage}</p>}
@@ -79,14 +133,19 @@ export default function Kitchen(){
     </div>
     <p id="kitchen-filter-count" className="muted" aria-live="polite">{!validNumber?"請輸入完整的取餐號碼。":
       filtered.length?"符合條件 "+filtered.length+" 張餐單":"目前沒有符合條件的訂單。"}</p>
-    <div className="kGrid">{filtered.map(r=><article className="sheet kitchenTicket" key={r.id}><div className="menuTitle"><h2>#{numberOf(r.id)}</h2><Mode table={r.table}/></div><p><b>{labels[r.status]}</b> · {new Date(r.created).toLocaleTimeString("zh-TW",{hour:"2-digit",minute:"2-digit",timeZone:"Asia/Taipei"})}</p><ul className="orderLines">{r.items.map(d=><li key={d.id}>{d.name}<b>×{d.qty}</b></li>)}</ul>{r.note&&<p>備註　{r.note}</p>}<p>{methods[r.paymentMethod]} {r.paymentMethod!=="cash"&&[environmentLabel(r.paymentEnv),paymentStates[r.paymentState]].join(" · ")}</p><div className="total"><span>合計</span><b>NT$ {r.total}</b></div>
-      <div className="actions">
-        {["ready","completed"].includes(r.status)&&<a className="outline" href={"/kitchen/handoff?id="+numberOf(r.id)}>交餐小票</a>}
-        {["sandbox","production"].includes(r.paymentEnv)&&<button className="outline" disabled={busy} onClick={()=>update("payment",{id:r.id})}>查詢金流</button>}
-        {transitions[r.status].map(s=><button disabled={busy||(s==="cancelled"?!canCancel(r):!canPrepare(r))} className={s==="cancelled"?"outline":"primary"} key={s}
-          onClick={()=>{if(s!=="cancelled"||window.confirm("取消這張訂單？"))update("status",{id:r.id,from:r.status,to:s});}}>{action[s]}</button>)}
-      </div></article>)}</div>
+    <div className="kGrid">{filtered.map(order=><KitchenTicket key={order.id} order={order} busy={busy} update={update}/>)}</div>
     <section className="sheet stock"><h2>餐點供應</h2>{dishes.map(d=><div key={d.id}><span>{d.name}</span><button className="outline" disabled={busy} onClick={()=>update("availability",{id:d.id,available:sold.includes(d.id)})}>{sold.includes(d.id)?"已售完 · 恢復供應":"供應中 · 標記售完"}</button></div>)}</section>
     <Timing staffKey={key}/>
-    {key&&<button className="outline" onClick={()=>{sessionStorage.removeItem("he-ri-staff");setKey("");}}>登出金鑰</button>}</>}</main><Footer/></>;
+    {key&&<button className="outline" onClick={()=>{sessionStorage.removeItem("he-ri-staff");setKey("");}}>登出金鑰</button>}
+    </>;
+  }
+
+  return <><Header/><main className={focused?"shell section narrow":"shell section"}>
+    {focused&&<a className="textLink" href="/kitchen">返回店家接單台</a>}
+    <div className="menuTitle"><div>{!focused&&<p className="eyebrow">KITCHEN</p>}<h1>{focused?"自取交餐":"店家接單台"}</h1></div>
+      {pickup!==""&&<button className="outline" onClick={()=>setRevision(v=>v+1)}><RefreshCw size={16}/> 更新</button>}</div>
+    {error&&<p className="error" role="alert">{error}</p>}
+    {actionMessage&&<p role="status">{actionMessage}</p>}
+    {content}
+  </main><Footer/></>;
 }

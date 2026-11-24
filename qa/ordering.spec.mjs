@@ -38,6 +38,11 @@ test("a ready pickup QR opens the exact staff order without sharing the customer
   const staff=await browser.newContext({viewport:{width:360,height:780}});
   try{
     const kitchen=await staff.newPage();
+    const lookups=[];
+    kitchen.on("request",req=>{
+      const url=new URL(req.url());
+      if(url.pathname.startsWith("/api/"))lookups.push(url.pathname+url.search);
+    });
     await kitchen.goto(scanned.data);
     await expect(kitchen.getByRole("heading",{name:"店員登入"})).toBeVisible();
     await expect(kitchen.getByRole("link",{name:"使用 ChatGPT 登入"}))
@@ -46,15 +51,18 @@ test("a ready pickup QR opens the exact staff order without sharing the customer
     await kitchen.getByText("使用自架店員金鑰").click();
     await kitchen.getByLabel("店員金鑰",{exact:true}).fill("local-test-kitchen");
     await kitchen.getByRole("button",{name:"登入",exact:true}).click();
-    await expect(kitchen.getByLabel("管道或桌號")).toHaveValue("pickup");
-    await expect(kitchen.getByRole("searchbox",{name:"取餐號碼"})).toHaveValue(number);
+    await expect(kitchen.getByRole("heading",{name:"自取交餐"})).toBeVisible();
+    await expect(kitchen.getByRole("link",{name:"返回店家接單台"})).toHaveAttribute("href","/kitchen");
     const cards=kitchen.locator(".kitchenTicket");
     await expect(cards).toHaveCount(1);
     await expect(cards.getByRole("heading",{name:"#"+number,exact:true})).toBeVisible();
     await expect(cards.getByText("請取餐時核對")).toBeVisible();
+    await expect(cards.getByRole("button",{name:"完成交餐"})).toBeInViewport();
+    expect(new Set(lookups)).toEqual(new Set(["/api/kitchen/pickup?id="+number]));
     const receipt=async()=>(await request.get("/api/ticket",{headers:{"X-Ticket":token}})).json();
     expect((await receipt()).status).toBe("ready");
     await cards.getByRole("button",{name:"完成交餐"}).click();
+    await expect(kitchen.getByRole("status")).toHaveText("已完成交餐。");
     await expect(cards.getByText("已完成",{exact:true})).toBeVisible();
     await page.getByRole("button",{name:"更新進度"}).click();
     await expect(page.getByText("已完成",{exact:true})).toBeVisible();
@@ -64,6 +72,63 @@ test("a ready pickup QR opens the exact staff order without sharing the customer
     await expect(cards.getByText("已完成",{exact:true})).toBeVisible();
     expect((await request.get("/api/kitchen/handoff?id="+otherId,{headers}).then(r=>r.json())).status).toBe("ready");
   }finally{await staff.close();}
+});
+
+test("pickup lookup stays scoped and a stale handoff shows the committed status",async({page,request})=>{
+  const headers={Authorization:"Bearer local-test-kitchen"};
+  async function order(mode){
+    const token=randomUUID();
+    const response=await request.post("/api/orders",{data:{token,mode,table:mode==="table"?"A03":null,note:"",items:[{id:"sencha",qty:1}]}});
+    expect(response.ok()).toBe(true);
+    return {...await response.json(),token};
+  }
+  async function status(id,from,to){
+    return request.patch("/api/kitchen/status",{headers,data:{id,from,to}});
+  }
+  async function prepare(id){
+    expect((await status(id,"pending","preparing")).ok()).toBe(true);
+    expect((await status(id,"preparing","ready")).ok()).toBe(true);
+  }
+
+  const pickup=await order("pickup"),table=await order("table");
+  const number=String(pickup.id).padStart(4,"0"),lookup="/api/kitchen/pickup?id=";
+  expect((await request.get(lookup+number)).status()).toBe(403);
+  expect((await request.get(lookup+"0",{headers})).status()).toBe(400);
+  expect((await request.get(lookup+table.id,{headers})).status()).toBe(404);
+  expect((await status(table.id,"pending","cancelled")).ok()).toBe(true);
+  await page.addInitScript(()=>sessionStorage.setItem("he-ri-staff","local-test-kitchen"));
+  await page.goto("/kitchen?pickup=0");
+  await expect(page.getByRole("alert")).toHaveText("取餐 QR 碼的號碼無效。");
+  await page.goto("/kitchen?pickup="+number);
+  await expect(page.getByText("等待接單",{exact:true})).toBeVisible();
+  await expect(page.getByRole("button",{name:"接單製作"})).toHaveCount(0);
+  await prepare(pickup.id);
+  await page.getByRole("button",{name:"更新",exact:true}).click();
+  const handoff=page.getByRole("button",{name:"完成交餐"});
+  await expect(handoff).toBeEnabled();
+  await page.route("**/api/kitchen/status",async route=>{
+    expect((await status(pickup.id,"ready","completed")).ok()).toBe(true);
+    await route.continue();
+  },{times:1});
+  const rejected=page.waitForResponse(res=>res.url().endsWith("/api/kitchen/status")&&res.status()===409);
+  await handoff.click();
+  await rejected;
+  await expect(page.getByRole("status")).toHaveText("餐單狀態已更新，請核對最新狀態。");
+  await expect(page.getByText("已完成",{exact:true})).toBeVisible();
+  await expect(handoff).toHaveCount(0);
+  const progress=await request.get("/api/ticket?progress=1",{headers:{"X-Ticket":pickup.token}});
+  expect((await progress.json()).statusHistory.filter(step=>step.status==="completed")).toHaveLength(1);
+
+  for(let index=0;index<20;index++){
+    const newer=await order("pickup");
+    expect((await status(newer.id,"pending","cancelled")).ok()).toBe(true);
+  }
+  expect((await (await request.get("/api/kitchen",{headers})).json()).some(row=>row.id===pickup.id)).toBe(false);
+  const archived=await request.get(lookup+number,{headers});
+  expect(archived.headers()["cache-control"]).toBe("no-store");
+  expect(await archived.json()).toMatchObject({id:pickup.id,mode:"pickup",status:"completed"});
+  await page.reload();
+  await expect(page.getByText("已完成",{exact:true})).toBeVisible();
 });
 
 test("a staff handoff slip rechecks concurrent handoff and prints only the selected order",async({page,request})=>{
