@@ -1,0 +1,14 @@
+{
+  "requested": [{"sku": "KIT-01", "quantity": 4}, {"sku": "WRAP-01", "quantity": 2}],
+  "stages": [
+    {"stage": "shortage", "status": 409, "receipt_exists": false, "available": [
+      {"sku": "KIT-01", "available": 20}, {"sku": "WRAP-01", "available": 1}
+    ]},
+    {"stage": "reserved", "status": 201, "receipt_exists": true, "available": [
+      {"sku": "KIT-01", "available": 16}, {"sku": "WRAP-01", "available": 0}
+    ]},
+    {"stage": "replayed", "status": 200, "receipt_exists": true, "available": [
+      {"sku": "KIT-01", "available": 16}, {"sku": "WRAP-01", "available": 0}
+    ]}
+  ]
+}

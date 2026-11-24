@@ -4,6 +4,7 @@ from pathlib import Path
 import re
 import sqlite3
 import time
+from uuid import uuid4
 
 DOCK_ID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}")
 DOCK_SKU = re.compile(r"[A-Z0-9][A-Z0-9-]{0,31}")
@@ -28,6 +29,12 @@ CREATE TABLE IF NOT EXISTS reservations (
     sku TEXT NOT NULL REFERENCES products(sku),
     quantity INTEGER NOT NULL CHECK (quantity > 0),
     state TEXT NOT NULL CHECK (state IN ('held', 'released'))
+);
+CREATE TABLE IF NOT EXISTS reservation_batch_items (
+    batch_id TEXT NOT NULL,
+    reservation_id TEXT NOT NULL UNIQUE REFERENCES reservations(id),
+    initial_expires_at_ms INTEGER NOT NULL,
+    PRIMARY KEY (batch_id, reservation_id)
 );
 CREATE TABLE IF NOT EXISTS fulfillments (
     reservation_id TEXT NOT NULL REFERENCES reservations(id),
@@ -198,19 +205,62 @@ class Store:
                 if (existing["sku"], existing["quantity"]) != (sku, quantity):
                     raise Conflict("Idempotency key already used with different input")
                 return self.reservation(existing), False
-            if not conn.execute("SELECT 1 FROM products WHERE sku=?", (sku,)).fetchone():
-                raise Missing("Unknown SKU")
-            updated = conn.execute(
-                "UPDATE products SET available=available-? WHERE sku=? AND available>=?",
-                (quantity, sku, quantity),
-            )
-            if updated.rowcount != 1:
-                raise Conflict("Insufficient stock")
             expires_at_ms = now + self.ttl_ms
-            conn.execute("""INSERT INTO reservations (id, sku, quantity, state, expires_at_ms)
-                            VALUES (?, ?, ?, 'held', ?)""", (key, sku, quantity, expires_at_ms))
+            self.create_hold(conn, key, sku, quantity, expires_at_ms)
             return {"id": key, "sku": sku, "quantity": quantity, "state": "held",
                     "expires_at_ms": expires_at_ms}, True
+
+    @staticmethod
+    def create_hold(conn, key, sku, quantity, expires_at_ms):
+        if not conn.execute("SELECT 1 FROM products WHERE sku=?", (sku,)).fetchone():
+            raise Missing("Unknown SKU")
+        updated = conn.execute(
+            "UPDATE products SET available=available-? WHERE sku=? AND available>=?",
+            (quantity, sku, quantity),
+        )
+        if updated.rowcount != 1:
+            raise Conflict("Insufficient stock")
+        conn.execute("""INSERT INTO reservations (id, sku, quantity, state, expires_at_ms)
+                        VALUES (?, ?, ?, 'held', ?)""", (key, sku, quantity, expires_at_ms))
+
+    @staticmethod
+    def reservation_batch(conn, batch_id):
+        rows = conn.execute("""SELECT r.id, r.sku, r.quantity, b.initial_expires_at_ms
+                               FROM reservation_batch_items b JOIN reservations r ON r.id=b.reservation_id
+                               WHERE b.batch_id=? ORDER BY r.sku""", (batch_id,)).fetchall()
+        if not rows:
+            return None
+        return {
+            "batch_id": batch_id,
+            "expires_at_ms": rows[0]["initial_expires_at_ms"],
+            "items": [{"id": row["id"], "sku": row["sku"], "quantity": row["quantity"]} for row in rows],
+        }
+
+    def reserve_batch(self, batch_id, items):
+        items = sorted(items)
+        with self.current_inventory() as (conn, now):
+            receipt = self.reservation_batch(conn, batch_id)
+            if receipt:
+                if [(item["sku"], item["quantity"]) for item in receipt["items"]] != items:
+                    raise Conflict("Reservation batch key already used with different items")
+                return receipt, False
+            expires_at_ms = now + self.ttl_ms
+            for sku, quantity in items:
+                key = uuid4().hex
+                try:
+                    self.create_hold(conn, key, sku, quantity, expires_at_ms)
+                except (Conflict, Missing) as error:
+                    raise type(error)(f"{sku}: {error}") from error
+                conn.execute("INSERT INTO reservation_batch_items VALUES (?,?,?)",
+                             (batch_id, key, expires_at_ms))
+            return self.reservation_batch(conn, batch_id), True
+
+    def reservation_batch_receipt(self, batch_id):
+        with closing(self.connect()) as conn:
+            receipt = self.reservation_batch(conn, batch_id)
+            if receipt is None:
+                raise Missing("Unknown reservation batch")
+            return receipt
 
     def renew(self, key, renewal_id, expected_deadline, seconds):
         with self.current_inventory() as (conn, _):

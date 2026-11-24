@@ -18,6 +18,8 @@ python -m uvicorn stockroom.api:app
 | GET /inventory | 讀取商品總量與可用量 |
 | GET /inventory-snapshot | 回傳商品總量、可用量，以及同一交易的結算時間 |
 | POST /reservations | 傳入 sku、quantity 及 Idempotency-Key 標頭。相同鍵與內容可取得目前保留狀態 |
+| POST /reservation-batches | 以一個批號一次保留多種商品。所有品項共同提交 |
+| GET /reservation-batches/{batch_id} | 依批號查回首次建立時的品項保留編號和原始期限 |
 | DELETE /reservations/{key} | 釋放保留。重複取消只會歸還一次 |
 | POST /reservations/{key}/renewals | 依目前期限延長仍有效的保留，以 Idempotency-Key 識別這次續期 |
 | POST /reservations/{key}/releases | 以 Idempotency-Key 指定本次減量單號，將指定的 quantity 件釋放給其他訂單 |
@@ -35,6 +37,18 @@ python -m uvicorn stockroom.api:app
 庫存不足、同鍵不同內容回傳 409。未知商品或保留回傳 404。輸入格式錯誤回傳 422。失敗的請求不會占用鍵。
 
 `GET /inventory-snapshot` 回傳 `captured_at_ms` 和依 SKU 排序的 `products`，兩者取自同一筆會結算到期保留的交易。結果包含全庫商品，可直接儲存為 JSON，當作 [Count Relay 實物盤點核對](../count-relay/README.md#核對實物盤點與-stockroom-庫存) 的帳面庫存依據。
+
+## 一次保留多種商品
+
+以 `POST /reservation-batches` 帶上 `Idempotency-Key: order-24`。請求可含一至 100 個不同 SKU。範例假設倉庫已有 `KIT-01` 與 `WRAP-01`。
+
+```json
+{"items":[{"sku":"KIT-01","quantity":4},{"sku":"WRAP-01","quantity":2}]}
+```
+
+若包材只剩一件，整批回傳 409，套件依然有 20 件可用。補貨後可沿用原批號，成功回傳 201，兩種商品同時保留。遇到連線中斷時，可用 `GET /reservation-batches/order-24` 取回收據，或以任意品項順序重送取得 200。已成功的批號改用不同的品項或數量會回傳 409。
+
+收據中的商品保留編號可直接交給出貨快照，也可分別續期或放回。收據保留首次共用的到期時間，現況可按各保留編號查詢。執行 `python -m pytest -q tests/test_reservation_batches.py` 可重跑補貨後重試、兩台服務爭用最後一批存貨、續期與舊資料庫相容的案例。[作品站示範結果](examples/reservation-batch-demo.json)
 
 ## 一次擷取多張訂單給出貨排程
 

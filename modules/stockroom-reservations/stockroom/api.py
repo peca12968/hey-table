@@ -30,6 +30,28 @@ class Reservation(Order):
     expires_at_ms: int | None
 
 
+class ReservationBatch(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    items: list[Order] = Field(min_length=1, max_length=100)
+
+    @field_validator("items")
+    @classmethod
+    def distinct_products(cls, items):
+        if len({item.sku for item in items}) != len(items):
+            raise ValueError("Repeat SKU in reservation batch")
+        return items
+
+
+class ReservedItem(Order):
+    id: str
+
+
+class ReservationBatchReceipt(BaseModel):
+    batch_id: str
+    expires_at_ms: int
+    items: list[ReservedItem]
+
+
 class Product(BaseModel):
     sku: str
     capacity: int
@@ -210,6 +232,20 @@ def create_app(path: Path, *, ttl_seconds=900, clock=time.time):
     @app.get("/return-batches/{batch_id}", response_model=ReturnBatchReceipt)
     def return_batch_receipt(batch_id: str):
         return store.return_batch_receipt(batch_id)
+
+    @app.post("/reservation-batches", response_model=ReservationBatchReceipt, status_code=201,
+              responses={200: {"model": ReservationBatchReceipt, "description": "Original reservation batch receipt"}})
+    def reserve_batch(batch: ReservationBatch, response: Response, idempotency_key: RequestKey):
+        receipt, created = store.reserve_batch(idempotency_key, [(item.sku, item.quantity) for item in batch.items])
+        response.headers["Cache-Control"] = "no-store"
+        if not created:
+            response.status_code = 200
+        return receipt
+
+    @app.get("/reservation-batches/{batch_id}", response_model=ReservationBatchReceipt)
+    def reservation_batch_receipt(batch_id: str, response: Response):
+        response.headers["Cache-Control"] = "no-store"
+        return store.reservation_batch_receipt(batch_id)
 
     @app.post("/reservations", response_model=Reservation, status_code=201,
               responses={200: {"model": Reservation, "description": "Idempotent replay"}})
