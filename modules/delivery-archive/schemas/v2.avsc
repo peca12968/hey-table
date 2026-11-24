@@ -1,0 +1,11 @@
+{
+  "type": "record", "name": "DeliveryReceipt", "namespace": "archive.delivery",
+  "fields": [
+    {"name": "event_id", "type": "string"},
+    {"name": "shipment_id", "type": "string"},
+    {"name": "station", "type": "string"},
+    {"name": "received_ms", "type": "long"},
+    {"name": "dock", "type": ["null", "string"], "default": null},
+    {"name": "package_count", "type": "int", "default": 1}
+  ]
+}

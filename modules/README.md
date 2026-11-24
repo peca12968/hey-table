@@ -42,5 +42,12 @@ python scripts/verify-operations.py cashier
 - [proto-relay-probe](proto-relay-probe/README.md)
 - [burn-pair](burn-pair/README.md)
 - [warehouse-pick-route](warehouse-pick-route/README.md)
+- [coldroom-inbox](coldroom-inbox/README.md)
+- [count-relay](count-relay/README.md)
+- [bay-signal](bay-signal/README.md)
+- [delivery-archive](delivery-archive/README.md)
+- [parcel-event-windows](parcel-event-windows/README.md)
+- [track-thinner](track-thinner/README.md)
+- [shelf-backtest](shelf-backtest/README.md)
 
 [整合驗證](../.github/workflows/system.yml)

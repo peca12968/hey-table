@@ -413,3 +413,176 @@ jobs:
     defaults:
       run:
         working-directory: modules/warehouse-pick-route
+  coldroom-inbox-replay:
+    strategy:
+      matrix:
+        os:
+        - ubuntu-latest
+        - windows-latest
+    runs-on: ${{ matrix.os }}
+    steps:
+    - uses: actions/checkout@v7
+    - uses: actions/setup-node@v6
+      with:
+        node-version: '26'
+        cache: npm
+        cache-dependency-path: modules/coldroom-inbox/package-lock.json
+    - run: npm ci --no-audit --no-fund
+    - run: npm test
+    - run: npm run demo
+    - uses: actions/setup-python@v7
+      with:
+        python-version: '3.12'
+    - uses: actions/checkout@v7
+      with:
+        ref: 320c6586eaeb233e127ba999e5903f95d37fa38c
+        path: modules/coldroom-inbox/legacy
+    - uses: actions/checkout@v7
+      with:
+        ref: 8183b10d648d90f3cdc445298abb58e1a2ca560e
+        path: modules/coldroom-inbox/thaw-window
+    - run: node coverage-demo.mjs legacy/inbox.mjs thaw-window/thaw.py
+    defaults:
+      run:
+        working-directory: modules/coldroom-inbox
+  coldroom-inbox-thaw-window-test:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os:
+        - ubuntu-latest
+        - windows-latest
+    steps:
+    - uses: actions/checkout@v7
+    - uses: actions/setup-python@v7
+      with:
+        python-version: '3.12'
+    - run: python -m unittest -v
+    - run: python demo.py
+    defaults:
+      run:
+        working-directory: modules/coldroom-inbox/modules/thaw-window
+  count-relay-verify:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os:
+        - ubuntu-latest
+        - windows-latest
+    steps:
+    - uses: actions/checkout@v7
+    - uses: actions/setup-python@v7
+      with:
+        python-version: '3.12'
+    - run: python -m unittest -v
+    - run: python demo.py
+    - run: python demo_delta.py
+    defaults:
+      run:
+        working-directory: modules/count-relay
+  bay-signal-verify:
+    strategy:
+      matrix:
+        os:
+        - ubuntu-latest
+        - windows-latest
+    runs-on: ${{ matrix.os }}
+    steps:
+    - uses: actions/checkout@v7
+    - uses: actions/setup-node@v6
+      with:
+        node-version: '24'
+        cache: npm
+        cache-dependency-path: modules/bay-signal/package-lock.json
+    - run: npm ci
+    - run: npm run check
+    - run: npm test
+    - run: npx playwright install --with-deps chromium
+    - run: npm run test:browser
+    defaults:
+      run:
+        working-directory: modules/bay-signal
+  delivery-archive-archive:
+    strategy:
+      matrix:
+        os:
+        - ubuntu-latest
+        - windows-latest
+        python:
+        - '3.12'
+        - '3.13'
+    runs-on: ${{ matrix.os }}
+    steps:
+    - uses: actions/checkout@v7
+    - uses: actions/setup-python@v7
+      with:
+        python-version: ${{ matrix.python }}
+    - run: python -m pip install -r requirements-test.txt
+    - run: python -m unittest -v
+    defaults:
+      run:
+        working-directory: modules/delivery-archive
+  parcel-event-windows-stream:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os:
+        - ubuntu-latest
+        - windows-latest
+        java:
+        - '21'
+        - '25'
+    steps:
+    - uses: actions/checkout@v7
+    - uses: actions/setup-java@v6
+      with:
+        distribution: temurin
+        java-version: ${{ matrix.java }}
+    - uses: actions/setup-python@v7
+      with:
+        python-version: '3.13'
+    - run: python -m unittest -v
+    - run: python batch_demo.py
+    - run: java src/ParcelWindows.java examples/scans.tsv
+    - uses: actions/checkout@v7
+      with:
+        ref: fd2d41f4f732d0157c6fcf56571061604627e366
+        path: modules/parcel-event-windows/legacy
+    - run: python legacy_demo.py legacy
+    defaults:
+      run:
+        working-directory: modules/parcel-event-windows
+  track-thinner-verify:
+    strategy:
+      matrix:
+        os:
+        - ubuntu-latest
+        - windows-latest
+    runs-on: ${{ matrix.os }}
+    steps:
+    - uses: actions/checkout@v7
+    - uses: actions/setup-python@v7
+      with:
+        python-version: '3.12'
+    - run: python -m unittest -v
+    - run: python thin.py examples/loading-bay.json --tolerance-mm 750 --split-gap-ms 1500
+    defaults:
+      run:
+        working-directory: modules/track-thinner
+  shelf-backtest-backtest:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os:
+        - ubuntu-latest
+        - windows-latest
+    steps:
+    - uses: actions/checkout@v7
+    - uses: actions/setup-python@v7
+      with:
+        python-version: '3.12'
+    - run: python -m unittest -v
+    - run: python backtest.py examples/sales.csv --first 2026-06-15 --last 2026-06-18 --truth-as-of 2026-06-22 --details
+    defaults:
+      run:
+        working-directory: modules/shelf-backtest
