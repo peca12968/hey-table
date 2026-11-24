@@ -1,12 +1,13 @@
 "use client";
 import {useEffect,useState} from "react";
 import {Header,Footer,request} from "../../shared";
-import {dishes,numberOf} from "../../../lib/menu.mjs";
+import {dishes,numberOf,withItemNotes} from "../../../lib/menu.mjs";
+import {ItemNotesEditor} from "../../item-notes";
 import "./pickup.css";
 
 const endpoint="/api/kitchen/create-pickup";
 const draftKey="he-ri-staff-pickup-draft";
-const empty={quantities:{},note:"",attempt:null,result:null};
+const empty={quantities:{},lineNotes:{},note:"",attempt:null,result:null};
 
 function staffHeaders(){
   const key=sessionStorage.getItem("he-ri-staff");
@@ -46,7 +47,7 @@ export default function CreatePickup(){
     return true;
   }
 
-  const {quantities,note,attempt,result}=draft??empty;
+  const {quantities,lineNotes={},note,attempt,result}=draft??empty;
   const lines=dishes.filter(dish=>Number(quantities[dish.id])>0);
   const total=lines.reduce((amount,dish)=>amount+dish.price*Number(quantities[dish.id]),0);
   const exceedsSupply=menu&&lines.some(dish=>Number(quantities[dish.id])>availableQuantity(menu,dish.id));
@@ -58,7 +59,7 @@ export default function CreatePickup(){
     if(busy||!menu||(!attempt&&(!lines.length||exceedsSupply)))return;
     setError("");
     const payload=attempt??{token:crypto.randomUUID(),note:note.trim(),expectedTotal:total,
-      items:lines.map(dish=>({id:dish.id,qty:Number(quantities[dish.id])}))};
+      items:withItemNotes(lines.map(dish=>({id:dish.id,qty:Number(quantities[dish.id])})),lineNotes)};
     const pending={...draft,attempt:payload};
     if(!saveDraft(pending)){
       setError("瀏覽器無法保存送單資料。請開啟網站儲存權限後再送單。");
@@ -119,9 +120,13 @@ export default function CreatePickup(){
           " · 已售完":menu.remaining?.[dish.id]!==undefined?" · 今日剩餘 "+menu.remaining[dish.id]+" 份":""}</small></label>
         <input id={"qty-"+dish.id} type="number" inputMode="numeric" min="0" max="20" step="1" value={quantities[dish.id]??""}
           disabled={locked||(!quantities[dish.id]&&availableQuantity(menu,dish.id)===0)} onChange={event=>{
-            setError("");setDraft({...draft,quantities:{...quantities,[dish.id]:event.target.value}});
+            const value=event.target.value,nextNotes={...lineNotes};
+            if(!Number(value))delete nextNotes[dish.id];
+            setError("");setDraft({...draft,quantities:{...quantities,[dish.id]:value},lineNotes:nextNotes});
           }}/>
       </li>)}</ul>
+      {lines.length>0&&<ItemNotesEditor dishes={lines} notes={lineNotes} disabled={locked}
+        onChange={(id,value)=>setDraft({...draft,lineNotes:{...lineNotes,[id]:value}})}/>}
       <label className="note">訂單備註<textarea maxLength={160} value={note} disabled={locked}
         placeholder="例如：不要餐具" onChange={event=>setDraft({...draft,note:event.target.value})}/></label>
       <div className="total"><span>合計</span><b>NT$ {attempt?.expectedTotal??total}</b></div>

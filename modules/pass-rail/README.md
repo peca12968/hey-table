@@ -55,7 +55,7 @@ python rail.py --db rail.db reconcile bar http://127.0.0.1:8766
 python rail.py --db rail.db pull http://127.0.0.1:18841 examples/routes.json
 ```
 
-在禾日食堂私人預覽中，店員可從接單台選擇「下載分站出單檔」，再以 `python rail.py --db rail.db sync 下載的檔案.json examples/routes.json` 匯入。檔案包含分站所需的桌號、餐點數量、備註與狀態。
+在禾日食堂私人預覽中，店員可從接單台選擇「下載分站出單檔」，再以 `python rail.py --db rail.db sync 下載的檔案.json examples/routes.json` 匯入。各站小票會列出餐單備註，以及本站品項各自的備註。整合演練會驗證只有飲品台的煎茶呈現「分開包裝 <熱>」，並把角括號當文字輸出。
 
 完整 API 與店員匯出檔涵蓋所有處理中的訂單，以及最近 20 張結單。配送帳會保存完整清單已涵蓋的最大訂單編號，並停發範圍內已離開清單的工作。將昨天的檔案匯入今天的帳本時，後成立的新單可繼續配送，早已離開清單的舊單也不會復活。傳入普通 JSON 陣列時，程式只更新列出的編號。第一次接單時會保存當下的分站內容，後續改動分站設定不會把已成立的熱台單改派他站。
 

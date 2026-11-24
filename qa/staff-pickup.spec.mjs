@@ -18,6 +18,8 @@ test("mobile staff recover a lost pickup confirmation and share the same receipt
   await page.getByRole("link",{name:"代建自取單"}).click();
   const tea=page.getByRole("spinbutton",{name:/日式熱煎茶/});
   await tea.fill("2");
+  await page.locator(".itemNotes summary").click();
+  await page.getByLabel("日式熱煎茶備註").fill("兩杯分開包裝");
   await page.getByLabel("訂單備註").fill("不要餐具");
   await expect(page.locator(".total")).toHaveText("合計NT$ 90");
   expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBe(360);
@@ -39,6 +41,7 @@ test("mobile staff recover a lost pickup confirmation and share the same receipt
   await page.getByRole("button",{name:"確認建立自取單"}).click();
   await expect(page.getByRole("alert")).toContainText("尚未收到送單結果");
   expect(accepted).toMatchObject({mode:"pickup",source:"staff",paymentMethod:"cash",note:"不要餐具",total:90});
+  expect(accepted.items).toMatchObject([{id:"sencha",qty:2,note:"兩杯分開包裝"}]);
   const unavailable=available=>request.patch("/api/kitchen/availability",{headers,data:{id:"sencha",available}});
   expect((await unavailable(false)).ok()).toBe(true);
   try{
@@ -55,6 +58,7 @@ test("mobile staff recover a lost pickup confirmation and share the same receipt
     await expect(link).toBeVisible();
     const [receipt]=await Promise.all([page.waitForEvent("popup"),link.click()]);
     await expect(receipt.getByText("店員代建自取",{exact:true})).toBeVisible();
+    await expect(receipt.getByText(/兩杯分開包裝/)).toBeVisible();
     await expect(receipt.getByText("等待接單",{exact:true}).first()).toBeVisible();
     await receipt.close();
 

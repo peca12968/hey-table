@@ -604,7 +604,7 @@ test("reorder adds available quantities at today's prices and submits only after
   const staff={Authorization:"Bearer local-test-kitchen"};
   const token=randomUUID();
   const original=await request.post("/api/orders",{data:{token,mode:"table",table:"A03",note:"舊餐單備註",
-    items:[{id:"oyakodon",qty:3},{id:"sencha",qty:1}]}});
+    items:[{id:"oyakodon",qty:3,note:"不用淋醬"},{id:"sencha",qty:1}]}});
   expect(original.ok()).toBe(true);
   const {id}=await original.json();
   expect((await request.patch("/api/kitchen/status",{headers:staff,data:{id,from:"pending",to:"cancelled"}})).ok()).toBe(true);
@@ -646,6 +646,7 @@ test("reorder adds available quantities at today's prices and submits only after
     expect(newer).not.toBe(token);
     const receipt=await (await request.get("/api/ticket",{headers:{"X-Ticket":newer}})).json();
     expect(receipt).toMatchObject({table:"A03",note:"本次備註",total:3400,items:[{id:"oyakodon",qty:20,price:170}]});
+    expect(receipt.items[0].note).toBeUndefined();
   }finally{
     expect((await mark(true)).ok()).toBe(true);
   }
@@ -1040,9 +1041,9 @@ test("staff downloads a fresh station export that remains safe to re-import out 
   const move=async(id,from,to)=>{
     expect((await request.patch("/api/kitchen/status",{headers,data:{id,from,to}})).ok()).toBe(true);
   };
-  async function accepted(note){
+  async function accepted(note,itemNote){
     const response=await request.post("/api/orders",{data:{token:randomUUID(),mode:"table",table:"A03",
-      items:[{id:"oyakodon",qty:1},{id:"sencha",qty:2}],note}});
+      items:[{id:"oyakodon",qty:1},{id:"sencha",qty:2,...(itemNote?{note:itemNote}:{})}],note}});
     expect(response.ok()).toBe(true);
     const {id}=await response.json();
     await move(id,"pending","preparing");
@@ -1064,22 +1065,26 @@ test("staff downloads a fresh station export that remains safe to re-import out 
     const path=await file.path();
     return {path,data:JSON.parse(await readFile(path,"utf8"))};
   }
-  const first=await accepted("兩杯分裝");
+  const first=await accepted("兩杯分裝","外帶杯");
   const old=await download();
   expect(old.data.format).toBe("hey-table.station-orders.v1");
   expect(old.data.throughId).toBe(first);
   const ticket=old.data.orders.find(order=>order.id===first);
   expect(ticket).toMatchObject({mode:"table",table:"A03",status:"preparing",note:"兩杯分裝"});
-  expect(ticket.items).toEqual([{id:"oyakodon",name:"雞肉親子丼",qty:1},{id:"sencha",name:"日式熱煎茶",qty:2}]);
+  expect(ticket.items).toEqual([{id:"oyakodon",name:"雞肉親子丼",qty:1},{id:"sencha",name:"日式熱煎茶",qty:2,note:"外帶杯"}]);
   for(const order of old.data.orders){
     expect(Object.keys(order).sort()).toEqual(["created","id","items","mode","note","status","table"]);
-    for(const line of order.items)expect(Object.keys(line).sort()).toEqual(["id","name","qty"]);
+    for(const line of order.items){
+      expect(Object.keys(line).sort()).toEqual(line.note===undefined?["id","name","qty"]:["id","name","note","qty"]);
+      if(line.note!==undefined)expect(line.note).toMatch(/^[\s\S]{1,80}$/);
+    }
   }
   await move(first,"preparing","ready");
   const second=await accepted("第二張");
   const recent=await download();
   expect(recent.data.throughId).toBe(second);
   expect(recent.data.orders.find(order=>order.id===first).status).toBe("ready");
+  expect(recent.data.orders.find(order=>order.id===second).items.every(line=>line.note===undefined)).toBe(true);
   {
     const root=process.env.RAIL_PROJECT||fileURLToPath(new URL("../modules/pass-rail/",import.meta.url));
     const db=test.info().outputPath("station-rail.db");

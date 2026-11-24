@@ -66,8 +66,14 @@ def validate_order(order):
                 or not isinstance(line["name"], str) or not line["name"]
                 or type(line["qty"]) is not int or line["qty"] <= 0):
             raise ValueError("Invalid or repeated dish")
+        note = line.get("note", "")
+        if not isinstance(note, str) or len(note) > 80:
+            raise ValueError("Invalid dish note")
         seen.add(line["id"])
-        items.append({key: line[key] for key in ("id", "name", "qty")})
+        item = {key: line[key] for key in ("id", "name", "qty")}
+        if note.strip():
+            item["note"] = note.strip()
+        items.append(item)
     return dict(id=order["id"], created=order["created"], table=order["table"], mode=order["mode"],
                 note=order["note"], items=sorted(items, key=lambda line: line["id"]))
 

@@ -2,6 +2,7 @@
 import {useEffect,useState} from "react";
 import {Printer} from "lucide-react";
 import {Header,Footer,Mode,request} from "../../shared";
+import {ItemNote} from "../../item-notes";
 import {numberOf} from "../../../lib/menu.mjs";
 import "./slip.css";
 
@@ -64,7 +65,7 @@ export default function Handoff(){
       <p>禾日食堂 · 交餐小票</p>
       <h2>取餐號碼 {numberOf(slip.id)}</h2>
       <div className="receiptMeta"><Mode table={slip.table} source={slip.source}/><strong>{slip.status==="ready"?"待交餐":"已交餐"}</strong></div>
-      <ul className="orderLines">{slip.items.map((item,index)=><li key={index}><span>{item.name}</span><strong>× {item.qty}</strong></li>)}</ul>
+      <ul className="orderLines">{slip.items.map((item,index)=><li key={index}><div><span>{item.name}</span><ItemNote note={item.note}/></div><strong>× {item.qty}</strong></li>)}</ul>
     </article>}
     {message&&<p className="slipControl" role="status">{message}</p>}
     {slip?<button className="primary slipControl" disabled={busy} onClick={print}><Printer size={16}/>列印交餐小票</button>:

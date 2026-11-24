@@ -20,12 +20,15 @@ test("mobile table applies the best bundles, pays with 全支付 and splits the 
   await page.reload();
   await expect(cart).toContainText("NT$ 415");
   await cart.click();
+  await page.locator(".itemNotes summary").click();
+  await page.getByLabel("海苔柴魚煎餃備註").fill("醬分開");
   await page.getByRole("combobox").selectOption("px_pay_plus");
   await page.getByRole("button",{name:"確認送出訂單"}).click();
   await page.waitForURL("**/ticket#*");
   const ticket=async()=> (await request.get("/api/ticket",{headers:{"X-Ticket":new URL(page.url()).hash.slice(1)}})).json();
   const first=await ticket();
   expect([first.table,first.paymentMethod,first.combo.quote.discount,first.total]).toEqual(["A03","px_pay_plus",75,415]);
+  expect(first.items.find(item=>item.id==="gyoza").note).toBe("醬分開");
   await expect(page.getByText("餐點原價 NT$ 490 · 套餐折抵 NT$ 75")).toBeVisible();
   await page.getByRole("button",{name:"開始模擬付款 · NT$ 415"}).click();
   await page.getByRole("button",{name:"模擬付款成功"}).click();

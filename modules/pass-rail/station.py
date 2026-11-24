@@ -70,7 +70,11 @@ def handler(path, station):
 
 def render(ticket):
     service = escape(ticket["table"]) + " 桌內用" if ticket["mode"] == "table" else "線上自取"
-    lines = "".join(f'<li><b>×{line["qty"]}</b> {escape(line["name"])}</li>' for line in ticket["items"])
+    lines = []
+    for line in ticket["items"]:
+        note = line.get("note")
+        item_note = f'<p class="note">備註　{escape(note)}</p>' if isinstance(note, str) and note.strip() else ""
+        lines.append(f'<li><b>×{line["qty"]}</b> {escape(line["name"])}{item_note}</li>')
     note = f'<p class="note">備註　{escape(ticket["note"])}</p>' if ticket["note"] else ""
     return f"""<!doctype html>
 <html lang="zh-Hant"><meta charset="utf-8"><title>廚房單 #{ticket["id"]:04d}</title>
@@ -78,7 +82,7 @@ def render(ticket):
 h1 {{font-size:1.6rem}} ul {{padding:0;list-style:none}} li {{padding:.5em 0;border-bottom:1px solid}}
 .note {{white-space:pre-wrap;overflow-wrap:anywhere}}</style>
 <main><p>{escape(ticket["station"])} · {service}</p><h1>廚房單 #{ticket["id"]:04d}</h1>
-<ul>{lines}</ul>{note}</main></html>"""
+<ul>{"".join(lines)}</ul>{note}</main></html>"""
 
 
 def main():

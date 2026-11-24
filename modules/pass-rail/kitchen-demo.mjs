@@ -40,7 +40,7 @@ try{
     assert.equal(response.status,200);return response.json();
   }
   const payload={token:randomUUID(),mode:"table",table:"A03",note:"分兩杯",
-    items:[{id:"oyakodon",qty:1},{id:"sencha",qty:2}]};
+    items:[{id:"oyakodon",qty:1},{id:"sencha",qty:2,note:"分開包裝 <熱>"}]};
   const [one,retry]=await Promise.all([call("/api/orders","POST",payload),call("/api/orders","POST",payload)]);
   assert.equal(one.id,retry.id);
   const pull=()=>rail("pull",base,join(root,"examples/routes.json"));
@@ -63,10 +63,12 @@ try{
     assert.deepEqual(await rail("deliver",name,url),[]);
     const slip=await cli("station.py","--db",path,"list");
     assert.deepEqual(slip.items.map(i=>[i.name,i.qty]),[[dish,qty]]);
+    assert.equal(slip.items[0].note,name==="bar"?"分開包裝 <熱>":undefined);
     const html=join(dir,name+".html");
     await cli("station.py","--db",path,"export",receipt.key,html);
     const printed=await readFile(html,"utf8");
     for(const text of ["A03 桌內用","分兩杯",dish]) assert.ok(printed.includes(text));
+    assert.equal(printed.includes("分開包裝 &lt;熱&gt;"),name==="bar");
   }
   const stations=await rail("status");
   const late=await call("/api/orders","POST",{...payload,token:randomUUID()});

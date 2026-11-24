@@ -1,7 +1,7 @@
 import {addOnFor} from "./add-ons.mjs";
 import {comboVersion,priceCombos} from "../lib/combo-pricing.mjs";
 import qrcode from "qrcode-generator";
-import {dishes, tables, transitions} from "../lib/menu.mjs";
+import {dishes, itemNoteLimit, tables, transitions} from "../lib/menu.mjs";
 import {intakeLabels,intakeNotice} from "../lib/order-intake.mjs";
 import {businessDate,businessDayRange} from "../lib/business-day.mjs";
 import {dailyLimits,exceededPortions,readRemaining} from "./daily-limits.mjs";
@@ -75,21 +75,24 @@ function receiptTiming(row, queue, timing) {
     return undefined;
   }
 }
-function menuItems(lines) {
+function menuItems(lines, withNotes=false) {
   if (!Array.isArray(lines) || !lines.length || lines.length > dishes.length) return null;
   const byId = new Map();
   for (const line of lines) {
     if (!line || !dishes.some(d => d.id === line.id) || byId.has(line.id) ||
         !Number.isInteger(line.qty) || line.qty < 1 || line.qty > 20) return null;
-    byId.set(line.id,line.qty);
+    const note=withNotes&&Object.hasOwn(line,"note")?line.note:"";
+    if(typeof note!=="string"||note.length>itemNoteLimit)return null;
+    const clean=note.trim();
+    byId.set(line.id,{qty:line.qty,...(clean?{note:clean}:{})});
   }
-  return dishes.filter(d => byId.has(d.id)).map(({id,name,price}) => ({id,name,price,qty:byId.get(id)}));
+  return dishes.filter(d => byId.has(d.id)).map(({id,name,price}) => ({id,name,price,...byId.get(id)}));
 }
 function prepare(input) {
   if (typeof input.token!=="string" || !uuid.test(input.token) || typeof input.mode!=="string" || !Object.hasOwn(intakeLabels,input.mode) ||
       (input.mode === "table" ? !tables.includes(input.table) : input.table != null) ||
       typeof input.note !== "string" || input.note.length > 160) return null;
-  const items = menuItems(input.items);
+  const items = menuItems(input.items,true);
   if (!items) return null;
   return {token:input.token,mode:input.mode,table:input.table??null,note:input.note.trim(),items,
     total:items.reduce((sum,line) => sum + line.qty * line.price,0)};
@@ -265,7 +268,7 @@ export async function api(request, env) {
     const saved = receipt(row);
     const submittedTable=row.table_moves?JSON.parse(row.table_moves)[0]?.from??row.table_no:row.table_no;
     const sameItems = saved.items.length === order.items.length && saved.items.every(line =>
-      order.items.some(item => item.id === line.id && item.qty === line.qty));
+      order.items.some(item => item.id === line.id && item.qty === line.qty && (item.note??"")===(line.note??"")));
     if ((row.source??null)!==source || (!staffPickup && saved.combo?.version !== input.comboVersion) ||
         ((selected||staffPickup) && saved.total !== input.expectedTotal) ||
         row.payment_method!==method || row.mode!==order.mode || submittedTable!==order.table || row.note!==order.note || !sameItems)
@@ -384,7 +387,7 @@ export async function api(request, env) {
     const row = await db.prepare("SELECT id,table_no,source,status,items FROM orders WHERE id=?").bind(id).first();
     if (!row) return fail("找不到這個取餐號碼",404);
     if (!["ready","completed"].includes(row.status)) return fail("餐單尚無可列印的交餐小票。",409);
-    const items = JSON.parse(row.items).map(({name,qty}) => ({name,qty}));
+    const items = JSON.parse(row.items).map(({name,qty,note}) => ({name,qty,...(note?{note}:{})}));
     return json({id:row.id,table:row.table_no,status:row.status,items,...(row.source==="staff"?{source:row.source}:{})});
   }
   if (path === "/api/kitchen/pickup" && method === "GET") {
@@ -435,7 +438,7 @@ export async function api(request, env) {
     if (path === "/api/kitchen/stations") {
       return json({format:"hey-table.station-orders.v1",capturedAt:Date.now(),throughId:orders[0]?.id ?? 0,
         orders:orders.map(({id,created,mode,table,note,status,items}) => ({
-          id,created,mode,table,note,status,items:items.map(({id,name,qty}) => ({id,name,qty}))
+          id,created,mode,table,note,status,items:items.map(({id,name,qty,note:itemNote}) => ({id,name,qty,...(itemNote?{note:itemNote}:{})}))
         }))});
     }
     return json(orders.map((order,index)=>{

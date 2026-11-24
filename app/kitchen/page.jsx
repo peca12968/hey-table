@@ -2,6 +2,7 @@
 import {useEffect,useState} from "react";
 import {RefreshCw} from "lucide-react";
 import {Header,Footer,Mode,request} from "../shared";
+import {ItemNote} from "../item-notes";
 import {dishes,labels,numberOf,tables,transitions} from "../../lib/menu.mjs";
 import {downloadJson} from "../../lib/download-json.mjs";
 import Timing from "./timing";
@@ -44,7 +45,7 @@ function TableHandoff({table,orders,busy,update}){
     {review&&<>
       <ul className="tableHandoffOrders">{review.map(order=><li key={order.id}>
         <b>#{numberOf(order.id)}</b>
-        <ul className="orderLines">{order.items.map(dish=><li key={dish.id}><span>{dish.name}</span><b>×{dish.qty}</b></li>)}</ul>
+        <ul className="orderLines">{order.items.map(dish=><li key={dish.id}><div><span>{dish.name}</span><ItemNote note={dish.note}/></div><b>×{dish.qty}</b></li>)}</ul>
         {order.note&&<p>備註　{order.note}</p>}
       </li>)}</ul>
       {!current&&<p role="status">這桌的待交餐餐單已更新，請重新核對。</p>}
@@ -69,7 +70,7 @@ function KitchenTicket({order,busy,update,showOverdue=false,handoffOnly=false}){
     <div className="menuTitle"><h2>#{numberOf(id)}</h2><Mode table={table} source={order.source}/></div>
     <p aria-live={handoffOnly?"polite":undefined}><b>{labels[status]}</b> · {new Date(created).toLocaleTimeString("zh-TW",{hour:"2-digit",minute:"2-digit",timeZone:"Asia/Taipei"})}</p>
     {showOverdue&&order.overdue&&<p className="kitchenOverdue">逾時 · {overdueStage[status]} {Math.floor(order.overdue.elapsedMs/60_000)} 分鐘</p>}
-    <ul className="orderLines">{items.map(dish=><li key={dish.id}>{dish.name}<b>×{dish.qty}</b></li>)}</ul>
+    <ul className="orderLines">{items.map(dish=><li key={dish.id}><div>{dish.name}<ItemNote note={dish.note}/></div><b>×{dish.qty}</b></li>)}</ul>
     {note&&<p>備註　{note}</p>}
     <p>{methods[paymentMethod]} {paymentMethod!=="cash"&&[environmentLabel(paymentEnv),paymentStates[paymentState]].join(" · ")}</p>
     <div className="total"><span>合計</span><b>NT$ {total}</b></div>

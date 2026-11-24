@@ -3,6 +3,7 @@ import {useCallback,useEffect,useState} from "react";
 import {ClipboardCheck,RefreshCw} from "lucide-react";
 import qrcode from "qrcode-generator";
 import {Header,Footer,Mode,request} from "../shared";
+import {ItemNote} from "../item-notes";
 import {labels,numberOf} from "../../lib/menu.mjs";
 import {lastReceiptToken,pendingCarts,read,recentReceipts,refreshReceiptHistory,removeReceipt} from "../../lib/order-storage.mjs";
 import BillShares from "./bill-shares";
@@ -137,7 +138,7 @@ export default function Ticket(){
     </section>}
     {order.mode==="pickup"&&order.status==="ready"&&<PickupCode key={order.id} number={numberOf(order.id)}/>}
     <OrderProgress history={order.statusHistory}/>
-    <ul className="orderLines">{order.items.map(d=><li key={d.id}><b>{d.name} × {d.qty}</b><span>NT$ {d.price*d.qty}</span></li>)}</ul>
+    <ul className="orderLines">{order.items.map(d=><li key={d.id}><div><b>{d.name} × {d.qty}</b><ItemNote note={d.note}/></div><span>NT$ {d.price*d.qty}</span></li>)}</ul>
     {order.combo&&<p>餐點原價 NT$ {order.combo.quote.subtotal} · 套餐折抵 NT$ {order.combo.quote.discount}</p>}
     {order.note&&<p>備註　{order.note}</p>}<div className="total"><span>{methods[order.paymentMethod]}</span><b>NT$ {order.total}</b></div>
     {order.paymentMethod!=="cash"&&!closedBeforePayment&&<Payment key={order.id} order={order} token={route.token} onChange={refreshReceipt}/>}

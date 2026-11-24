@@ -1,7 +1,7 @@
 "use client";
 import {useCallback,useEffect,useRef,useState} from "react";
 import {Plus,Minus,ShoppingBag,X,Utensils,Check} from "lucide-react";
-import {dishes,tables} from "../lib/menu.mjs";
+import {dishes,itemNoteLimit,tables,withItemNotes} from "../lib/menu.mjs";
 import {Header,Footer,Mode,request} from "./shared";
 import {cartKey,openReceipt,read,save} from "../lib/order-storage.mjs";
 import {comboVersion,priceCombos} from "../lib/combo-pricing.mjs";
@@ -9,12 +9,15 @@ import {intakeNotice} from "../lib/order-intake.mjs";
 import CartAddOn from "./cart-add-on";
 import CartQuote from "./cart-quote";
 import Reorder from "./reorder";
+import {ItemNotesEditor} from "./item-notes";
 
 import {methods,environmentLabel} from "../lib/payments.mjs";
 const groups=["全部","丼飯","小食","飲品"];
 export default function Menu(){
   const [table,setTable]=useState(null),[scope,setScope]=useState(""),[group,setGroup]=useState("全部");
-  const [cart,setCart]=useState({}),[note,setNote]=useState(""),[sold,setSold]=useState([]),[loaded,setLoaded]=useState(false);
+  const [selection,setSelection]=useState({cart:{},lineNotes:{}});
+  const {cart,lineNotes}=selection;
+  const [note,setNote]=useState(""),[sold,setSold]=useState([]),[loaded,setLoaded]=useState(false);
   const [remaining,setRemaining]=useState({});
   const [draft,setDraft]=useState(null),[busy,setBusy]=useState(false),[error,setError]=useState(""),[panel,setPanel]=useState(false);
   const [announcement,setAnnouncement]=useState(""); const sending=useRef(false);
@@ -44,7 +47,12 @@ export default function Menu(){
   },[]);
   useEffect(()=>{
     const param=new URLSearchParams(location.search).get("table"), key=cartKey(param);
-    setTable(param);setScope(key);const old=read(key,{});setUseCombo(old.useCombo===true);setCart(Object.fromEntries(dishes.filter(d=>Number.isInteger(old.cart?.[d.id]) && old.cart[d.id]>0 && old.cart[d.id]<=20).map(d=>[d.id,old.cart[d.id]])));setNote(old.note??"");setDraft(old.draft??null);setMethod(old.draft?.paymentMethod??old.method??'cash');
+    const old=read(key,{});
+    const cart=Object.fromEntries(dishes.filter(d=>Number.isInteger(old.cart?.[d.id])&&old.cart[d.id]>0&&old.cart[d.id]<=20).map(d=>[d.id,old.cart[d.id]]));
+    const lineNotes=Object.fromEntries(Object.keys(cart).filter(id=>typeof old.lineNotes?.[id]==="string")
+      .map(id=>[id,old.lineNotes[id].slice(0,itemNoteLimit)]));
+    setTable(param);setScope(key);setSelection({cart,lineNotes});setUseCombo(old.useCombo===true);
+    setNote(old.note??"");setDraft(old.draft??null);setMethod(old.draft?.paymentMethod??old.method??'cash');
     const token=new URLSearchParams(location.hash.slice(1)).get("reorder")??"";
     setRepeat(token);
     if((old.draft||token)&&window.matchMedia("(max-width: 680px)").matches) setPanel(true);
@@ -59,7 +67,7 @@ export default function Menu(){
       window.removeEventListener("online",refreshMenu);
     };
   },[refreshMenu]);
-  useEffect(()=>{if(scope)save(scope,{cart,note,draft,method,useCombo});},[scope,cart,note,draft,method,useCombo]);
+  useEffect(()=>{if(scope)save(scope,{cart,lineNotes,note,draft,method,useCombo});},[scope,cart,lineNotes,note,draft,method,useCombo]);
   useEffect(()=>{
     if(!draft||busy||!scope)return;
     let current;
@@ -98,10 +106,13 @@ export default function Menu(){
   const cannotAdd=id=>sold.includes(id)||(cart[id]||0)>=maxFor(id);
   function change(id,delta){
     if(draft||busy||(delta>0&&cannotAdd(id)))return;
-    setCart(old=>{
-      const current=old[id]||0;
-      if(delta>0&&current>=maxFor(id))return old;
-      return {...old,[id]:Math.max(0,current+delta)};
+    setSelection(current=>{
+      const qty=current.cart[id]||0;
+      if(delta>0&&qty>=maxFor(id))return current;
+      const next=Math.max(0,qty+delta);
+      const lineNotes={...current.lineNotes};
+      if(!next)delete lineNotes[id];
+      return {cart:{...current.cart,[id]:next},lineNotes};
     });
     setError("");setAnnouncement((dishes.find(d=>d.id===id)?.name??"")+"數量已更新");
   }
@@ -111,13 +122,13 @@ export default function Menu(){
   }
   function addRepeat(plan){
     if(draft||busy||sending.current||read(scope,{}).draft)return false;
-    setCart(current=>{
-      const next={...current};
+    setSelection(current=>{
+      const next={...current.cart};
       for(const {id,added} of plan){
         const current=next[id]||0;
         if(added&&!sold.includes(id)&&current<maxFor(id))next[id]=Math.min(maxFor(id),current+added);
       }
-      return next;
+      return {...current,cart:next};
     });
     dismissRepeat();
     setAnnouncement("先前餐點已加入餐單，請確認後送出。");
@@ -126,8 +137,9 @@ export default function Menu(){
   async function submit(){
     if(sending.current||invalid||!scope||!count||(!draft&&(paused||blocked)))return;
     sending.current=true;setBusy(true);setError("");
-    const payload=draft??{token:crypto.randomUUID(),...(method==='cash'?{}:{paymentMethod:method}),mode,table,note,items,...(applied?{comboVersion,expectedTotal:total}:{})};
-    setDraft(payload);save(scope,{cart,note,draft:payload,method,useCombo});
+    const payload=draft??{token:crypto.randomUUID(),...(method==='cash'?{}:{paymentMethod:method}),mode,table,note,
+      items:withItemNotes(items,lineNotes),...(applied?{comboVersion,expectedTotal:total}:{})};
+    setDraft(payload);save(scope,{cart,lineNotes,note,draft:payload,method,useCombo});
     try{
       const order=await request("/api/orders",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(payload)});
       openReceipt(scope,payload.token,order);
@@ -162,6 +174,8 @@ export default function Menu(){
     {!count?<div className="empty"><Utensils size={30}/><strong>餐單還是空的</strong><p>從菜單加入想吃的餐點</p></div>:<ul className="orderLines">{lines.map(d=><li key={d.id}><div><b>{d.name}{sold.includes(d.id)||remaining[d.id]===0?"（售完）":""}</b><small>NT$ {d.price*cart[d.id]}</small></div><div className="stepper"><button disabled={!!draft||busy} aria-label={"減少"+d.name} onClick={()=>change(d.id,-1)}><Minus size={14}/></button><span>{cart[d.id]}</span><button disabled={!!draft||busy||cannotAdd(d.id)} aria-label={"增加"+d.name} onClick={()=>change(d.id,1)}><Plus size={14}/></button></div></li>)}</ul>}
     {loaded&&!invalid&&!blocked&&!draft&&!busy&&lines.some(d=>d.group==="丼飯")&&
       <CartAddOn key={quoteBody+JSON.stringify(unavailableForAddOn)} body={quoteBody} sold={unavailableForAddOn} onAdd={id=>change(id,1)}/>}
+    {count>0&&<ItemNotesEditor dishes={lines} notes={lineNotes} disabled={!!draft||busy} onChange={(id,value)=>
+      setSelection(current=>({...current,lineNotes:{...current.lineNotes,[id]:value}}))}/>}
     {count>0&&<label className="note">訂單備註 <small>選填</small><textarea placeholder="例如：餐具數量" value={note} maxLength={160} disabled={!!draft||busy} onChange={e=>setNote(e.target.value)}/></label>}
     {count>0&&<label className="payChoice">付款方式<select value={method} disabled={!!draft||busy} onChange={e=>setMethod(e.target.value)}>
       {payments.methods.map(m=><option key={m} value={m}>{methods[m]}</option>)}</select>

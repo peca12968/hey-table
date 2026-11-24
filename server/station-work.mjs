@@ -4,9 +4,9 @@ import {payableForKitchen} from "./payment-api.mjs";
 function stationProgress(row) {
   if(row.station_progress)return JSON.parse(row.station_progress);
   const groups={};
-  for(const {id,name,qty} of JSON.parse(row.items)){
+  for(const {id,name,qty,note} of JSON.parse(row.items)){
     const station=demoKitchen.recipes[id]?.station??"other";
-    (groups[station]??=[]).push({id,name,qty});
+    (groups[station]??=[]).push({id,name,qty,...(note?{note}:{})});
   }
   return {groups,done:{}};
 }
