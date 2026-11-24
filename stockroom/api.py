@@ -103,6 +103,24 @@ class PackingStatement(BaseModel):
     returnable: int
 
 
+class PackingScope(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    reservation_ids: list[BoxKey] = Field(min_length=1, max_length=100)
+
+    @field_validator("reservation_ids")
+    @classmethod
+    def distinct_reservations(cls, keys):
+        if len(keys) != len(set(keys)):
+            raise ValueError("Repeat reservation ID")
+        return keys
+
+
+class PackingSnapshot(BaseModel):
+    captured_at_ms: int
+    holds: list[PackingStatement]
+    products: list[Product]
+
+
 class ReleaseReceipt(BaseModel):
     reservation_id: str
     release_id: str
@@ -219,6 +237,11 @@ def create_app(path: Path, *, ttl_seconds=900, clock=time.time):
     @app.get("/reservations/{key}/fulfillments", response_model=PackingStatement)
     def packing_statement(key: str):
         return store.packing_statement(key)
+
+    @app.post("/packing-snapshots", response_model=PackingSnapshot)
+    def packing_snapshot(scope: PackingScope, response: Response):
+        response.headers["Cache-Control"] = "no-store"
+        return store.packing_snapshot(scope.reservation_ids)
 
     @app.get("/reservations/{key}/dispatch-manifest.csv", response_class=Response, responses={
         200: {"content": {"text/csv": {"schema": {"type": "string"}}},

@@ -29,8 +29,15 @@ python -m uvicorn stockroom.api:app
 | GET /return-batches/{batch_id} | 依驗收批號查詢原始收據 |
 | GET /reservations/{key}/fulfillments/{box} | 查詢該箱實際寄出的 dispatched、已重新入庫的 restocked，以及尚可退回的 returnable |
 | GET /reservations/{key}/fulfillments | 一次查詢保留狀態、各箱出貨與退貨明細，以及全單已重新入庫和仍可退回的件數 |
+| POST /packing-snapshots | 一次查詢多張訂單，從同一時點取得各單的箱單和對應商品庫存 |
 
 庫存不足、同鍵不同內容回傳 409。未知商品或保留回傳 404。輸入格式錯誤回傳 422。失敗的請求不會占用鍵。
+
+## 一次擷取多張訂單給出貨排程
+
+以 `POST /packing-snapshots` 傳入一至 100 個不同的保留編號，例如 `{"reservation_ids":["east","west"]}`。資料庫取得交易鎖後，以同一個時間點結算到期，再一起讀取各單保留、箱單、退貨與涉及的商品庫存。`captured_at_ms` 是結算使用的 Unix 毫秒，`holds` 依照請求順序回傳，每張單與原本的單張箱單 API 使用相同格式。`products` 依 SKU 排序。任一編號找不到時回傳 404 並列出缺少的編號。
+
+從兩台服務的並行測試可看到，同車出貨的 5 件在快照建立前仍分別保留於兩張單，提交後的新快照則同時反映兩張箱單與減少的庫存。舊版無期限的保留仍可出現在同一快照。執行 `python demo.py --batch` 可透過本機 HTTP 看到跨訂單快照。[跨訂單並行測試](tests/test_packing_snapshots.py)
 
 ## 同車退回的多箱商品一起驗收
 

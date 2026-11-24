@@ -332,35 +332,58 @@ class Store:
             return {"batch_id": batch_id, "boxes": boxes}
 
     @staticmethod
-    def shipment_balances(conn, key, shipment_id=None):
+    def shipment_balances(conn, keys, shipment_id=None):
         query = """
             SELECT f.reservation_id, f.shipment_id, f.quantity AS dispatched, r.sku,
                    COALESCE((SELECT SUM(sr.quantity) FROM shipment_returns sr
                              WHERE sr.reservation_id=f.reservation_id AND sr.shipment_id=f.shipment_id), 0)
                        AS restocked
             FROM fulfillments f JOIN reservations r ON r.id=f.reservation_id
-            WHERE f.reservation_id=?
         """
-        parameters = [key]
+        query += " WHERE f.reservation_id IN (" + ",".join("?" for _ in keys) + ")"
+        parameters = list(keys)
         if shipment_id is not None:
             query += " AND f.shipment_id=?"
             parameters.append(shipment_id)
-        for row in conn.execute(query + " ORDER BY f.shipment_id", parameters):
+        for row in conn.execute(query + " ORDER BY f.reservation_id, f.shipment_id", parameters):
             yield dict(row) | {"returnable": row["dispatched"] - row["restocked"]}
 
     def shipment_balance(self, conn, key, shipment_id):
-        balance = next(self.shipment_balances(conn, key, shipment_id), None)
+        balance = next(self.shipment_balances(conn, (key,), shipment_id), None)
         if balance is None:
             raise Missing("Unknown shipment")
         return balance
 
     def packing_statement(self, key):
         with self.current_inventory() as (conn, _):
-            progress = self.progress_row(self.find_reservation(conn, key))
-            boxes = list(self.shipment_balances(conn, key))
-            return {"reservation": progress, "boxes": boxes,
-                    "restocked": sum(box["restocked"] for box in boxes),
-                    "returnable": sum(box["returnable"] for box in boxes)}
+            reservation = self.find_reservation(conn, key)
+            boxes = list(self.shipment_balances(conn, (key,)))
+            return self.packing_row(reservation, boxes)
+
+    def packing_row(self, reservation, boxes):
+        return {"reservation": self.progress_row(reservation), "boxes": boxes,
+                "restocked": sum(box["restocked"] for box in boxes),
+                "returnable": sum(box["returnable"] for box in boxes)}
+
+    def packing_snapshot(self, keys):
+        placeholders = ",".join("?" for _ in keys)
+        with self.current_inventory() as (conn, now):
+            reservations = {row["id"]: row for row in conn.execute(
+                f"SELECT * FROM reservations WHERE id IN ({placeholders})", keys)}
+            missing = [key for key in keys if key not in reservations]
+            if missing:
+                raise Missing("Unknown reservations: " + ", ".join(missing))
+            boxes = {key: [] for key in keys}
+            for row in self.shipment_balances(conn, keys):
+                boxes[row["reservation_id"]].append(row)
+            skus = sorted({row["sku"] for row in reservations.values()})
+            products = conn.execute(
+                "SELECT * FROM products WHERE sku IN (" + ",".join("?" for _ in skus) + ") ORDER BY sku", skus)
+            return {
+                "captured_at_ms": now,
+                "holds": [self.packing_row(reservations[key], boxes[key]) for key in keys],
+                "products": [dict(row) for row in products],
+            }
 
     def shipment(self, key, shipment_id):
         with closing(self.connect()) as conn:

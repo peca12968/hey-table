@@ -105,6 +105,10 @@ def demonstrate_batch():
     assert code == 201 and [row["held_after"] for row in receipt["boxes"]] == [2,1,0]
     assert call("/dispatch-batches/"+van) == (200, receipt)
     assert call("/dispatch-batches", "POST", {"boxes":boxes[::-1]}, headers) == (200, receipt)
+    _, snapshot = call("/packing-snapshots", "POST", {"reservation_ids": [south, north]})
+    assert [row["reservation"]["id"] for row in snapshot["holds"]] == [south, north]
+    assert [row["reservation"]["held"] for row in snapshot["holds"]] == [0, 1]
+    assert [len(row["boxes"]) for row in snapshot["holds"]] == [1, 2]
     call("/reservations/"+north, "DELETE")
     after = next(row for row in call("/inventory")[1] if row["sku"] == "KIT-01")
     assert (after["available"], after["capacity"]) == (before["available"]-5, before["capacity"]-5)
