@@ -65,7 +65,7 @@ function KitchenTicket({order,busy,update,handoffOnly=false}){
   const workingByStation=order.stationProgress&&status==="preparing";
   const tableRevision=order.tableRevision??0;
   return <article className="sheet kitchenTicket">
-    <div className="menuTitle"><h2>#{numberOf(id)}</h2><Mode table={table}/></div>
+    <div className="menuTitle"><h2>#{numberOf(id)}</h2><Mode table={table} source={order.source}/></div>
     <p aria-live={handoffOnly?"polite":undefined}><b>{labels[status]}</b> · {new Date(created).toLocaleTimeString("zh-TW",{hour:"2-digit",minute:"2-digit",timeZone:"Asia/Taipei"})}</p>
     <ul className="orderLines">{items.map(dish=><li key={dish.id}>{dish.name}<b>×{dish.qty}</b></li>)}</ul>
     {note&&<p>備註　{note}</p>}
@@ -165,7 +165,7 @@ export default function Kitchen(){
   const exactNumber=ticket.replace(/^0+(?=\d)/,"");
   const filtered=(rows??[]).filter(r=>{
     const statusMatches=filter==="all"||(filter==="active"?!["completed","cancelled"].includes(r.status):r.status===filter);
-    const scopeMatches=scope==="all"||scope===r.mode||scope===r.table;
+    const scopeMatches=scope==="all"||scope===r.mode||scope===r.table||scope===r.source;
     return statusMatches&&scopeMatches&&validNumber&&(!exactNumber||exactNumber===String(r.id));
   });
   let content;
@@ -182,7 +182,8 @@ export default function Kitchen(){
     const showTableHandoff=filter==="ready"&&!search.trim();
     const readyAt=table=>filtered.filter(order=>order.table===table&&order.mode==="table");
     content=<>
-    <div className="actions"><a className="outline" href="/kitchen/prep">查看備料單</a>
+    <div className="actions"><a className="outline" href="/kitchen/create-pickup">代建自取單</a>
+      <a className="outline" href="/kitchen/prep">查看備料單</a>
       <a className="outline" href="/kitchen/daily">每日訂單摘要</a>
       <a className="outline" href="/kitchen/station-work">分站看板</a>
       <a className="outline" href="/kitchen/pickup-display">櫃台取餐看板</a>
@@ -195,7 +196,7 @@ export default function Kitchen(){
     <nav className="tabs" aria-label="餐單狀態">{[["active","處理中"],["pending","待接單"],["ready","待交餐"],["all","含近期結單"]].map(([v,n])=><button aria-pressed={v===filter} key={v} onClick={()=>setFilter(v)}>{n}</button>)}</nav>
     <div className="kitchenFilters">
       <label>管道或桌號<select value={scope} onChange={e=>setScope(e.target.value)}>
-        <option value="all">全部管道</option><option value="pickup">線上自取</option><option value="table">全部內用</option>
+        <option value="all">全部管道</option><option value="pickup">全部自取</option><option value="staff">店員代建自取</option><option value="table">全部內用</option>
         {tables.map(table=><option key={table} value={table}>{table} 桌</option>)}
       </select></label>
       <label>取餐號碼<input type="search" inputMode="numeric" value={search} placeholder="例如 0007"

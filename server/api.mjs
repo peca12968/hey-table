@@ -42,6 +42,7 @@ function collectionId(url) {
 }
 function receipt(row) {
   return {id:row.id, mode:row.mode, table:row.table_no, note:row.note, items:JSON.parse(row.items),
+    ...(row.source === "staff" ? {source:row.source} : {}),
     ...(row.combo_quote ? {combo:JSON.parse(row.combo_quote)} : {}),
     paymentMethod:row.payment_method,paymentEnv:row.payment_env,paymentState:row.payment_state??'unpaid',total:row.total, status:row.status, created:row.created};
 }
@@ -83,7 +84,7 @@ function menuItems(lines) {
   return dishes.filter(d => byId.has(d.id)).map(({id,name,price}) => ({id,name,price,qty:byId.get(id)}));
 }
 function prepare(input) {
-  if (!uuid.test(input.token) || typeof input.mode!=="string" || !Object.hasOwn(intakeLabels,input.mode) ||
+  if (typeof input.token!=="string" || !uuid.test(input.token) || typeof input.mode!=="string" || !Object.hasOwn(intakeLabels,input.mode) ||
       (input.mode === "table" ? !tables.includes(input.table) : input.table != null) ||
       typeof input.note !== "string" || input.note.length > 160) return null;
   const items = menuItems(input.items);
@@ -183,7 +184,8 @@ export async function api(request, env) {
     return meta.changes?json({date,dish,capacity,revision:revision+1}):
       fail("供應上限已由其他店員更新，請重新載入後再儲存。",409);
   }
-  if (path === "/api/menu" && method === "GET") {
+  const staffPickup=path === "/api/kitchen/create-pickup";
+  if ((path === "/api/menu" || staffPickup) && method === "GET") {
     const now=Date.now(),date=businessDate(now);
     const [,stock,modes,seats,portions]=await db.batch([expirePaymentHolds(db,now),
       db.prepare("SELECT dish FROM unavailable"),db.prepare(intakeRows),
@@ -216,39 +218,42 @@ export async function api(request, env) {
     const {plan,timingSource}=kitchenSchedule(queue.results,timing.results[0],{cart:{items}});
     return json({capturedAt:plan.capturedAt,seconds:plan.quote.seconds,timingSource});
   }
-  if (path === "/api/orders" && method === "POST") {
-    const order = prepare(input);
+  if ((path === "/api/orders" || staffPickup) && method === "POST") {
+    const order = prepare(staffPickup ? {...input,mode:"pickup",table:null} : input);
     if (!order) return fail("請確認桌號、餐點數量與備註");
-    const method=input.paymentMethod ?? "cash", config=settings(env);
+    const source=staffPickup ? "staff" : null;
+    const method=staffPickup ? "cash" : input.paymentMethod ?? "cash", config=settings(env);
     if(!Object.hasOwn(methods,method))return fail("付款方式無效");
-    const selected = Object.hasOwn(input,"comboVersion");
+    if(staffPickup && !Number.isSafeInteger(input.expectedTotal))return fail("請確認餐單金額");
+    const selected = !staffPickup && Object.hasOwn(input,"comboVersion");
     if (selected && (typeof input.comboVersion !== "string" || !Number.isSafeInteger(input.expectedTotal)))
       return fail("請重新確認套餐版本與金額");
     const quote = selected && input.comboVersion === comboVersion && config.mode === "demo"
       ? priceCombos(order.items) : null;
-    const validPrice = !selected || (quote?.discount > 0 && quote.total === input.expectedTotal);
+    const validPrice = staffPickup ? order.total === input.expectedTotal :
+      !selected || (quote?.discount > 0 && quote.total === input.expectedTotal);
     const snapshot = quote && validPrice ? JSON.stringify({version:comboVersion,quote}) : null;
     const available=config.methods.includes(method);
     const lines = JSON.stringify(order.items);
     const created=Date.now(),date=businessDate(created),range=businessDayRange(date);
-    const stmt = db.prepare(`INSERT INTO orders(token,mode,table_no,note,items,total,created,payment_method,payment_env,combo_quote,payment_due_at)
-      SELECT ?,?,?,?,?,?,?,?,?,?,? WHERE ? AND NOT ${modePaused} AND NOT ${tablePaused}
+    const stmt = db.prepare(`INSERT INTO orders(token,mode,source,table_no,note,items,total,created,payment_method,payment_env,combo_quote,payment_due_at)
+      SELECT ?,?,?,?,?,?,?,?,?,?,?,? WHERE ? AND (? OR NOT ${modePaused}) AND NOT ${tablePaused}
       AND NOT EXISTS (SELECT 1 FROM unavailable u
       JOIN json_each(?) j ON u.dish=json_extract(j.value,'$.id'))
       AND NOT EXISTS (${exceededPortions}) ON CONFLICT(token) DO NOTHING`);
     const [,,savedOrder,intake,exceeded]=await db.batch([
       expirePaymentHolds(db,created),
-      stmt.bind(order.token,order.mode,order.table,order.note,lines,quote?.total??order.total,created,method,method==='cash'?'cash':config.mode,snapshot,
-        method==="cash"?null:created+paymentHoldMs,available&&validPrice?1:0,order.mode,order.table,lines,lines,date,...range),
+      stmt.bind(order.token,order.mode,source,order.table,order.note,lines,quote?.total??order.total,created,method,method==='cash'?'cash':config.mode,snapshot,
+        method==="cash"?null:created+paymentHoldMs,available&&validPrice?1:0,staffPickup?1:0,order.mode,order.table,lines,lines,date,...range),
       db.prepare(selectOrders+" WHERE token=?").bind(order.token),
       db.prepare(`SELECT ${modePaused} AS mode_paused, ${tablePaused} AS table_paused`).bind(order.mode,order.table),
       db.prepare(`SELECT dish FROM (${exceededPortions}) WHERE NOT EXISTS (SELECT 1 FROM orders WHERE token=?)`)
         .bind(lines,date,...range,order.token),
     ]);
     const row=savedOrder.results[0];
-    if (!row && !validPrice) return fail("套餐優惠或金額已變更，請重新確認餐單",409);
+    if (!row && !validPrice) return fail(staffPickup?"菜單金額已變更，請重新整理後確認餐單。":"套餐優惠或金額已變更，請重新確認餐單",409);
     if (!row && !available) return fail('此付款方式暫停使用',409);
-    if (!row && intake.results[0].mode_paused)
+    if (!row && !staffPickup && intake.results[0].mode_paused)
       return json({error:intakeNotice(order.mode),code:"intake_paused"},409);
     if (!row && intake.results[0].table_paused)
       return json({error:intakeNotice(order.mode,order.table),code:"table_paused"},409);
@@ -259,7 +264,8 @@ export async function api(request, env) {
     const submittedTable=row.table_moves?JSON.parse(row.table_moves)[0]?.from??row.table_no:row.table_no;
     const sameItems = saved.items.length === order.items.length && saved.items.every(line =>
       order.items.some(item => item.id === line.id && item.qty === line.qty));
-    if (saved.combo?.version !== input.comboVersion || (selected && saved.total !== input.expectedTotal) ||
+    if ((row.source??null)!==source || (!staffPickup && saved.combo?.version !== input.comboVersion) ||
+        ((selected||staffPickup) && saved.total !== input.expectedTotal) ||
         row.payment_method!==method || row.mode!==order.mode || submittedTable!==order.table || row.note!==order.note || !sameItems)
       return fail("送單識別碼已用於另一張訂單",409);
     return json(saved);
@@ -373,11 +379,11 @@ export async function api(request, env) {
   if (path === "/api/kitchen/handoff" && method === "GET") {
     const id = collectionId(url);
     if (id === null) return fail("請輸入有效的取餐號碼");
-    const row = await db.prepare("SELECT id,table_no,status,items FROM orders WHERE id=?").bind(id).first();
+    const row = await db.prepare("SELECT id,table_no,source,status,items FROM orders WHERE id=?").bind(id).first();
     if (!row) return fail("找不到這個取餐號碼",404);
     if (!["ready","completed"].includes(row.status)) return fail("餐單尚無可列印的交餐小票。",409);
     const items = JSON.parse(row.items).map(({name,qty}) => ({name,qty}));
-    return json({id:row.id,table:row.table_no,status:row.status,items});
+    return json({id:row.id,table:row.table_no,status:row.status,items,...(row.source==="staff"?{source:row.source}:{})});
   }
   if (path === "/api/kitchen/pickup" && method === "GET") {
     const id = collectionId(url);

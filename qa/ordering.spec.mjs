@@ -295,7 +295,7 @@ test("staff can view a Taiwan-date summary and download the displayed snapshot o
   await expect(page.getByRole("heading",{name:"每日訂單摘要"})).toBeVisible();
   await expect(page.getByRole("row",{name:/日式熱煎茶/})).toBeVisible();
   const timing=page.getByRole("region",{name:"製作與交餐耗時"});
-  const pickup=timing.getByRole("article",{name:"線上自取耗時"});
+  const pickup=timing.getByRole("article",{name:"自取耗時",exact:true});
   expect(report.timing.pickup.preparation.samples).toBeGreaterThan(0);
   expect(report.timing.pickup.handoff.samples).toBeGreaterThan(0);
   await expect(pickup.getByText(/中位數/)).toHaveCount(2);

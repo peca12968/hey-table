@@ -5,6 +5,7 @@ export const orders = sqliteTable("orders", {
   id: integer("id").primaryKey({ autoIncrement: true }),
   token: text("token").notNull().unique(),
   mode: text("mode").notNull(),
+  source: text("source"),
   tableNo: text("table_no"),
   tableMoves: text("table_moves"),
   note: text("note").notNull(),

@@ -63,7 +63,7 @@ export default function Handoff(){
     {slip&&<article className="sheet slipPaper" aria-label="交餐小票內容">
       <p>禾日食堂 · 交餐小票</p>
       <h2>取餐號碼 {numberOf(slip.id)}</h2>
-      <div className="receiptMeta"><Mode table={slip.table}/><strong>{slip.status==="ready"?"待交餐":"已交餐"}</strong></div>
+      <div className="receiptMeta"><Mode table={slip.table} source={slip.source}/><strong>{slip.status==="ready"?"待交餐":"已交餐"}</strong></div>
       <ul className="orderLines">{slip.items.map((item,index)=><li key={index}><span>{item.name}</span><strong>× {item.qty}</strong></li>)}</ul>
     </article>}
     {message&&<p className="slipControl" role="status">{message}</p>}

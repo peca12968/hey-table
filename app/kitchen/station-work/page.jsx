@@ -65,7 +65,7 @@ export default function StationWork(){
     {!rows&&!error&&<p>正在讀取{stationLabels[station]}…</p>}
     {rows?.length===0&&<p className="sheet">{stationLabels[station]}目前沒有製作中的餐單。</p>}
     <div className="kGrid">{rows?.map(order=><article className="sheet kitchenTicket" key={order.id}>
-      <div className="menuTitle"><h2>#{numberOf(order.id)}</h2><Mode table={order.table}/></div>
+      <div className="menuTitle"><h2>#{numberOf(order.id)}</h2><Mode table={order.table} source={order.source}/></div>
       <p>已備妥 {order.doneStations}／{order.stations} 站</p>
       <ul className="orderLines">{order.items.map(({id,name,qty})=><li key={id}>{name}<b>×{qty}</b></li>)}</ul>
       {order.note&&<p>備註　{order.note}</p>}

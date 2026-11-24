@@ -34,7 +34,7 @@ function DurationSummary({timing}) {
     <h2 id="daily-timing-title">製作與交餐耗時</h2>
     <p>製作從接單到備妥，交餐從備妥到交付。樣本數只計入兩端都有時間的餐單。</p>
     <div className="dailyTimingGrid">
-      {[["pickup","線上自取"],["table","掃碼內用"]].map(([mode,name])=><article key={mode} aria-label={name+"耗時"}>
+      {[["pickup","自取"],["table","掃碼內用"]].map(([mode,name])=><article key={mode} aria-label={name+"耗時"}>
         <h3>{name}</h3>
         <dl>{[["preparation","製作"],["handoff","交餐等候"]].map(([key,label])=>{
           const stage=timing[mode][key];
@@ -93,7 +93,7 @@ export default function DailyOperations() {
         <button className="outline" onClick={()=>downloadJson("hey-table-daily-"+report.date+"-",report.capturedAt,report)}>下載摘要 JSON</button>
       </div>
       <div className="kGrid">
-        <ChannelSummary name="線上自取" summary={report.channels.pickup}/>
+        <ChannelSummary name="自取" summary={report.channels.pickup}/>
         <ChannelSummary name="掃碼內用" summary={report.channels.table}/>
       </div>
       {report.timing&&<DurationSummary timing={report.timing}/>}

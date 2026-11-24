@@ -1,0 +1,5 @@
+.staffPickup .pickupForm{max-width:none;margin-top:14px}
+.pickupForm .menuTitle button{margin:0}
+.pickupForm .orderLines input{width:4.8rem;min-height:42px}
+.pickupForm .outline,.pickupForm .primary{min-height:42px}
+.pickupForm h2{margin:0;color:var(--green)}
