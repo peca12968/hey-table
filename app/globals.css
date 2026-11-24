@@ -50,3 +50,7 @@
 .reorder{border:1px solid var(--line);border-radius:8px;padding:10px 12px;margin:10px 0;background:var(--pale)}
 .reorder h3,.reorder p{margin:0 0 8px}
 .reorder ul{padding-left:1.2rem;margin:0 0 10px}
+.pickupCode{border:1px solid var(--line);border-radius:8px;padding:10px 12px;margin:12px 0;background:var(--pale)}
+.pickupCode summary{cursor:pointer;color:var(--green);font-weight:700}
+.pickupCode img{display:block;width:184px;max-width:100%;height:auto;margin:10px auto;image-rendering:pixelated}
+.pickupCode p{margin:0;text-align:center}

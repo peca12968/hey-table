@@ -1,6 +1,7 @@
 "use client";
 import {useCallback,useEffect,useState} from "react";
 import {ClipboardCheck,RefreshCw} from "lucide-react";
+import qrcode from "qrcode-generator";
 import {Header,Footer,Mode,request} from "../shared";
 import {labels,numberOf} from "../../lib/menu.mjs";
 import {pendingCarts,read} from "../../lib/order-storage.mjs";
@@ -24,6 +25,23 @@ function OrderProgress({history}){
       {at===null?<small>時間未記錄</small>:<time dateTime={new Date(at).toISOString()}>{progressTime.format(at)}</time>}
     </li>)}</ol>
   </section>;
+}
+
+function PickupCode({number}){
+  const [image,setImage]=useState("");
+  useEffect(()=>{
+    const scanUrl=new URL("/kitchen",location.origin);
+    scanUrl.searchParams.set("pickup",number);
+    const code=qrcode(0,"M");
+    code.addData(scanUrl.href);
+    code.make();
+    setImage(code.createDataURL(6,24));
+  },[number]);
+  return <details className="pickupCode">
+    <summary>出示取餐 QR 碼</summary>
+    {image&&<img src={image} width="184" height="184" alt={"取餐 "+number+" QR 碼"}/>}
+    <p>請讓店員掃描，或直接告知取餐號碼 {number}。</p>
+  </details>;
 }
 
 export default function Ticket(){
@@ -65,6 +83,7 @@ export default function Ticket(){
     {pending.length>0&&<section><h2>待確認的餐單</h2>{pending.map(table=><p key={table??"pickup"}><a className="outline" href={table?"/?table="+table:"/"}>確認 {table?table+" 桌":"自取"}送單結果</a></p>)}</section>}
     {error&&<p role="status">{error}</p>}{order&&<><div className="receiptMeta"><Mode table={order.table}/><b aria-live="polite">{order.status==='pending'&&!canPrepare(order)?'等待付款':labels[order.status]}</b></div>
     <p>{({pending:canPrepare(order)?"餐單已送達，等候店家接單。":"付款確認後，店家即可接單。",preparing:"廚房正在準備餐點。",ready:order.table?"餐點已完成，請留意桌邊送餐。":"餐點已完成，請出示取餐號碼。",completed:"這張餐單已完成。",cancelled:"店家已取消這張餐單。"})[order.status]}</p>
+    {order.mode==="pickup"&&order.status==="ready"&&<PickupCode key={order.id} number={numberOf(order.id)}/>}
     <OrderProgress history={order.statusHistory}/>
     <ul className="orderLines">{order.items.map(d=><li key={d.id}><b>{d.name} × {d.qty}</b><span>NT$ {d.price*d.qty}</span></li>)}</ul>
     {order.combo&&<p>餐點原價 NT$ {order.combo.quote.subtotal} · 套餐折抵 NT$ {order.combo.quote.discount}</p>}

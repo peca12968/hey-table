@@ -7,6 +7,65 @@ import {fileURLToPath} from "node:url";
 import jsQR from "jsqr";
 import {PNG} from "pngjs";
 
+test("a ready pickup QR opens the exact staff order without sharing the customer receipt",async({page,browser,request})=>{
+  const headers={Authorization:"Bearer local-test-kitchen"};
+  const token=randomUUID();
+  const created=await request.post("/api/orders",{data:{token,mode:"pickup",note:"請取餐時核對",items:[{id:"karaage",qty:2}]}});
+  expect(created.ok()).toBe(true);
+  const {id}=await created.json();
+  const other=await request.post("/api/orders",{data:{token:randomUUID(),mode:"pickup",note:"",items:[{id:"edamame",qty:1}]}});
+  expect(other.ok()).toBe(true);
+  const {id:otherId}=await other.json();
+  const number=String(id).padStart(4,"0");
+  await page.setViewportSize({width:360,height:780});
+  await page.goto("/ticket#"+token);
+  await expect(page.getByRole("heading",{name:"取餐號碼 "+number})).toBeVisible();
+  const disclosure=page.getByText("出示取餐 QR 碼",{exact:true});
+  await expect(disclosure).toHaveCount(0);
+  for(const orderId of [id,otherId]){
+    for(const [from,to] of [["pending","preparing"],["preparing","ready"]])
+      expect((await request.patch("/api/kitchen/status",{headers,data:{id:orderId,from,to}})).ok()).toBe(true);
+  }
+  await page.getByRole("button",{name:"更新進度"}).click();
+  await disclosure.click();
+  const image=page.getByRole("img",{name:"取餐 "+number+" QR 碼"});
+  const png=PNG.sync.read(await image.screenshot());
+  const scanned=jsQR(new Uint8ClampedArray(png.data),png.width,png.height);
+  const target="/kitchen?pickup="+number;
+  expect(scanned?.data).toBe(new URL(target,page.url()).href);
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBe(360);
+
+  const staff=await browser.newContext({viewport:{width:360,height:780}});
+  try{
+    const kitchen=await staff.newPage();
+    await kitchen.goto(scanned.data);
+    await expect(kitchen.getByRole("heading",{name:"店員登入"})).toBeVisible();
+    await expect(kitchen.getByRole("link",{name:"使用 ChatGPT 登入"}))
+      .toHaveAttribute("href","/signin-with-chatgpt?return_to="+encodeURIComponent(target));
+    await expect(kitchen.getByText("請取餐時核對")).toHaveCount(0);
+    await kitchen.getByText("使用自架店員金鑰").click();
+    await kitchen.getByLabel("店員金鑰",{exact:true}).fill("local-test-kitchen");
+    await kitchen.getByRole("button",{name:"登入",exact:true}).click();
+    await expect(kitchen.getByLabel("管道或桌號")).toHaveValue("pickup");
+    await expect(kitchen.getByRole("searchbox",{name:"取餐號碼"})).toHaveValue(number);
+    const cards=kitchen.locator(".kitchenTicket");
+    await expect(cards).toHaveCount(1);
+    await expect(cards.getByRole("heading",{name:"#"+number,exact:true})).toBeVisible();
+    await expect(cards.getByText("請取餐時核對")).toBeVisible();
+    const receipt=async()=>(await request.get("/api/ticket",{headers:{"X-Ticket":token}})).json();
+    expect((await receipt()).status).toBe("ready");
+    await cards.getByRole("button",{name:"完成交餐"}).click();
+    await expect(cards.getByText("已完成",{exact:true})).toBeVisible();
+    await page.getByRole("button",{name:"更新進度"}).click();
+    await expect(page.getByText("已完成",{exact:true})).toBeVisible();
+    await expect(disclosure).toHaveCount(0);
+    await kitchen.reload();
+    await expect(cards).toHaveCount(1);
+    await expect(cards.getByText("已完成",{exact:true})).toBeVisible();
+    expect((await request.get("/api/kitchen/handoff?id="+otherId,{headers}).then(r=>r.json())).status).toBe("ready");
+  }finally{await staff.close();}
+});
+
 test("a staff handoff slip rechecks concurrent handoff and prints only the selected order",async({page,request})=>{
   await page.setViewportSize({width:360,height:800});
   const headers={Authorization:"Bearer local-test-kitchen"};
@@ -344,6 +403,7 @@ test("decode the printed table card and send a mobile order to an independent ki
     await ticket.getByRole("button",{name:"完成製作"}).click();
     await mobile.getByRole("button",{name:"更新進度"}).click();
     await expect(mobile.getByText("可取餐",{exact:true})).toBeVisible();
+    await expect(mobile.getByText("出示取餐 QR 碼",{exact:true})).toHaveCount(0);
     await ticket.getByRole("button",{name:"完成交餐"}).click();
     await mobile.getByRole("button",{name:"更新進度"}).click();
     await expect(mobile.getByText("已完成",{exact:true})).toBeVisible();

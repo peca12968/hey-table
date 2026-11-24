@@ -15,7 +15,18 @@ export default function Kitchen(){
   const [sold,setSold]=useState([]),[filter,setFilter]=useState("active"),[error,setError]=useState(""),[revision,setRevision]=useState(0),[busy,setBusy]=useState(false);
   const [exporting,setExporting]=useState(false),[exportMessage,setExportMessage]=useState("");
   const [scope,setScope]=useState("all"),[search,setSearch]=useState("");
-  useEffect(()=>{setKey(sessionStorage.getItem("he-ri-staff")||"");},[]);
+  const [signInTarget,setSignInTarget]=useState("/kitchen");
+  useEffect(()=>{
+    setKey(sessionStorage.getItem("he-ri-staff")||"");
+    const pickup=new URLSearchParams(location.search).get("pickup");
+    const id=Number(pickup);
+    if(!/^[0-9]+$/.test(pickup??"")||!Number.isSafeInteger(id)||id<1)return;
+    const number=numberOf(id);
+    setSignInTarget("/kitchen?pickup="+number);
+    setScope("pickup");
+    setSearch(number);
+    setFilter("all");
+  },[]);
   useEffect(()=>{
     let live=true,inFlight=false;
     const load=async()=>{if(inFlight)return;inFlight=true;try{const [orders,menu]=await Promise.all([request("/api/kitchen",{headers:key?{Authorization:"Bearer "+key}:{}}),request("/api/menu")]);
@@ -48,7 +59,7 @@ export default function Kitchen(){
   });
   return <><Header/><main className="shell section"><div className="menuTitle"><div><p className="eyebrow">KITCHEN</p><h1>店家接單台</h1></div><button className="outline" onClick={()=>setRevision(v=>v+1)}><RefreshCw size={16}/> 更新</button></div>
     {error&&<p className="error" role="alert">{error}</p>}
-    {denied?<div className="sheet"><h2>店員登入</h2><p>託管網站請使用獲授權的店主帳號。</p><a className="primary" href="/signin-with-chatgpt?return_to=%2Fkitchen" target="_top">使用 ChatGPT 登入</a>
+    {denied?<div className="sheet"><h2>店員登入</h2><p>託管網站請使用獲授權的店主帳號。</p><a className="primary" href={"/signin-with-chatgpt?return_to="+encodeURIComponent(signInTarget)} target="_top">使用 ChatGPT 登入</a>
       <details><summary>使用自架店員金鑰</summary><form onSubmit={e=>{e.preventDefault();sessionStorage.setItem("he-ri-staff",entry);setKey(entry);setEntry("");setRevision(v=>v+1);}}><label>店員金鑰<input type="password" value={entry} onChange={e=>setEntry(e.target.value)} required/></label><button className="outline">登入</button></form></details></div>:rows===null?<p>正在讀取接單台…</p>:<>
     <div className="actions"><a className="outline" href="/kitchen/prep">查看備料單</a>
       <button className="outline" disabled={exporting} onClick={exportStations}>{exporting?"正在擷取訂單…":"下載分站出單檔"}</button></div>
