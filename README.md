@@ -7,7 +7,7 @@
 在本專案目錄執行以下指令。演練將合成資料放在暫存目錄，使用和 CI 相同版本的 Stockroom。
 
 ```sh
-git clone https://github.com/peca12968/stockroom-reservations.git ../stockroom-demo
+git clone https://github.com/peca12968/hey-table.git ../stockroom-demo
 git -C ../stockroom-demo checkout --detach 1bec99199cf0ee8ed9d9b3d34ddbaad10dc01930
 python stockroom_drill.py ../stockroom-demo
 python -m unittest -v
