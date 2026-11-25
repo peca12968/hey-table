@@ -14,6 +14,7 @@ import {planSupplyReview,supplyReviewRows} from "../lib/supply-review.mjs";
 import {matchesPrepOrderSource,prepArrivalReportFormat,prepOrderSource,readPrepArrivalReport,
   readPrepReadinessReport} from "../lib/prep-readiness-report.mjs";
 import {forecastPrepReadiness,prepReadinessPlanner} from "../lib/prep-readiness.mjs";
+import {quotePantryPurchase} from "../lib/pantry-purchase.mjs";
 import {dishes} from "../lib/menu.mjs";
 import {sqliteD1} from "../scripts/sqlite-d1.mjs";
 import {applyDemoMigrations} from "../scripts/apply-demo-migrations.mjs";
@@ -650,6 +651,46 @@ test("browser prep readiness and purchasing match Python for recipe revisions an
   const cyclic=structuredClone(book);
   cyclic.components.dashi.inputs.sauce=1;
   assert.throws(()=>forecastPrepReadiness(orders,cyclic,{}),/循環相依/);
+});
+
+test("browser supplier quotes match Python across freight, pack limits, stock and ties",()=>{
+  const cwd=fileURLToPath(new URL("../modules/pantry-freight/",import.meta.url));
+  const command=[
+    "import json, random",
+    "from test_purchase import PLAN, CAT",
+    "from purchase import purchase",
+    'examples = [(PLAN, CAT), (PLAN, dict(CAT, max_surplus={"chicken":10})), ({"lines":[]}, CAT)]',
+    "rng = random.Random(19874)",
+    "for case in range(320):",
+    '    gaps = {key:rng.randint(1,6) for key in "xy"}',
+    '    lines = [dict(action="purchase",component=key,needed=gap+1,available=1,unit="g") for key,gap in gaps.items()]',
+    '    vendors = [dict(id=key,shipping=rng.randrange(9),free_at=rng.choice([None,0,5,10,15])) for key in "ab"]',
+    '    offers = [dict(sku=str(i),supplier=rng.choice("ab"),component=key,pack=rng.randint(1,4),stock=rng.randint(0,3),price=rng.randint(1,7),unit="g") for i,key in enumerate("xyxy")]',
+    '    limits = {key:rng.randrange(5) for key in gaps if rng.randrange(2)}',
+    '    catalog = dict(currency="TWD",suppliers=vendors,offers=offers,max_surplus=limits)',
+    '    rng.shuffle(offers)',
+    '    examples.append((dict(lines=lines),catalog))',
+    "print(json.dumps([[plan,catalog,purchase(plan,catalog)] for plan,catalog in examples]))",
+  ];
+  const python=spawnSync(process.env.PYTHON||"python",["-B","-c",command.join("\n")],
+    {cwd,encoding:"utf8",env:{...process.env,PYTHONUTF8:"1"}});
+  assert.equal(python.status,0,python.stderr);
+  const examples=JSON.parse(python.stdout);
+  assert.equal(examples.length,323);
+  for(const [index,[plan,catalog,expected]] of examples.entries()){
+    assert.deepEqual(quotePantryPurchase(plan,catalog),expected,`catalog ${index}`);
+  }
+  const [[plan,catalog]]=examples;
+  const invalid=structuredClone(catalog);
+  invalid.offers[0].unit="lb";
+  assert.throws(()=>quotePantryPurchase(plan,invalid),/供應單位/);
+  invalid.offers[0].unit=catalog.offers[0].unit;
+  invalid.offers[0].price=Number.MAX_SAFE_INTEGER+1;
+  assert.throws(()=>quotePantryPurchase(plan,invalid),/整數範圍/);
+  const large={lines:[{component:"salt",action:"purchase",unit:"g",needed:1_000_000,available:0}]};
+  const suppliers=[{id:"vendor",shipping:1,free_at:1_000_000}];
+  const offers=[{sku:"salt",supplier:"vendor",component:"salt",unit:"g",pack:1,price:1,stock:1_000_000}];
+  assert.throws(()=>quotePantryPurchase(large,{currency:"TWD",suppliers,offers}),/試算上限/);
 });
 
 test("purchase input counts shared batches once across orders that individually lack stock",()=>{

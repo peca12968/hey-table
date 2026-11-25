@@ -1561,6 +1561,45 @@ test("printable kitchen snapshot exports the displayed orders to Prep Sheet",asy
   expect(JSON.parse(purchased.stdout)).toEqual({status:"infeasible",shortages:expect.arrayContaining([
     {component:"beans",unit:"g",required:beansNeeded,offered:0,uncovered:beansNeeded},
   ])});
+  const suppliers=purchase.getByRole("region",{name:"供應商比價"});
+  const supplierFile=suppliers.getByLabel("供應商目錄 JSON",{exact:true});
+  const quote=suppliers.getByRole("region",{name:"供應商比價結果"});
+  const quoteButton=suppliers.getByRole("button",{name:"開始供應商比價"});
+  await expect(quoteButton).toBeDisabled();
+  await supplierFile.setInputFiles(join(pantry,"examples","suppliers.json"));
+  await quoteButton.click();
+  await expect(quote.getByRole("status")).toHaveText("依目前供應商目錄無法補足缺口。");
+  await expect(quote.getByText("毛豆 · 缺 "+beansNeeded+" g · 供應商最多提供 0 g")).toBeVisible();
+  await expect(quote.getByRole("button",{name:"下載採購報告"})).toHaveCount(0);
+  const offers=purchaseInput.lines.filter(line=>line.needed>line.available).map(line=>({
+    sku:"local-"+line.component,supplier:"local-market",component:line.component,unit:line.unit,
+    pack:line.needed-line.available,price:20,stock:1,
+  }));
+  const total=20*offers.length;
+  const supplierCatalog={currency:"TWD",offers,suppliers:[{id:"local-market",shipping:35,free_at:total}]};
+  await supplierFile.setInputFiles({name:"suppliers.json",mimeType:"application/json",
+    buffer:Buffer.from(JSON.stringify(supplierCatalog))});
+  await expect(quote).toHaveCount(0);
+  await quoteButton.click();
+  await expect(quote.getByRole("status")).toHaveText(`總價 NT$${total} · 運費 NT$0 · 共 ${offers.length} 包`);
+  await expect(quote.getByText(new RegExp("毛豆（local-beans）· 1 包 × "+beansNeeded+" g"))).toBeVisible();
+  const quoteDownload=page.waitForEvent("download");
+  await quote.getByRole("button",{name:"下載採購報告"}).click();
+  const quotePath=await (await quoteDownload).path();
+  const received=spawnSync("python",["-B","-c",[
+    "import json, sys, tempfile",
+    "from pathlib import Path",
+    "from ledger import initialize, read_json",
+    "from receiving import open_order",
+    "with tempfile.TemporaryDirectory() as folder:",
+    '    db = Path(folder) / "stock.db"',
+    "    initialize(db)",
+    '    print(json.dumps(open_order(db, read_json(Path("examples/recipes.json")), "BROWSER", read_json(Path(sys.argv[1])))))',
+  ].join("\n"),quotePath],{cwd:root,encoding:"utf8",env:{...process.env,PYTHONUTF8:"1"}});
+  expect(received.status,received.stderr).toBe(0);
+  expect(JSON.parse(received.stdout)).toMatchObject({purchase_order:"BROWSER",state:"open",remaining_packs:offers.length,
+    lines:expect.arrayContaining([{supplier:"local-market",sku:"local-beans",component:"beans",unit:"g",pack:beansNeeded,
+      ordered_packs:1,received_packs:0,cancelled_packs:0,remaining_packs:1}])});
   const arrivals=review.getByRole("region",{name:"預計到貨試算"});
   const compare=arrivals.getByRole("button",{name:"比較到貨前後"});
   const after=arrivals.getByRole("region",{name:"到貨試算結果"});

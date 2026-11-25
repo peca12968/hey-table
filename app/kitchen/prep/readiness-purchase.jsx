@@ -1,5 +1,6 @@
 import {useState} from "react";
 import {downloadJson} from "../../../lib/download-json.mjs";
+import PurchaseQuote from "./purchase-quote.jsx";
 
 export default function ReadinessPurchase({planner,source,includePreparing}){
   const [result,setResult]=useState(null);
@@ -30,6 +31,7 @@ export default function ReadinessPurchase({planner,source,includePreparing}){
         <strong>{name} · 缺 {needed-available} {unit}</strong>
         <p>總需求 {needed} {unit} · 盤點庫存 {available} {unit}</p>
       </li>)}</ul>}
+      {shortages.length>0&&<PurchaseQuote plan={result} capturedAt={source.capturedAt}/>}
     </>}
   </section>;
 }
