@@ -34,6 +34,13 @@ function subscribeToLocation(notify){
 function kitchenFocus(search){
   if(search===null)return undefined;
   const query=new URLSearchParams(search);
+  if(query.has("paymentReview")){
+    const number=query.get("paymentReview"),id=Number(number),date=query.get("date");
+    const validDate=query.getAll("date").length===1&&Boolean(businessDayRange(date));
+    const validNumber=query.getAll("paymentReview").length===1&&/^[0-9]+$/.test(number)&&Number.isSafeInteger(id)&&id>0;
+    return {kind:"payment-review",number:validDate&&validNumber?numberOf(id):"",date,
+      back:validDate?"/kitchen/daily?"+new URLSearchParams({date}):"/kitchen/daily",signInTarget:"/kitchen"+search};
+  }
   const kind=query.has("pickup")?"pickup":"booking";
   const number=query.get(kind);
   if(number===null)return null;
@@ -93,7 +100,7 @@ function TableHandoff({table,orders,busy,update}){
   </section>;
 }
 
-function KitchenTicket({order,busy,update,movePickup,recordCash,refresh,today,staffKey,showOverdue=false,handoffOnly=false}){
+function KitchenTicket({order,busy,update,movePickup,recordCash,refresh,today,staffKey,showOverdue=false,handoffOnly=false,paymentReview=false}){
   const {id,status,table,created,items,note,paymentMethod,paymentEnv,paymentState,total}=order;
   const actions=handoffOnly ? transitions[status].filter(next=>next==="completed") : transitions[status];
   const workingByStation=order.stationProgress&&status==="preparing";
@@ -102,10 +109,11 @@ function KitchenTicket({order,busy,update,movePickup,recordCash,refresh,today,st
   const [previousWindow,newWindow]=latestPickup?pickupChangeWindows(latestPickup):[];
   const prepAt=order.pickupUpcoming?order.pickupSlot-pickupPrepLead:null;
   const prepDay=prepAt===null?"":businessDate(prepAt);
-  const canDemoRefund=!handoffOnly&&paymentEnv==="demo"&&paymentState==="paid"&&paymentMethod!=="cash";
+  const canDemoRefund=!handoffOnly&&!paymentReview&&paymentEnv==="demo"&&paymentState==="paid"&&paymentMethod!=="cash";
   return <article className="sheet kitchenTicket">
     <div className="menuTitle"><h2>#{numberOf(id)}</h2><Mode table={table} source={order.source}/></div>
-    <p aria-live={handoffOnly?"polite":undefined}><b>{labels[status]}</b> · {new Date(created).toLocaleTimeString("zh-TW",{hour:"2-digit",minute:"2-digit",timeZone:"Asia/Taipei"})}</p>
+    <p aria-live={handoffOnly?"polite":undefined}><b>{labels[status]}</b> · {paymentReview&&businessDate(created)+" "}
+      {new Date(created).toLocaleTimeString("zh-TW",{hour:"2-digit",minute:"2-digit",timeZone:"Asia/Taipei"})}</p>
     <PickupAppointment start={order.pickupSlot}/>
     {waitingPickup(order)&&<p className="pickupArrived">顧客已到店 · <time dateTime={new Date(order.pickupArrivedAt).toISOString()}>
       {pickupTime(order.pickupArrivedAt)}</time></p>}
@@ -114,7 +122,9 @@ function KitchenTicket({order,busy,update,movePickup,recordCash,refresh,today,st
     {showOverdue&&order.overdue&&<p className="kitchenOverdue">逾時 · {overdueStage[status]} {Math.floor(order.overdue.elapsedMs/60_000)} 分鐘</p>}
     <ul className="orderLines">{items.map(dish=><li key={dish.id}><div>{dish.name}<ItemNote note={dish.note}/></div><b>×{dish.qty}</b></li>)}</ul>
     {note&&<p>備註　{note}</p>}
-    <p>{methods[paymentMethod]} {paymentMethod!=="cash"&&[environmentLabel(paymentEnv),paymentStates[paymentState]].join(" · ")}</p>
+    <p>{Object.hasOwn(methods,paymentMethod)?methods[paymentMethod]:"付款方式未記錄"} {paymentMethod!=="cash"&&
+      [environmentLabel(paymentEnv)||"環境未記錄",Object.hasOwn(paymentStates,paymentState)?paymentStates[paymentState]:"付款狀態未記錄"].join(" · ")}</p>
+    {paymentReview&&paymentMethod==="cash"&&!order.cashReceipt&&<p>未登記現金</p>}
     <div className="total"><span>合計</span><b>NT$ {total}</b></div>
     {paymentMethod==="cash"&&["ready","completed"].includes(status)&&
       <CashCollection order={order} disabled={busy} submit={recordCash} onChange={refresh}/>}
@@ -123,7 +133,7 @@ function KitchenTicket({order,busy,update,movePickup,recordCash,refresh,today,st
     <div className="actions">
       {["ready","completed"].includes(status)&&<a className="outline" href={"/kitchen/handoff?id="+numberOf(id)}>交餐小票</a>}
       {workingByStation&&<a className="primary" href="/kitchen/station-work">查看分站進度</a>}
-      {!handoffOnly&&["sandbox","production"].includes(paymentEnv)&&<button className="outline" disabled={busy} onClick={()=>update("payment",{id})}>查詢金流</button>}
+      {!handoffOnly&&paymentMethod!=="cash"&&["sandbox","production"].includes(paymentEnv)&&<button className="outline" disabled={busy} onClick={()=>update("payment",{id})}>查詢金流</button>}
       {canDemoRefund&&<button className="outline" disabled={busy} onClick={()=>{
         const effect=["completed","cancelled"].includes(status)?"保留現有餐單狀態。":"同時取消未交餐的餐單並釋回份數。";
         if(window.confirm("確認模擬全額退款 NT$ "+total+"？"+effect))
@@ -137,7 +147,7 @@ function KitchenTicket({order,busy,update,movePickup,recordCash,refresh,today,st
     </div>
     {table&&["pending","preparing","ready"].includes(status)&&<TableMove
       key={table+":"+tableRevision} id={id} table={table} revision={tableRevision} busy={busy} update={update}/>}
-    {!handoffOnly&&order.pickupSlot!=null&&<ReschedulePickup order={order} canReschedule={Boolean(order.pickupUpcoming)} disabled={busy}
+    {!handoffOnly&&!paymentReview&&order.pickupSlot!=null&&<ReschedulePickup order={order} canReschedule={Boolean(order.pickupUpcoming)} disabled={busy}
       submit={(change,signal)=>movePickup(id,change,signal)} onChange={refresh} staffKey={staffKey}/>}
   </article>;
 }
@@ -154,7 +164,8 @@ export default function Kitchen(){
   const locationSearch=useSyncExternalStore(subscribeToLocation,browserSearch,serverSearch);
   const focus=useMemo(()=>kitchenFocus(locationSearch),[locationSearch]);
   const focused=Boolean(focus),handoffOnly=focus?.kind==="pickup";
-  const title=focused?(handoffOnly?"自取交餐":"自取預約餐單"):"店家接單台";
+  const paymentReview=focus?.kind==="payment-review";
+  const title=paymentReview?"交班付款核對":handoffOnly?"自取交餐":focused?"自取預約餐單":"店家接單台";
   useEffect(()=>{
     if(focus===undefined||focus?.number==="")return;
     const controller=new AbortController();
@@ -167,8 +178,9 @@ export default function Kitchen(){
         const signal=AbortSignal.any([controller.signal,AbortSignal.timeout(10_000)]);
         const options={headers,signal};
         if(focus){
-          const endpoint=focus.kind==="pickup"?"pickup":"pickup-booking";
-          const order=await request("/api/kitchen/"+endpoint+"?id="+focus.number,options);
+          const endpoint=focus.kind==="booking"?"pickup-booking":focus.kind;
+          const params=new URLSearchParams({id:focus.number,...(paymentReview?{date:focus.date}:{})});
+          const order=await request("/api/kitchen/"+endpoint+"?"+params,options);
           if(!controller.signal.aborted)setRows([order]);
         }else{
           const [orders,menu]=await Promise.all([request("/api/kitchen",options),request("/api/menu",{signal})]);
@@ -184,8 +196,10 @@ export default function Kitchen(){
         }
       }finally{inFlight=false;}
     }
-    load();const t=setInterval(load,5000);return()=>{controller.abort();clearInterval(t);};
-  },[key,revision,focus]);
+    load();
+    const timer=paymentReview?null:setInterval(load,5000);
+    return()=>{controller.abort();clearInterval(timer);};
+  },[key,revision,focus,paymentReview]);
   async function update(endpoint,body){
     setBusy(true);setError("");setActionMessage("");
     try{
@@ -257,15 +271,15 @@ export default function Kitchen(){
     a.pickupArrivedAt-b.pickupArrivedAt||a.id-b.id);
   let content;
   if(focus?.number===""){
-    content=<p role="alert">{handoffOnly?"取餐 QR 碼的號碼無效。":"預約餐單的取餐號碼無效。"}</p>;
+    content=<p role="alert">{paymentReview?"餐單日期或餐號無效。":handoffOnly?"取餐 QR 碼的號碼無效。":"預約餐單的取餐號碼無效。"}</p>;
   }else if(denied){
     content=<div className="sheet"><h2>店員登入</h2><p>託管網站請使用獲授權的店主帳號。</p><a className="primary" href={"/signin-with-chatgpt?return_to="+encodeURIComponent(focus?.signInTarget??"/kitchen")} target="_top">使用 ChatGPT 登入</a>
       <details><summary>使用自架店員金鑰</summary><form onSubmit={e=>{e.preventDefault();sessionStorage.setItem("he-ri-staff",entry);setEntry("");setRevision(v=>v+1);}}><label>店員金鑰<input type="password" value={entry} onChange={e=>setEntry(e.target.value)} required/></label><button className="outline">登入</button></form></details></div>;
   }else if(rows===null){
-    content=!error&&<p>正在讀取{focused?"自取餐單":"接單台"}…</p>;
+    content=!error&&<p>正在讀取{paymentReview?"已交餐單":focused?"自取餐單":"接單台"}…</p>;
   }else if(focused){
     content=<KitchenTicket key={rows[0].id} order={rows[0]} busy={busy} update={update} movePickup={movePickup} recordCash={recordCash}
-      refresh={refresh} today={today} staffKey={key} handoffOnly={handoffOnly} showOverdue={!handoffOnly}/>;
+      refresh={refresh} today={today} staffKey={key} handoffOnly={handoffOnly} paymentReview={paymentReview} showOverdue={!handoffOnly}/>;
   }else{
     const showTableHandoff=filter==="ready"&&!search.trim();
     const readyAt=table=>filtered.filter(order=>order.table===table&&order.mode==="table");
@@ -314,7 +328,8 @@ export default function Kitchen(){
   }
 
   return <><Header/><main className={focused?"shell section narrow":"shell section"}>
-    {focused&&<a className="textLink" href={handoffOnly?"/kitchen":focus.roster}>{handoffOnly?"返回店家接單台":"返回自取預約清單"}</a>}
+    {focused&&<a className="textLink" href={paymentReview?focus.back:handoffOnly?"/kitchen":focus.roster}>
+      {paymentReview?"返回每日訂單摘要":handoffOnly?"返回店家接單台":"返回自取預約清單"}</a>}
     <div className="menuTitle"><div>{!focused&&<p className="eyebrow">KITCHEN</p>}<h1>{title}</h1></div>
       {focus?.number!==""&&<button className="outline" onClick={()=>setRevision(v=>v+1)}><RefreshCw size={16}/> 更新</button>}</div>
     {error&&<p className="error" role="alert">{error}</p>}

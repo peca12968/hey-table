@@ -1426,6 +1426,48 @@ test("daily payment summary groups delivered orders by stored method and environ
     report.channels.pickup.completedTotal+report.channels.table.completedTotal);
 });
 
+test("staff payment review resolves old completed orders by Taipei creation date without exposing payment references",async t=>{
+  const db=database();
+  t.after(()=>db.sqlite.close());
+  const day="2024-02-29",start=Date.parse(day+"T00:00:00+08:00"),token=crypto.randomUUID();
+  const insert=db.sqlite.prepare(`INSERT INTO orders(token,mode,status,items,note,total,created,payment_method,payment_env)
+    VALUES (?,'pickup',?,'[]','',45,?,?,?)`);
+  const add=(created,status="completed",method="cash",environment="cash",proof=crypto.randomUUID())=>
+    Number(insert.run(proof,status,created,method,environment).lastInsertRowid);
+  const online=add(start,"completed","line_pay","sandbox",token);
+  const cash=add(start+86_400_000-1);
+  const ready=add(start,"ready"),tomorrow=add(start+86_400_000);
+  for(let i=0;i<21;i++)add(start+86_400_000+i);
+  const pay=db.sqlite.prepare("INSERT INTO payment_attempts(order_id,reference,merchant,state,created) VALUES (?,?,'internal-merchant',?,?)");
+  pay.run(online,"previous-attempt","paid",start);
+  pay.run(online,"latest-attempt","authorized",start);
+  const env={DB:db,STAFF_KEY:"fixture-staff"},staff={Authorization:"Bearer fixture-staff"};
+  const call=(path,headers=staff,options={})=>api(new Request("https://order.example/api/kitchen"+path,{headers,...options}),env);
+  const review=(id,date=day,headers=staff)=>call("/payment-review?id="+id+"&date="+date,headers);
+  assert.equal((await review(online,day,{})).status,403);
+  for(const params of ["","?id=1e3&date="+day,"?id=1&id=2&date="+day,"?id=1&date="+day+"&date="+day,"?id=1&date=2023-02-29"])
+    assert.equal((await call("/payment-review"+params)).status,400);
+  for(const id of [ready,tomorrow,10000])assert.equal((await review(id)).status,404);
+  assert.equal((await review(online,"2024-02-28")).status,404);
+  const queue=await (await call("")).json();
+  assert.ok(queue.every(order=>order.id!==online&&order.id!==cash));
+  const response=await review("000"+online);
+  assert.equal(response.status,200);
+  assert.equal(response.headers.get("cache-control"),"no-store");
+  const raw=await response.text();
+  assert.ok([token,"previous-attempt","latest-attempt","internal-merchant"].every(value=>!raw.includes(value)));
+  const {id,paymentMethod,paymentEnv,paymentState,total}=JSON.parse(raw);
+  assert.deepEqual({id,paymentMethod,paymentEnv,paymentState,total},{id:online,paymentMethod:"line_pay",paymentEnv:"sandbox",paymentState:"authorized",total:45});
+  const original=await (await review(cash)).json();
+  assert.equal(original.cashReceipt,undefined);
+  const receipt=await call("/cash-receipt",{...staff,"Content-Type":"application/json"},{method:"POST",
+    body:JSON.stringify({id:cash,operationId:crypto.randomUUID(),expectedTotal:45,tendered:50})});
+  assert.equal(receipt.status,200);
+  assert.deepEqual((await (await review(cash)).json()).cashReceipt,(await receipt.json()).cashReceipt);
+  const report=await (await call("/daily?date="+day+"&paymentSummary=1")).json();
+  assert.deepEqual(report.paymentSummary.groups.find(group=>group.method==="cash").review,[]);
+});
+
 test("daily pickup punctuality uses the current booked date, cutoff and recorded readiness",async t=>{
   const db=database();
   t.after(()=>db.sqlite.close());

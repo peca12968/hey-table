@@ -847,6 +847,15 @@ export async function api(request, env) {
     const row=lookup.results[0];
     return row?json(kitchenOrder(row,capturedAt)):fail("找不到這張預約自取餐單。",404);
   }
+  if (path === "/api/kitchen/payment-review" && method === "GET") {
+    const id=collectionId(url),dates=url.searchParams.getAll("date");
+    const range=dates.length===1?businessDayRange(dates[0]):null;
+    if(id===null||url.searchParams.getAll("id").length!==1||!range)
+      return fail("請選擇有效的餐單日期及餐號。");
+    const row=await db.prepare(`${selectOrders} WHERE id=? AND created>=? AND created<? AND status='completed'`)
+      .bind(id,...range).first();
+    return row?json(receipt(row)):fail("這一天找不到這張已交餐餐單。",404);
+  }
   if (path === "/api/kitchen/pickup-display" && method === "GET") {
     const {results}=await db.prepare(`SELECT id,status FROM orders
       WHERE mode='pickup' AND status IN ('preparing','ready') AND ${payableForKitchen}

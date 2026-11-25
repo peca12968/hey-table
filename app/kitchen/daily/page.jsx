@@ -1,5 +1,5 @@
 "use client";
-import {useEffect,useState} from "react";
+import {useEffect,useState,useSyncExternalStore} from "react";
 import {Header,Footer,request} from "../../shared";
 import {useBusinessToday} from "../../use-business-today.mjs";
 import {downloadCsv} from "../../../lib/download-csv.mjs";
@@ -7,6 +7,7 @@ import {downloadJson} from "../../../lib/download-json.mjs";
 import {numberOf} from "../../../lib/menu.mjs";
 import {methods,paymentStates} from "../../../lib/payments.mjs";
 import {pickupWindow} from "../../../lib/pickup-slots.mjs";
+import {businessDayRange} from "../../../lib/business-day.mjs";
 import "./daily.css";
 
 const captureTime = new Intl.DateTimeFormat("zh-TW", {
@@ -16,6 +17,12 @@ const statusFields = [
   ["orders","全部餐單"],["pending","待接單"],["preparing","製作中"],
   ["ready","待交餐"],["completed","已交餐"],["cancelled","已取消"],
 ];
+const browserSearch=()=>window.location.search;
+const serverSearch=()=>null;
+function subscribeToLocation(notify){
+  window.addEventListener("popstate",notify);
+  return ()=>window.removeEventListener("popstate",notify);
+}
 
 function downloadPortions(report) {
   const capturedAt = new Date(report.capturedAt).toISOString();
@@ -37,7 +44,7 @@ function ChannelSummary({name,summary}) {
 const environmentNames={production:"正式付款",sandbox:"測試環境",demo:"示範模式",unknown:"環境未記錄"};
 const paymentStateNames={...paymentStates,cashRecorded:"已登記現金",cashMissing:"未登記現金",unknown:"付款狀態未記錄"};
 
-function PaymentSummary({summary}){
+function PaymentSummary({date,summary}){
   return <section className="sheet dailyTiming" aria-labelledby="daily-payment-title">
     <h2 id="daily-payment-title">已交餐付款方式摘要</h2>
     {summary.completed===0?<p>這一天沒有已交餐單。</p>:<>
@@ -51,7 +58,8 @@ function PaymentSummary({summary}){
             <dl>{Object.entries(group.statuses).map(([state,count])=>
               <div key={state}><dt>{paymentStateNames[state]}</dt><dd>{count} 張</dd></div>)}</dl>
             {group.review.length>0&&<ul aria-label="待核對餐號">{group.review.map(({id,state})=>
-              <li key={id}>#{numberOf(id)} · {paymentStateNames[state]}</li>)}</ul>}
+              <li key={id}><a className="textLink" href={"/kitchen?"+new URLSearchParams({paymentReview:numberOf(id),date})}>
+                #{numberOf(id)}</a> · {paymentStateNames[state]}</li>)}</ul>}
           </article>;
         })}
       </div>
@@ -136,9 +144,12 @@ function PickupPunctuality({date,report}){
 
 export default function DailyOperations() {
   const today=useBusinessToday();
+  const searchQuery=useSyncExternalStore(subscribeToLocation,browserSearch,serverSearch);
+  const linkedDate=new URLSearchParams(searchQuery??"").get("date");
+  const initialDate=searchQuery===null?"":businessDayRange(linkedDate)?linkedDate:today;
   const [draft,setDraft]=useState(null),[query,setQuery]=useState(null),[view,setView]=useState(null);
-  const date=draft??today;
-  const queryDate=query?.date??today;
+  const date=draft??initialDate;
+  const queryDate=query?.date??initialDate;
   const revision=query?.revision??0;
   useEffect(()=>{
     if(!queryDate)return;
@@ -192,7 +203,7 @@ export default function DailyOperations() {
         <ChannelSummary name="自取" summary={report.channels.pickup}/>
         <ChannelSummary name="掃碼內用" summary={report.channels.table}/>
       </div>
-      {report.paymentSummary&&<PaymentSummary summary={report.paymentSummary}/>}
+      {report.paymentSummary&&<PaymentSummary date={report.date} summary={report.paymentSummary}/>}
       {report.timing&&<DurationSummary timing={report.timing}/>}
       {report.arrivalTiming&&<ArrivalSummary timing={report.arrivalTiming}/>}
       {report.pickupPunctuality&&<PickupPunctuality date={report.date} report={report.pickupPunctuality}/>}

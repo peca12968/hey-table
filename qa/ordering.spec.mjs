@@ -420,6 +420,27 @@ test("staff can view a Taiwan-date summary and download the displayed snapshot o
   await expect(arrival.getByText("目前無可用時間紀錄")).toHaveCount(3);
   await expect(punctuality.getByText("這一天沒有自取預約。")).toBeVisible();
   await expect(payments.getByText("這一天沒有已交餐單。")).toBeVisible();
+  await date.fill(report.date);
+  await query.click();
+  const orderNumber="#"+String(tableOrder.id).padStart(4,"0");
+  const review=cashGroup.getByRole("link",{name:orderNumber,exact:true});
+  await review.click();
+  await expect(page.getByRole("heading",{name:"交班付款核對"})).toBeVisible();
+  await expect(page.getByRole("heading",{name:orderNumber})).toBeVisible();
+  await expect(page.getByText("未登記現金",{exact:true})).toBeVisible();
+  await expect(page.getByRole("button",{name:"完成交餐"})).toHaveCount(0);
+  await page.getByText("登記現金收款",{exact:true}).click();
+  await page.getByLabel("實收金額").fill("50");
+  await expect(page.getByText("應找零 NT$ 5")).toBeVisible();
+  await page.getByRole("button",{name:"確認現金收款"}).click();
+  await expect(page.getByRole("region",{name:"現金收款紀錄"})).toContainText("NT$ 50");
+  const back=page.getByRole("link",{name:"返回每日訂單摘要"});
+  await expect(back).toHaveAttribute("href","/kitchen/daily?date="+report.date);
+  await back.click();
+  await expect(date).toHaveValue(report.date);
+  await expect(cashGroup.getByText("已登記現金",{exact:true})).toBeVisible();
+  await expect(review).toHaveCount(0);
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBe(360);
 });
 
 test("mobile daily pickup report opens the exact delayed booking and prints the displayed snapshot",async({page})=>{

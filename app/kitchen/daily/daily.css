@@ -30,6 +30,7 @@
 .dailyPayment h3 small{font-weight:500;color:var(--muted)}
 .dailyPayment p{margin:8px 0;color:var(--muted);overflow-wrap:anywhere}
 .dailyPayment ul{padding:0;margin:8px 0 0;list-style:none;font-size:.9rem}
+.dailyPayment li a{display:inline-flex;align-items:center;min-height:32px}
 .punctualityWindows{display:grid;gap:10px;margin-top:16px}
 .punctualityWindows article{border-top:1px solid var(--line);padding-top:10px}
 .punctualityWindows p{margin:6px 0;color:var(--muted)}
@@ -42,6 +43,7 @@
   .dailyOperations h2{font-size:13pt;break-after:avoid}
   .dailyOperations .sheet{background:white;box-shadow:none;padding:8pt}
   .dailyOperations .kGrid,.dailyTimingGrid{grid-template-columns:repeat(2,minmax(0,1fr));gap:8pt}
+  .dailyPayment li a{display:inline;min-height:0;color:inherit;text-decoration:none}
   .dailyChannel,.dailyTimingGrid article,.dailyDishes tr,.punctualityWindows article{break-inside:avoid}
   .dailyDishes thead{display:table-header-group}
 }
