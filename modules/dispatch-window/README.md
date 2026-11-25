@@ -47,6 +47,18 @@ python demo.py ../stockroom-reservations --execute-plan
 
 整合演練在 Stockroom 寫入 B 單後模擬回覆中斷。重新執行會取回 B 單原收據並交運 C 單，共確認 7 件，B 單只送出一次。D 單隨後因服務端已到裝車截止遭拒，兩件庫存保留待重排。[交運演練（私人預覽）](https://peca-github-demo.peca12968.chatgpt.site/?demo=dispatchExecution#demos)
 
+## 裝車掃碼核對
+
+用 `--labels` 匯出箱件 CSV，將 `code` 欄交給標籤軟體印成可掃描的條碼或 QR 碼。掃描器可輸出為每行一個條碼的 UTF-8 文字檔。條碼包含保留編號、箱號和計畫件數，例如 `DW1/B/B2/2`。
+
+```sh
+python execute.py plan.json --labels --reservation B > labels.csv
+python execute.py plan.json --scan-log scans.txt --reservation B
+python execute.py plan.json --scan-log scans.txt --reservation B --stockroom http://127.0.0.1:8000 --confirm
+```
+
+核對會列出漏掃箱件，以及掃描紀錄裡的重複、錯箱、件數不符和格式錯誤。每個問題會標出原始行號。使用 `--scan-log` 時，整份選取清單通過後才執行交運，Stockroom 會照常核對交運時窗及保留量。同一份正確紀錄可重試查回交運收據。[裝車掃碼核對（私人預覽）](https://peca-github-demo.peca12968.chatgpt.site/?demo=dispatchScan#demos)
+
 ## 接續下一車
 
 將原始的完整 `work` 箱單和新車時窗交給 `replan.py`。新時窗檔必須提供 Unix 毫秒 `cutoff_ms`，可選填 `start_ms`、`stations`、`station_ready_ms` 與 `station_pauses`。省略開始時間就從 Stockroom 快照時間起算。指定開始時間時須等於或晚於快照，裝車截止則須晚於開始時間。

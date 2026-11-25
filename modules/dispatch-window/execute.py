@@ -1,6 +1,7 @@
 """Look up and submit due Dispatch Window batches to Stockroom."""
 
 import argparse
+import csv
 from hashlib import sha256
 from http.client import HTTPException
 import json
@@ -12,6 +13,7 @@ from urllib.parse import urlsplit
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 from dispatch import MAX_ORDERS, integer, key
+from load_scan import labels_for, verify_load
 
 
 def now_ms():
@@ -102,16 +104,21 @@ def execute_job(job, request, clock):
         return {"state": "retry"}
 
 
-def execute(report, request=None, *, clock=now_ms, selected=()):
+def execute(report, request=None, *, clock=now_ms, selected=(), scan_log=None):
     jobs = prepare(report, selected)
     captured = clock()
+    load_check = verify_load(jobs, scan_log) if scan_log is not None else None
     results = []
-    for job in jobs:
-        result = {field: job[field] for field in ("reservation_id", "batch_id", "units", "window")}
-        result.update(execute_job(job, request, clock))
-        results.append(result)
-    return {"captured_at_ms": captured, "confirmed_units": sum(row["units"] for row in results if "receipt" in row),
-            "results": results}
+    if load_check is None or load_check["ready"]:
+        for job in jobs:
+            result = {field: job[field] for field in ("reservation_id", "batch_id", "units", "window")}
+            result.update(execute_job(job, request, clock))
+            results.append(result)
+    result = {"captured_at_ms": captured, "confirmed_units": sum(row["units"] for row in results if "receipt" in row),
+              "results": results}
+    if load_check is not None:
+        result["load_check"] = load_check
+    return result
 
 
 class NoRedirect(HTTPRedirectHandler):
@@ -148,16 +155,31 @@ def main(argv=None):
     parser.add_argument("--stockroom", help="Stockroom HTTP(S) base URL")
     parser.add_argument("--confirm", action="store_true", help="Send due boxes after confirming they are packed")
     parser.add_argument("--reservation", action="append", default=[], help="Select an order, repeat for multiple orders")
+    loading = parser.add_mutually_exclusive_group()
+    loading.add_argument("--labels", action="store_true", help="Export selected box labels as CSV")
+    loading.add_argument("--scan-log", type=Path, help="Verify a UTF-8 scanner log before processing selected boxes")
     args = parser.parse_args(argv)
+    if args.labels and args.confirm:
+        parser.error("--labels exports CSV without dispatch")
     if args.confirm and not args.stockroom:
         parser.error("--confirm requires --stockroom")
     try:
         report = json.loads(args.plan.read_text(encoding="utf-8-sig"))
+        if args.labels:
+            labels = labels_for(prepare(report, args.reservation))
+            writer = csv.DictWriter(sys.stdout, fieldnames=("reservation_id", "shipment_id", "quantity", "code"),
+                                    lineterminator="\n")
+            writer.writeheader()
+            writer.writerows(labels)
+            return 0
         client = stockroom_client(args.stockroom) if args.confirm else None
-        result = execute(report, client, selected=args.reservation)
+        scan_log = args.scan_log.read_text(encoding="utf-8-sig") if args.scan_log else None
+        result = execute(report, client, selected=args.reservation, scan_log=scan_log)
     except (OSError, ValueError, TypeError, KeyError) as error:
         parser.exit(2, f"{error}\n")
     print(json.dumps(result, indent=2))
+    if "load_check" in result and not result["load_check"]["ready"]:
+        return 1
     return int(any(row["state"] in ("retry", "rejected", "expired") for row in result["results"]))
 
 

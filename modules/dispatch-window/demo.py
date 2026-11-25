@@ -14,7 +14,8 @@ from fastapi.testclient import TestClient
 
 from audit import audit
 from compare_audits import compare_audits
-from execute import execute
+from execute import execute, prepare
+from load_scan import labels_for, verify_load
 from replan import replan
 
 
@@ -36,14 +37,31 @@ def execution_demo(client, clock, report, manifest):
                     raise TimeoutError("simulated lost response after successful commit")
         return response.status_code, response.json()
 
-    def execute_at(server_ms, client_ms=None, *, chosen=report):
+    def execute_at(server_ms, client_ms=None, *, chosen=report, scan_log=None):
         clock[0] = server_ms / 1000
-        return execute(chosen, request, clock=lambda: server_ms if client_ms is None else client_ms)
+        return execute(chosen, request, clock=lambda: server_ms if client_ms is None else client_ms, scan_log=scan_log)
 
     waiting = execute_at(100000)
     assert not attempts
-    timeout = execute_at(107000)
+    selected = prepare(report, ("B",))
+    labels = labels_for(selected)
+    rejected_log = ["DW1/B/B1/2", "DW1/B/B1/2", "DW1/D/D1/2", "DW1/B/B2/1"]
+    accepted_log = [label["code"] for label in reversed(labels)]
+    clock[0] = 107.0
+    gated = execute(report, request, clock=lambda: 107000, selected=("B",), scan_log="\n".join(rejected_log))
+    assert not attempts and gated["results"] == [] and gated["confirmed_units"] == 0
+    assert client.get("/reservations/B").json()["shipped"] == 0
+    assert [issue["reason"] for issue in gated["load_check"]["issues"]] == [
+        "duplicate_scan", "unexpected_box", "quantity_mismatch",
+    ]
+    ready_scan = verify_load(selected, "\n".join(accepted_log))
+    assert ready_scan["ready"] and ready_scan["verified_units"] == 4
+    all_codes = [label["code"] for label in labels_for(prepare(report, ()))]
+    timeout = execute_at(107000, scan_log="\n".join(all_codes))
+    assert timeout["load_check"]["ready"]
     recovered = execute_at(109000)
+    receipt = recovered["results"][0]["receipt"]
+    assert sum(box["quantity"] for box in receipt["boxes"]) == ready_scan["verified_units"]
     late = execute_at(111000, 110000)
     reconciled = execute_at(111000)
 
@@ -119,6 +137,9 @@ def execution_demo(client, clock, report, manifest):
             "stages": stages, "attempts": first_attempts, "inventory_after": with_inventory[0],
             "next_truck": {"plan": next_plan, "execution": sent, "first_truck_review": old_plan,
                            "inventory_after": final_inventory[0]},
+            "load_scan": {"format": "dispatch-window.load-scan-demo.v1", "labels": labels,
+                          "rejected_log": rejected_log, "accepted_log": accepted_log, "rejected": gated["load_check"],
+                          "accepted": ready_scan, "receipt": receipt},
             "audit": {"format": "dispatch-window.audit-demo.v1", "before": before_audit, "after": after_audit,
                       "plan_conflict": plan_conflict, "stock_conflict": stock_conflict,
                       "after_returns": after_returns, "differences": {"movement": movement, "corrected": corrected,

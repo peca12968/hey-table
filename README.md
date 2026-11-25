@@ -16,6 +16,8 @@ Stockroom 支援在一筆交易內保留多個 SKU。若其中一項缺貨，該
 
 交班可用同一份 Stockroom 快照對帳多車計畫。跨車重排的箱件只計一次，規劃與實際件數不符時可核對各車數量。比較兩份已保存的快照可查看新增出貨、退回及已處理的件數差異。[跨車出貨對帳](modules/dispatch-window/README.md#跨車出貨對帳) · [交班快照比較](modules/dispatch-window/README.md#比較交班前後的對帳快照)
 
+裝車可匯出標籤資料和核對掃描紀錄，找到漏掃、錯箱、重複及件數不符。選擇使用掃描核對時，整份清單通過後才交運。[裝車掃碼核對](modules/dispatch-window/README.md#裝車掃碼核對)
+
 交班可按 SKU 查已到期的保留單，核對部分出貨或減量後的釋回件數，以及實際回收時間。[到期回收紀錄](modules/stockroom-reservations/README.md#查閱已到期的庫存回收)
 
 倉庫可按實點結果調整庫存，保留已占用件數與調整前後紀錄。盤點期間若出貨或入庫改變庫存版次，須重新核對。[實點調整與稽核](modules/stockroom-reservations/README.md#核對實點後調整庫存)

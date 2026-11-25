@@ -72,7 +72,15 @@
           },
           "state": "waiting"
         }
-      ]
+      ],
+      "load_check": {
+        "format": "dispatch-window.load-check.v1",
+        "ready": true,
+        "verified_boxes": 4,
+        "verified_units": 9,
+        "missing": [],
+        "issues": []
+      }
     },
     "recovered": {
       "captured_at_ms": 109000,
@@ -461,6 +469,91 @@
       "sku": "KIT-01",
       "capacity": 11,
       "available": 11
+    }
+  },
+  "load_scan": {
+    "format": "dispatch-window.load-scan-demo.v1",
+    "labels": [
+      {
+        "reservation_id": "B",
+        "shipment_id": "B1",
+        "quantity": 2,
+        "code": "DW1/B/B1/2"
+      },
+      {
+        "reservation_id": "B",
+        "shipment_id": "B2",
+        "quantity": 2,
+        "code": "DW1/B/B2/2"
+      }
+    ],
+    "rejected_log": [
+      "DW1/B/B1/2",
+      "DW1/B/B1/2",
+      "DW1/D/D1/2",
+      "DW1/B/B2/1"
+    ],
+    "accepted_log": [
+      "DW1/B/B2/2",
+      "DW1/B/B1/2"
+    ],
+    "rejected": {
+      "format": "dispatch-window.load-check.v1",
+      "ready": false,
+      "verified_boxes": 1,
+      "verified_units": 2,
+      "missing": [
+        {
+          "reservation_id": "B",
+          "shipment_id": "B2",
+          "quantity": 2,
+          "code": "DW1/B/B2/2"
+        }
+      ],
+      "issues": [
+        {
+          "line": 2,
+          "code": "DW1/B/B1/2",
+          "reason": "duplicate_scan",
+          "first_line": 1
+        },
+        {
+          "line": 3,
+          "code": "DW1/D/D1/2",
+          "reason": "unexpected_box"
+        },
+        {
+          "line": 4,
+          "code": "DW1/B/B2/1",
+          "reason": "quantity_mismatch",
+          "expected_quantity": 2
+        }
+      ]
+    },
+    "accepted": {
+      "format": "dispatch-window.load-check.v1",
+      "ready": true,
+      "verified_boxes": 2,
+      "verified_units": 4,
+      "missing": [],
+      "issues": []
+    },
+    "receipt": {
+      "batch_id": "dispatch-6ffb1008c4e044d6fc9c06f10ba4a6d3b3d913e60ea0775b01e52e5bb97673e1",
+      "boxes": [
+        {
+          "reservation_id": "B",
+          "shipment_id": "B1",
+          "quantity": 2,
+          "held_after": 2
+        },
+        {
+          "reservation_id": "B",
+          "shipment_id": "B2",
+          "quantity": 2,
+          "held_after": 0
+        }
+      ]
     }
   },
   "audit": {
