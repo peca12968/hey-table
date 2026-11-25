@@ -157,7 +157,7 @@ Stockroom 支援在一筆交易內保留多個 SKU。若其中一項缺貨，該
 | `TAPPAY_MERCHANT_EASY_WALLET`、`TAPPAY_MERCHANT_PI_WALLET`、`TAPPAY_MERCHANT_PLUS_PAY` | 依序設定悠遊付、Pi 拍錢包及全盈+PAY 的商店編號。全支付與全盈+PAY 可分別開通。 |
 | `TAPPAY_SITE_ORIGIN`、`TAPPAY_NOTIFY_URL` | 顧客返回的 HTTPS 網站，以及 TapPay 能從外網 POST 到的後端通知網址，處理路徑為 `/api/payments/notify`。私人 Sites 的外部登入限制也適用於通知網址，可在獨立測試部署驗證通知。 |
 
-返回網址及通知內容只用於找到交易。伺服器以商店、幣別、銀行訂單號查詢金流，核對交易識別碼、支付方式、餐單金額及交易狀態。收據與店員都能重新查詢。授權、已付款、部分退款與全額退款各有獨立顯示。若金流逾時且查無紀錄，訂單保留「付款確認中」，請使用商店後台核對。退款由商店在金流端辦理，再回本站查詢結果。
+返回網址及通知內容只用於找到交易。伺服器以商店、幣別、銀行訂單號查詢金流，核對交易識別碼、支付方式、餐單金額及交易狀態。收據與店員都能重新查詢。店員按「查詢金流」後，餐單會顯示本次核對結果、查無可核對紀錄、環境無法查詢或暫時需等待等情況，再載入目前的付款狀態。同一付款嘗試的短時間重送會共用查詢間隔，較早回來的查詢若已被新版查詢取代，就不會改寫狀態。授權、已付款、部分退款與全額退款各有獨立顯示。若金流逾時且查無紀錄，訂單保留「付款確認中」，可使用店家金流後台核對。退款由商店在金流端辦理，再回本站查詢結果。[查詢結果與併發測試](qa/tappay.test.mjs) · [手機金流查詢](qa/payments.spec.mjs)
 
 整合測試使用本機替身驗證 TapPay 請求與回應，實際商戶驗收仍需各支付方式的測試資格。[TapPay 全支付](https://docs.tappaysdk.com/px-pay-plus/zh/home.html) · [後端 API](https://docs.tappaysdk.com/px-pay-plus/zh/back.html) · [付款狀態](https://docs.tappaysdk.com/px-pay-plus/zh/reference.html) · [官方 Web SDK 範例](https://github.com/TapPay/tappay-web-example)
 

@@ -66,6 +66,92 @@ function database(beforeMigration=()=>{}){
   }
   return sqliteD1(sqlite);
 }
+test("staff payment lookup distinguishes verified records, missing attempts, mode, retries and failures",async t=>{
+  const db=database();
+  t.after(()=>db.sqlite.close());
+  let now=Date.parse("2026-11-25T12:00:00+08:00");
+  t.mock.method(Date,"now",()=>now);
+  const runtime={...env,DB:db,STAFF_KEY:"fixture-staff"};
+  const insert=db.sqlite.prepare(`INSERT INTO orders(token,mode,status,items,note,total,created,payment_method,payment_env)
+    VALUES (?,'pickup','completed','[]','',190,?,?,?)`);
+  const order=(method="px_pay_plus",mode="sandbox")=>Number(insert.run(crypto.randomUUID(),now-60000,method,mode).lastInsertRowid);
+  const noAttempt=order(),online=order(),production=order("px_pay_plus","production"),cash=order("cash","cash"),finished=order();
+  const save=db.sqlite.prepare("INSERT INTO payment_attempts(order_id,reference,merchant,state,created) VALUES (?,?,?,?,?)");
+  save.run(online,ref,"fixture","authorized",now-60000);
+  save.run(production,"alternate-reference","fixture","paid",now-60000);
+  save.run(finished,"finished-reference","fixture","refunded",now-60000);
+  let times=0,gatewayReply={status:0,trade_records:[{...data,rec_trade_id:"provider-id",record_status:0}]};
+  t.mock.method(globalThis,"fetch",async()=>{
+    times++;
+    if(gatewayReply===null)throw new Error("temporary timeout");
+    return Response.json(gatewayReply);
+  });
+  const check=(id,{key="fixture-staff",runtimeEnv=runtime}={})=>api(new Request("https://order.example/api/kitchen/payment",{
+    method:"PATCH",headers:{"Content-Type":"application/json",Authorization:"Bearer "+key},body:JSON.stringify({id})
+  }),runtimeEnv);
+  const expectOutcome=async(id,outcome,paymentState,options)=>{
+    const response=await check(id,options);
+    assert.equal(response.status,200);
+    assert.equal(response.headers.get("cache-control"),"no-store");
+    assert.deepEqual(await response.json(),{ok:true,id,outcome,paymentState});
+  };
+  assert.equal((await check(online,{key:"guest"})).status,403);
+  assert.equal((await check(0)).status,400);
+  assert.equal((await check(cash)).status,404);
+  await expectOutcome(noAttempt,"noAttempt","unpaid");
+  await expectOutcome(production,"unavailable","paid");
+  await expectOutcome(online,"unavailable","authorized",{runtimeEnv:{...runtime,TAPPAY_PARTNER_KEY:""}});
+  await expectOutcome(finished,"notQueryable","refunded");
+  assert.equal(times,0);
+  await expectOutcome(online,"matched","authorized");
+  await expectOutcome(online,"recent","authorized");
+  assert.equal(times,1);
+  now+=5000;
+  gatewayReply={status:0,trade_records:[{...data,rec_trade_id:"provider-id",record_status:1,original_amount:1}]};
+  await expectOutcome(online,"unconfirmed","authorized");
+  now+=5000;
+  gatewayReply=null;
+  const failure=await check(online);
+  assert.equal(failure.status,503);
+  assert.deepEqual(await failure.json(),{error:"無法查詢金流，請稍後再查"});
+  now+=5000;
+  gatewayReply={status:0,trade_records:[{...data,rec_trade_id:"provider-id",record_status:1}]};
+  await expectOutcome(online,"matched","paid");
+  assert.equal(times,4);
+});
+test("a delayed payment lookup cannot overwrite a newer verification for the same recorded state",async t=>{
+  const db=database();
+  t.after(()=>db.sqlite.close());
+  let now=Date.parse("2026-11-25T12:00:00+08:00");
+  t.mock.method(Date,"now",()=>now);
+  const id=Number(db.sqlite.prepare(`INSERT INTO orders(token,mode,status,items,note,total,created,payment_method,payment_env)
+    VALUES (?,'pickup','completed','[]','',190,?,'px_pay_plus','sandbox')`).run(crypto.randomUUID(),now-60000).lastInsertRowid);
+  db.sqlite.prepare(`INSERT INTO payment_attempts(order_id,reference,merchant,state,trade_id,created)
+    VALUES (?,?,'fixture','authorized','known',?)`).run(id,ref,now-60000);
+  const started=Promise.withResolvers(),firstReply=Promise.withResolvers();
+  let times=0;
+  t.mock.method(globalThis,"fetch",async()=>{
+    if(++times===1){started.resolve();return firstReply.promise;}
+    return reply({...data,record_status:0})();
+  });
+  const check=()=>api(new Request("https://order.example/api/kitchen/payment",{
+    method:"PATCH",headers:{"Content-Type":"application/json",Authorization:"Bearer fixture-staff"},body:JSON.stringify({id})
+  }),{...env,DB:db,STAFF_KEY:"fixture-staff"});
+  const older=check();
+  await started.promise;
+  const recent=await (await check()).json();
+  assert.equal(recent.outcome,"recent");
+  assert.equal(times,1);
+  now+=5000;
+  const newer=await (await check()).json();
+  firstReply.resolve(await reply({...data,record_status:1})());
+  assert.deepEqual(newer,{ok:true,id,paymentState:"authorized",outcome:"matched"});
+  assert.deepEqual(await (await older).json(),{ok:true,id,paymentState:"authorized",outcome:"changed"});
+  const stored=db.sqlite.prepare("SELECT state,trade_id,checked FROM payment_attempts WHERE order_id=?").get(id);
+  assert.equal(stored.state,"authorized");
+  assert.equal(stored.trade_id,"known");
+  assert.equal(stored.checked,now);
+});
 test("staff restock history pages by revision without exposing operation IDs or crossing dates and dishes",async t=>{
   const db=database();
   t.after(()=>db.sqlite.close());

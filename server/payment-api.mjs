@@ -11,25 +11,35 @@ const latest=(db,id)=>db.prepare("SELECT * FROM payment_attempts WHERE order_id=
 const transitions={pending:["pending","authorized","paid","failed","cancelled","partial","refunded"],
   authorized:["authorized","paid","cancelled","partial","refunded"],paid:["paid","partial","refunded"],partial:["partial","refunded"]};
 async function reconcile(env,order,a) {
-  if(!a || order.payment_env==="demo" || env.TAPPAY_MODE!==order.payment_env || !transitions[a.state])return;
-  const updated=await env.DB.prepare("UPDATE payment_attempts SET checked=? WHERE id=? AND checked<?")
-    .bind(Date.now(),a.id,Date.now()-5000).run();
-  if(!updated.meta.changes)return;
+  if(!a)return {outcome:"noAttempt"};
+  if(!["sandbox","production"].includes(order.payment_env)||env.TAPPAY_MODE!==order.payment_env)return {outcome:"unavailable"};
+  if(!Object.hasOwn(transitions,a.state))return {outcome:"notQueryable"};
+  const checkedAt=Date.now();
+  const claimed=await env.DB.prepare("UPDATE payment_attempts SET checked=? WHERE id=? AND state=? AND checked<=?")
+    .bind(checkedAt,a.id,a.state,checkedAt-5000).run();
+  if(!claimed.meta.changes)return {outcome:"recent"};
   const verified=await lookup(env,order,a);
-  if(verified && transitions[a.state].includes(verified.state)){
-    const firstPayable=!kitchenPaymentStates.includes(a.state)&&kitchenPaymentStates.includes(verified.state);
-    await env.DB.prepare(`UPDATE payment_attempts SET state=?, trade_id=?,
-      redirect_url=CASE WHEN ?='pending' THEN redirect_url ELSE NULL END,
-      kitchen_payable_at=COALESCE(kitchen_payable_at,?) WHERE id=? AND state=?`)
-      .bind(verified.state,verified.trade,verified.state,firstPayable?Date.now():null,a.id,a.state).run();
-  }
+  if(!verified||!transitions[a.state].includes(verified.state))return {outcome:"unconfirmed"};
+  const firstPayable=!kitchenPaymentStates.includes(a.state)&&kitchenPaymentStates.includes(verified.state);
+  const stored=await env.DB.prepare(`UPDATE payment_attempts SET state=?, trade_id=?,
+    redirect_url=CASE WHEN ?='pending' THEN redirect_url ELSE NULL END,
+    kitchen_payable_at=COALESCE(kitchen_payable_at,?) WHERE id=? AND state=? AND checked=?
+      AND (trade_id IS NULL OR trade_id=?)`)
+    .bind(verified.state,verified.trade,verified.state,firstPayable?Date.now():null,a.id,a.state,checkedAt,verified.trade).run();
+  return stored.meta.changes?{outcome:"matched",state:verified.state}:{outcome:"changed"};
 }
 export async function checkKitchenPayment(env,id) {
-  if(!Number.isSafeInteger(id))return fail("訂單編號無效",400);
+  if(!Number.isSafeInteger(id)||id<1)return fail("訂單編號無效",400);
   const order=await env.DB.prepare("SELECT * FROM orders WHERE id=?").bind(id).first();
   if(!order || order.payment_method==="cash")return fail("找不到線上付款餐單",404);
-  try{await reconcile(env,order,await latest(env.DB,id));}catch{return fail("無法查詢金流，請稍後再查",503);}
-  return result({ok:true});
+  try{
+    const attempt=await latest(env.DB,id);
+    const check=attempt&&!env.TAPPAY_PARTNER_KEY?{outcome:"unavailable"}:await reconcile(env,order,attempt);
+    const current=await latest(env.DB,id);
+    const paymentState=current?.state??"unpaid";
+    const changed=current?.id!==attempt?.id||paymentState!==(check.state??attempt?.state??"unpaid");
+    return result({ok:true,id,paymentState,outcome:changed?"changed":check.outcome});
+  }catch{return fail("無法查詢金流，請稍後再查",503);}
 }
 export async function refundDemoPayment(env,{id,expectedTotal,expectedStatus}){
   if(settings(env).mode!=="demo")return fail("只能在示範環境模擬退款。",403);

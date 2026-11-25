@@ -4,6 +4,47 @@ import {readFile} from "node:fs/promises";
 import {businessDate} from "../lib/business-day.mjs";
 const staff={Authorization:"Bearer local-test-kitchen"};
 
+test("mobile payment review distinguishes an unconfirmed, unavailable and verified lookup",async({page})=>{
+  const id=91,date="2026-11-24",next=Promise.withResolvers();
+  let paymentState="authorized",calls=0;
+  await page.setViewportSize({width:360,height:780});
+  await page.addInitScript(()=>sessionStorage.setItem("he-ri-staff","local-test-kitchen"));
+  await page.route("**/api/kitchen/payment-review?*",route=>route.fulfill({json:{
+    id,mode:"pickup",status:"completed",items:[{id:"sencha",name:"日式熱煎茶",qty:1}],total:45,
+    created:Date.parse(date+"T12:00:00+08:00"),paymentMethod:"line_pay",paymentEnv:"sandbox",paymentState,
+  }}));
+  await page.route("**/api/kitchen/payment",async route=>{
+    calls++;
+    expect(route.request().method()).toBe("PATCH");
+    expect(route.request().headers().authorization).toBe(staff.Authorization);
+    expect(route.request().postDataJSON()).toEqual({id});
+    if(calls===1){
+      await next.promise;
+      return route.fulfill({json:{ok:true,id,outcome:"unconfirmed",paymentState}});
+    }
+    if(calls===2)return route.fulfill({status:503,json:{error:"無法查詢金流，請稍後再查"}});
+    paymentState="paid";
+    return route.fulfill({json:{ok:true,id,outcome:"matched",paymentState}});
+  });
+  await page.goto("/kitchen?paymentReview="+id+"&date="+date);
+  const card=page.getByRole("article"),check=card.getByRole("button",{name:"查詢金流",exact:true});
+  await expect(card.getByText(/TapPay 測試環境 · 已授權，待請款/)).toBeVisible();
+  try{
+    await check.click();
+    await expect(card.getByRole("button",{name:"正在查詢金流…"})).toBeDisabled();
+  }finally{next.resolve();}
+  await expect(card.getByRole("status")).toHaveText("本次未取得可核對的金流紀錄，畫面保留最後一次紀錄。");
+  await expect(card.getByText(/TapPay 測試環境 · 已授權，待請款/)).toBeVisible();
+  await check.click();
+  await expect(card.getByRole("status")).toHaveText("無法查詢金流，請稍後再查。");
+  await expect(card.getByText(/TapPay 測試環境 · 已授權，待請款/)).toBeVisible();
+  await check.click();
+  await expect(card.getByRole("status")).toHaveText("本次金流查詢結果為「已付款」。");
+  await expect(card.getByText(/TapPay 測試環境 · 已付款/)).toBeVisible();
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBe(360);
+  expect(calls).toBe(3);
+});
+
 test("mobile cash collection previews change and resumes the same operation after a lost request",async({page,request})=>{
   page.setDefaultTimeout(9000);
   const token=randomUUID(),ticket={"X-Ticket":token},endpoint="/api/kitchen/cash-receipt";
