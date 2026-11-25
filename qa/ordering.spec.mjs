@@ -1214,6 +1214,63 @@ test("reopen a lost A03 receipt after the kitchen committed, without resubmittin
   await expect(reopened.locator(".receiptHistory").getByRole("link")).toHaveAttribute("href","/ticket#"+attempts[0].token);
 });
 
+test("a stalled checkout and lookup can find the original committed order without another POST",async({page,request})=>{
+  await page.setViewportSize({width:360,height:780});
+  await page.clock.install();
+  const committed=Promise.withResolvers(),postRelease=Promise.withResolvers(),lookupRelease=Promise.withResolvers();
+  const lookupStarted=Promise.withResolvers(),posts=[],lookups=[];
+  await page.route("**/api/orders",async route=>{
+    posts.push(route.request().postDataJSON());
+    try{
+      const reply=await route.fetch();
+      expect(reply.ok()).toBe(true);
+      committed.resolve(await reply.json());
+      await postRelease.promise;
+    }catch(error){committed.reject(error);}
+    finally{await route.abort().catch(()=>{});}
+  });
+  await page.route("**/api/ticket",async route=>{
+    lookups.push(route.request().headers()["x-ticket"]);
+    if(lookups.length!==1)return route.continue();
+    lookupStarted.resolve();
+    await lookupRelease.promise;
+    await route.abort().catch(()=>{});
+  });
+  try{
+    await page.goto("/?table=A05");
+    await page.getByRole("button",{name:"加入雞肉親子丼",exact:true}).click();
+    await page.getByRole("button",{name:/我的餐單/}).click();
+    await page.getByRole("textbox").fill("送單逾時自動查詢");
+    await page.getByRole("button",{name:"確認送出訂單"}).click();
+    const original=await committed.promise;
+    await expect(page.getByRole("button",{name:"送單中…"})).toBeDisabled();
+    await page.clock.fastForward(15000);
+    await lookupStarted.promise;
+    await expect(page.getByText("送單回覆逾時，已保留原餐單。")).toBeVisible();
+    const recheck=page.getByRole("button",{name:"重新查詢送單結果"});
+    await expect(recheck).toBeDisabled();
+    await page.evaluate(()=>{
+      window.dispatchEvent(new Event("online"));
+      document.dispatchEvent(new Event("visibilitychange"));
+    });
+    await page.clock.fastForward(10000);
+    await expect(page.getByText(/查詢送單結果逾時/)).toBeVisible();
+    await expect(recheck).toBeEnabled();
+    await expect(page.getByRole("textbox")).toBeDisabled();
+    expect(lookups).toEqual([posts[0].token]);
+    await recheck.click();
+    await expect(page.getByRole("heading",{name:"取餐號碼 "+String(original.id).padStart(4,"0")})).toBeVisible();
+    expect(posts).toHaveLength(1);
+    expect(lookups).toEqual([posts[0].token,posts[0].token]);
+    const response=await request.get("/api/kitchen",{headers:{Authorization:"Bearer local-test-kitchen"}});
+    const queue=await response.json();
+    expect(queue.filter(row=>row.note==="送單逾時自動查詢").map(row=>row.id)).toEqual([original.id]);
+  }finally{
+    postRelease.resolve();
+    lookupRelease.resolve();
+  }
+});
+
 test("an undelivered pickup remains editable only after a definitive rejection",async({context,page,request})=>{
   const attempts=[];
   await context.route("**/api/orders",async route=>{

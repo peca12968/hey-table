@@ -17,6 +17,24 @@ import {pickupBookingDays,pickupSlotDuration} from "../lib/pickup-slots.mjs";
 
 import {methods,environmentLabel} from "../lib/payments.mjs";
 const groups=["全部","丼飯","小食","飲品"];
+const lookupMessages={
+  checking:"正在確認這張餐單是否已送達…",
+  missing:"目前查無這張訂單。請重試同一張訂單以送達廚房。",
+  timeout:"查詢送單結果逾時。請重新查詢，或重試同一張訂單。",
+  unavailable:"目前無法確認送單結果。恢復連線後會再查，也可重試同一張訂單。",
+};
+async function checkoutRequest(url,options,timeout){
+  const controller=new AbortController();
+  const timer=setTimeout(()=>controller.abort(new DOMException("點餐請求逾時","TimeoutError")),timeout);
+  const signal=options.signal?AbortSignal.any([options.signal,controller.signal]):controller.signal;
+  try{return await request(url,{...options,signal});}
+  catch(error){
+    if(controller.signal.aborted&&!options.signal?.aborted)throw controller.signal.reason;
+    throw error;
+  }
+  finally{clearTimeout(timer);}
+}
+
 export default function Menu(){
   const [table,setTable]=useState(null),[scope,setScope]=useState(""),[group,setGroup]=useState("全部");
   const [selection,setSelection]=useState({cart:{},lineNotes:{}});
@@ -31,7 +49,8 @@ export default function Menu(){
   const [tableIntake,setTableIntake]=useState({});
   const activeMenuRequest=useRef(null);
   const [useCombo,setUseCombo]=useState(false);
-  const [lookup,setLookup]=useState("");
+  const [lookup,setLookup]=useState(null),[lookupRevision,setLookupRevision]=useState(0);
+  const [sendTimedOut,setSendTimedOut]=useState(false);
   const [repeat,setRepeat]=useState("");
   const [pickupSlot,setPickupSlot]=useState(null),[slotRevision,setSlotRevision]=useState(0);
   const [pickupDate,setPickupDate]=useState("");
@@ -103,23 +122,28 @@ export default function Menu(){
     if(!draft||busy||!scope)return;
     let current;
     async function findReceipt(){
-      current?.abort();
+      if(current||sending.current)return;
       const controller=new AbortController();
       current=controller;
-      setLookup("正在確認這張餐單是否已送達…");
+      setLookup({token:draft.token,status:"checking"});
       try{
-        const order=await request("/api/ticket",{headers:{"X-Ticket":draft.token},signal:controller.signal});
+        const order=await checkoutRequest("/api/ticket",{headers:{"X-Ticket":draft.token},signal:controller.signal},10000);
         if(!controller.signal.aborted && !sending.current) openReceipt(scope,draft.token,order);
       }catch(e){
         if(controller.signal.aborted || sending.current)return;
-        setLookup(e.status===404 ? "目前查無這張訂單。請重試同一張訂單以送達廚房。" :
-          "目前無法確認送單結果。恢復連線後會再查，也可重試同一張訂單。");
-      }
+        setLookup({token:draft.token,status:e.status===404?"missing":e.name==="TimeoutError"?"timeout":"unavailable"});
+      }finally{current=null;}
     }
+    const recheckOnReturn=()=>{if(document.visibilityState==="visible")findReceipt();};
     findReceipt();
     window.addEventListener("online",findReceipt);
-    return ()=>{current?.abort();window.removeEventListener("online",findReceipt);};
-  },[scope,draft,busy]);
+    document.addEventListener("visibilitychange",recheckOnReturn);
+    return ()=>{
+      current?.abort();
+      window.removeEventListener("online",findReceipt);
+      document.removeEventListener("visibilitychange",recheckOnReturn);
+    };
+  },[scope,draft,busy,lookupRevision]);
   useEffect(()=>{if(!panel)return;const close=e=>{if(e.key==="Escape")setPanel(false);};window.addEventListener("keydown",close);return()=>window.removeEventListener("keydown",close);},[panel]);
   const invalid=table!==null&&!tables.includes(table), lines=dishes.filter(d=>cart[d.id]>0);
   const mode=table?"table":"pickup";
@@ -201,14 +225,15 @@ export default function Menu(){
   }
   async function submit(){
     if(sending.current||invalid||!scope||!count||(!draft&&(paused||blocked||pickupBlocked||!loaded)))return;
-    sending.current=true;setBusy(true);setError("");
+    sending.current=true;setBusy(true);setError("");setLookup(null);setSendTimedOut(false);
     const payload=draft??{token:crypto.randomUUID(),...(method==='cash'?{}:{paymentMethod:method}),mode,table,note,
       items:withItemNotes(items,lineNotes),...(applied?{comboVersion,expectedTotal:total}:{}),...(pickupSlot!==null?{pickupSlot}:{})};
     setDraft(payload);save(scope,{cart,lineNotes,note,draft:payload,method,useCombo,pickupSlot,pickupDate});
     try{
-      const order=await request("/api/orders",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(payload)});
+      const order=await checkoutRequest("/api/orders",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(payload)},15000);
       openReceipt(scope,payload.token,order);
     }catch(e){
+      if(e.name==="TimeoutError")setSendTimedOut(true);
       if([400,409,415].includes(e.status)){
         setDraft(null);
         if(e.code==="intake_paused")setIntake(current=>({...current,[mode]:false}));
@@ -224,6 +249,7 @@ export default function Menu(){
   const quoteBody=JSON.stringify({items});
   const addOnBody=bookingDay?JSON.stringify({items,pickupDate:bookingDay}):quoteBody;
   const supplyLabel=bookingDay?"取餐日":"今日";
+  const lookupStatus=draft&&lookup?.token===draft.token?lookup.status:"checking";
   function addButton(d){return <button className="add" aria-label={"加入"+d.name} disabled={!loaded||busy||!!draft||cannotAdd(d.id)||invalid} onClick={()=>change(d.id,1)}><Plus size={18}/></button>;}
   return <><Header home/><main className="shell">
     <section className="hero"><div className="heroCopy"><p className="kicker"><span/> 本日主廚推薦</p><h1>{hero.name}</h1><p>{hero.description}</p><button className="heroAction" onClick={()=>change(hero.id,1)} disabled={!loaded||busy||!!draft||cannotAdd(hero.id)||invalid}><Plus size={16}/> 加入餐單 <b>NT$ {hero.price}</b></button></div><img className="heroImg" src="/food/katsudon.webp" alt="滑蛋豬排丼"/></section>
@@ -277,7 +303,15 @@ export default function Menu(){
       </>}
     </section>}
     {count>0&&loaded&&!invalid&&!blocked&&!paused&&!draft&&!busy&&!bookingDay&&pickupSlot===null&&<CartQuote key={quoteBody} body={quoteBody}/>}
-    {error&&<p className="error" role="alert">{error}</p>}{draft&&!busy&&lookup&&<p role="status">{lookup}</p>}
+    {error&&<p className="error" role="alert">{error}</p>}
+    {draft&&!busy&&<div className="supplyReview">
+      {sendTimedOut&&<p>送單回覆逾時，已保留原餐單。</p>}
+      <p role="status">{lookupMessages[lookupStatus]}</p>
+      <button className="outline" disabled={lookupStatus==="checking"} onClick={()=>{
+        setLookup({token:draft.token,status:"checking"});
+        setLookupRevision(value=>value+1);
+      }}>重新查詢送單結果</button>
+    </div>}
     {scope&&!loaded&&(menuFailed?<div className="supplyReview"><p role="status">暫時無法確認餐點供應，餐單已保留。</p>
       <button className="outline" onClick={()=>refreshMenu(true)}>重新檢查供應</button></div>:
       <p role="status">正在確認餐點供應狀態…</p>)}
