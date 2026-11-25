@@ -141,6 +141,78 @@ class DispatchTests(unittest.TestCase):
         single = plan(dict(self.sample, station_ready_ms=[111000]))
         self.assertEqual(single["ship_units"], 0)
 
+    def test_station_pauses_match_independent_exhaustive_start_search(self):
+        rng = random.Random(61103)
+        for _ in range(150):
+            jobs = [Job(str(i), rng.randrange(10), rng.randrange(1, 5),
+                        rng.randrange(3, 17), rng.randrange(1, 10), ())
+                    for i in range(rng.randrange(6))]
+            starts = [rng.randrange(5), rng.randrange(5)]
+            pauses = []
+            for _station in starts:
+                a, b, c, d = sorted(rng.sample(range(16), 4))
+                pauses.append(((a, b), (c, d)))
+
+            def station_score(sequence, station):
+                at, units = starts[station], 0
+                for index in sequence:
+                    job = jobs[index]
+                    for begin in range(max(at, job.ready), job.deadline - job.duration):
+                        end = begin + job.duration
+                        if all(end <= pause_start or begin >= pause_end for pause_start, pause_end in pauses[station]):
+                            at, units = end, units + job.units
+                            break
+                    else:
+                        return None
+                return units, len(sequence), -at if sequence else 0
+
+            def pair_score(left, right):
+                a, b = station_score(left, 0), station_score(right, 1)
+                return None if a is None or b is None else (a[0] + b[0], a[1] + b[1], min(a[2], b[2]))
+
+            brute = (pair_score(order[:split], order[split:])
+                     for size in range(len(jobs) + 1)
+                     for order in permutations(range(len(jobs)), size)
+                     for split in range(size + 1))
+            left, right = optimize_parallel(jobs, *starts, first_pauses=pauses[0], second_pauses=pauses[1])
+            self.assertEqual(len(set(left + right)), len(left) + len(right))
+            self.assertEqual(pair_score(left, right), max(value for value in brute if value is not None))
+
+    def test_pause_boundaries_and_merge(self):
+        sample = dict(self.sample, work=self.sample["work"][:1], holds=self.sample["holds"][:1])
+        intervals = [{"start_ms": 104000, "end_ms": 106000}, {"start_ms": 99000, "end_ms": 100000},
+                     {"start_ms": 105000, "end_ms": 107000}, {"start_ms": 107000, "end_ms": 108000}]
+        report = plan(dict(sample, station_pauses=[intervals]))
+        self.assertEqual(report["station_pauses"], [[{"start_ms": 99000, "end_ms": 100000},
+                                                   {"start_ms": 104000, "end_ms": 108000}]])
+        self.assertEqual(report["scheduled"][0]["pack_start_ms"], 100000)
+        self.assertEqual(report["scheduled"][0]["dispatch_ms"], 104000)
+        intervals[1]["end_ms"] = 101000
+        self.assertEqual(plan(dict(sample, station_pauses=[intervals]))["omitted"],
+                         [{"reservation_id": "A", "reason": "cannot_finish_before_deadline"}])
+        for invalid in (None, [], [False], [[{"start_ms": 3, "end_ms": 2}]], [[{"start_ms": False, "end_ms": 1}]]):
+            with self.subTest(invalid=invalid), self.assertRaisesRegex(ValueError, "station_pauses|pause"):
+                plan(dict(sample, station_pauses=invalid))
+
+    def test_pause_fixture_reassigns_work_and_resume_composes_with_both_constraints(self):
+        fixture = json.loads(Path(__file__).with_name("examples").joinpath("parallel-demo.json").read_bytes())
+        pause = {"start_ms": 108000, "end_ms": 109000}
+        paused = plan(dict(self.sample, station_pauses=[[], [pause]]), stations=2)
+        self.assertEqual(fixture["paused"], paused)
+        self.assertEqual(paused["ship_units"], 10)
+        self.assertEqual(next(order for order in paused["scheduled"] if order["reservation_id"] == "C")["station"], 1)
+        self.sample["captured_at_ms"] = 100000
+        self.sample["holds"][1]["boxes"] = [{"shipment_id": "B1", "dispatched": 2}]
+        self.sample["holds"][1]["reservation"]["held"] = 2
+        resumed = plan(dict(self.sample, station_ready_ms=[100000, 101000], station_pauses=[[], [pause]]),
+                       stations=2, resume=True)
+        self.assertEqual(resumed["ship_units"], 8)
+        self.assertEqual(resumed["already_dispatched"][0]["shipment_id"], "B1")
+        self.assertNotIn("B1", [box["shipment_id"] for order in resumed["scheduled"] for box in order["dispatch"]["boxes"]])
+        for order in resumed["scheduled"]:
+            if order["station"] == 2:
+                self.assertTrue(order["dispatch_ms"] <= pause["start_ms"] or order["pack_start_ms"] >= pause["end_ms"])
+
     def test_resume_and_second_station_can_share_the_same_snapshot(self):
         self.sample["captured_at_ms"] = self.sample["start_ms"]
         self.sample["holds"][1]["boxes"] = [{"shipment_id": "B1", "dispatched": 2}]

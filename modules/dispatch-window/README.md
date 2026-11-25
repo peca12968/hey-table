@@ -47,7 +47,9 @@ python demo.py ../stockroom-reservations
 
 在早班示範，A 和 B 在第 2 至第 4 秒分別於兩座台包裝，裝車前可出 10 件。單台排程可出 9 件。[雙台出貨試玩（私人預覽）](https://peca-github-demo.peca12968.chatgpt.site/?demo=dispatchParallel#demos) · [可重建範例](examples/parallel-demo.json)
 
-各包裝台開工時間不同時，可提供 `"station_ready_ms": [100000, 104000]`。陣列依台號排列，每個時間都須等於或晚於 `start_ms`，也可晚於裝車截止以表示該台趕不上這一車。排程會分別核對可行路線，並保留每座台實際的開工時間。範例第二台晚四秒開工時可出 9 件，A 到期釋回，其他訂單仍按期限交運。執行 `python demo.py ../stockroom-reservations --compare-stations` 可透過實際 Stockroom API 核對三種排程的出貨和庫存，單元測試則以獨立窮舉比較 160 組開工時間不同的小案例。
+各包裝台開工時間不同時，可提供 `"station_ready_ms": [100000, 104000]`。陣列依台號排列，每個時間都須等於或晚於 `start_ms`，也可晚於裝車截止以表示該台趕不上這一車。排程會分別核對可行路線，並保留每座台實際的開工時間。範例第二台晚四秒開工時可出 9 件，A 到期釋回，其他訂單仍按期限交運。執行 `python demo.py ../stockroom-reservations --compare-stations` 可透過實際 Stockroom API 核對各情境的出貨和庫存，單元測試則以獨立窮舉比較 160 組開工時間不同的小案例。
+
+保養、換班等暫停時段可指定為 `"station_pauses": [[], [{"start_ms": 108000, "end_ms": 109000}]]`。排程會合併同一台重疊或相鄰的區間，整張訂單須在一段連續可用時間包完。包裝可在暫停開始時剛好完工，也可於暫停結束時開工。第二台在第 8 至 9 秒暫停時，示範的 C 單改到第一台，兩台仍共出 10 件。整合演練另核對此情境的實際出貨與庫存，並以 150 組小案例逐一枚舉可行起點與順序。
 
 ## 部分出貨後重排
 

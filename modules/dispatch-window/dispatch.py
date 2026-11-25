@@ -1,8 +1,10 @@
 """Plan the highest-volume dispatch from Stockroom holds at one or two packing stations."""
 
 import argparse
+from bisect import bisect_right
 from dataclasses import dataclass
 import json
+from operator import itemgetter
 from pathlib import Path
 import re
 import sys
@@ -74,7 +76,42 @@ def reconcile_boxes(boxes, shipped, order_id, duration):
     return tuple(remaining), recorded, conflicts, duration
 
 
-def collect(document, start, cutoff, resume, first_station_ready):
+def station_pauses(value, stations):
+    if not isinstance(value, list) or len(value) != stations:
+        raise ValueError("station_pauses must contain one interval list per packing station")
+    calendars = []
+    for index, rows in enumerate(value):
+        if not isinstance(rows, list):
+            raise ValueError(f"station_pauses[{index}] must be a list")
+        intervals = []
+        for row in rows:
+            if not isinstance(row, dict):
+                raise ValueError(f"station_pauses[{index}] must contain objects")
+            begin = integer(row.get("start_ms"), "pause.start_ms")
+            end = integer(row.get("end_ms"), "pause.end_ms", begin + 1)
+            intervals.append((begin, end))
+        merged = []
+        for begin, end in sorted(intervals):
+            if merged and begin <= merged[-1][1]:
+                merged[-1] = (merged[-1][0], max(merged[-1][1], end))
+            else:
+                merged.append((begin, end))
+        calendars.append(tuple(merged))
+    return calendars
+
+
+def packing_start(at, job, pauses):
+    begin = max(at, job.ready)
+    first = bisect_right(pauses, begin, key=itemgetter(1)) if pauses else 0
+    for index in range(first, len(pauses)):
+        blocked, resumes = pauses[index]
+        if begin + job.duration <= blocked:
+            break
+        begin = resumes
+    return begin
+
+
+def collect(document, start, cutoff, resume, stations):
     orders = indexed(document["work"], "reservation_id")
     if not isinstance(document["holds"], list):
         raise ValueError("expected a list of Stockroom packing statements")
@@ -126,14 +163,16 @@ def collect(document, start, cutoff, resume, first_station_ready):
             omitted[order_id] = "shipment_id_already_used"
         elif held < units:
             omitted[order_id] = "insufficient_hold"
-        elif max(ready, first_station_ready) + duration >= deadline:
-            omitted[order_id] = "cannot_finish_before_deadline"
         else:
-            jobs.append(Job(order_id, ready, duration, deadline, units, rows))
+            job = Job(order_id, ready, duration, deadline, units, rows)
+            if any(packing_start(at, job, pauses) + duration < deadline for at, pauses in stations):
+                jobs.append(job)
+            else:
+                omitted[order_id] = "cannot_finish_before_deadline"
     return jobs, omitted, already_dispatched, shipment_conflicts
 
 
-def packing_states(jobs, start):
+def packing_states(jobs, start, pauses=()):
     """Find the earliest feasible finish for every subset on a single station."""
     full = (1 << len(jobs)) - 1
     finish = {0: start}
@@ -148,7 +187,7 @@ def packing_states(jobs, start):
             bit = remaining & -remaining
             remaining ^= bit
             job = jobs[bit.bit_length() - 1]
-            end = max(at, job.ready) + job.duration
+            end = packing_start(at, job, pauses) + job.duration
             combined = subset | bit
             if end < job.deadline and (
                 combined not in finish or end < finish[combined]
@@ -168,20 +207,21 @@ def packing_order(parent, subset):
     return route[::-1]
 
 
-def optimize(jobs, start):
+def optimize(jobs, start, pauses=()):
     """Return indices in packing order for a single station."""
-    finish, parent, units = packing_states(jobs, start)
+    finish, parent, units = packing_states(jobs, start, pauses)
     best = max(finish, key=lambda mask: (units[mask], mask.bit_count(), -finish[mask], -mask))
     return packing_order(parent, best)
 
 
-def optimize_parallel(jobs, start, second_start=None):
+def optimize_parallel(jobs, start, second_start=None, *, first_pauses=(), second_pauses=()):
     """Choose two disjoint feasible routes without enumerating all pairs of subsets."""
     second_start = start if second_start is None else second_start
-    first_finish, first_parent, first_units = packing_states(jobs, start)
+    identical = start == second_start and first_pauses == second_pauses
+    first_finish, first_parent, first_units = packing_states(jobs, start, first_pauses)
     second_finish, second_parent, second_units = (
-        (first_finish, first_parent, first_units) if start == second_start
-        else packing_states(jobs, second_start)
+        (first_finish, first_parent, first_units) if identical
+        else packing_states(jobs, second_start, second_pauses)
     )
     limit = 1 << len(jobs)
     scores = {mask: (second_units[mask], mask.bit_count(), -at, -mask) for mask, at in second_finish.items()}
@@ -203,7 +243,7 @@ def optimize_parallel(jobs, start, second_start=None):
 
     full = limit - 1
     pair = max(((left, best_subset[full ^ left]) for left in first_finish), key=score_pair)
-    left, right = sorted(pair, key=lambda mask: (mask == 0, mask)) if start == second_start else pair
+    left, right = sorted(pair, key=lambda mask: (mask == 0, mask)) if identical else pair
     return [packing_order(first_parent, left), packing_order(second_parent, right)]
 
 
@@ -222,14 +262,16 @@ def plan(document, *, resume=False, stations=1):
         raise ValueError("station_ready_ms must contain one timestamp per packing station")
     station_ready = [integer(value, f"station_ready_ms[{index}]", start)
                      for index, value in enumerate(availability)]
-    jobs, omitted, confirmed, conflicts = collect(document, start, cutoff, resume, min(station_ready))
-    routes = [optimize(jobs, station_ready[0])] if stations == 1 else optimize_parallel(jobs, *station_ready)
+    pauses = station_pauses(document.get("station_pauses", [[] for _ in range(stations)]), stations)
+    jobs, omitted, confirmed, conflicts = collect(document, start, cutoff, resume, tuple(zip(station_ready, pauses)))
+    routes = ([optimize(jobs, station_ready[0], pauses[0])] if stations == 1 else
+              optimize_parallel(jobs, *station_ready, first_pauses=pauses[0], second_pauses=pauses[1]))
     scheduled = []
     for station, route in enumerate(routes, 1):
         at = station_ready[station - 1]
         for index in route:
             job = jobs[index]
-            begins = max(at, job.ready)
+            begins = packing_start(at, job, pauses[station - 1])
             at = begins + job.duration
             scheduled.append(
                 {
@@ -275,6 +317,9 @@ def plan(document, *, resume=False, stations=1):
         report["stations"] = stations
     if "station_ready_ms" in document:
         report["station_ready_ms"] = station_ready
+    if "station_pauses" in document:
+        report["station_pauses"] = [[{"start_ms": begin, "end_ms": end} for begin, end in rows]
+                                   for rows in pauses]
     return report
 
 

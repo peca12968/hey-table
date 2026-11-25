@@ -15,7 +15,7 @@ from fastapi.testclient import TestClient
 ROOT = Path(__file__).resolve().parent
 
 
-def demo(stockroom, stations=1, delayed=False):
+def demo(stockroom, stations=1, delayed=False, *, paused=False):
     sys.path.insert(0, str(stockroom.resolve()))
     from stockroom.api import create_app
 
@@ -60,6 +60,9 @@ def demo(stockroom, stations=1, delayed=False):
             document.update(capture)
             if delayed:
                 document["station_ready_ms"] = [document["start_ms"], document["start_ms"] + 4000]
+            if paused:
+                start = document["start_ms"]
+                document["station_pauses"] = [[], [{"start_ms": start + 8000, "end_ms": start + 9000}]]
             input_file = path / "service-snapshot.json"
             input_file.write_text(json.dumps(document), encoding="utf8")
             output = subprocess.check_output([
@@ -71,6 +74,8 @@ def demo(stockroom, stations=1, delayed=False):
             assert [row["reservation_id"] for row in chosen["scheduled"]] == [
                 *([] if skips_a else ["A"]), "B", "C", "D",
             ]
+            if paused and not delayed:
+                assert next(row for row in chosen["scheduled"] if row["reservation_id"] == "C")["station"] == 1
             if skips_a:
                 clock[0] = 105.0
                 at_deadline = client.post(
@@ -107,5 +112,6 @@ if __name__ == "__main__":
     if args.compare_stations:
         result = {"format": "dispatch-window.parallel-demo.v1", "single": result,
                   "parallel": demo(args.stockroom, stations=2),
-                  "delayed": demo(args.stockroom, stations=2, delayed=True)}
+                  "delayed": demo(args.stockroom, stations=2, delayed=True),
+                  "paused": demo(args.stockroom, stations=2, paused=True)}
     print(json.dumps(result, indent=2))
