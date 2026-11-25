@@ -416,6 +416,57 @@ test("receipt timing and remaining prep use completed station work while legacy 
   assert.equal((await (await cook(older,"other")).json()).status,"ready");
   assert.deepEqual((await prep("?stationProgress=1")).remainingOrders,[]);
 });
+test("staff demo refunds commit with cancellation, release a booking, preserve completed orders and roll back on failure",async t=>{
+  const db=database();
+  t.after(()=>db.sqlite.close());
+  const date="2026-11-25",now=Date.parse(date+"T11:00:00+08:00"),slot=Date.parse(date+"T12:00:00+08:00");
+  t.mock.method(Date,"now",()=>now);
+  const shop={DB:db,STAFF_KEY:"fixture-staff"},staff={Authorization:"Bearer fixture-staff"};
+  const call=(path,{method="GET",headers={},data}={},override={})=>api(new Request("https://order.example"+path,{
+    method,headers:{...headers,...(data?{"Content-Type":"application/json"}:{})},...(data?{body:JSON.stringify(data)}:{}),
+  }),{...shop,...override});
+  const place=db.sqlite.prepare(`INSERT INTO orders(token,mode,note,items,total,payment_method,payment_env,status,created,pickup_slot)
+    VALUES (?,'pickup','','[{"id":"sencha","qty":2}]',90,'line_pay',?,?,?,?)`);
+  const pay=db.sqlite.prepare("INSERT INTO payment_attempts(order_id,reference,merchant,state,created) VALUES (?,?,'fixture',?,?)");
+  function purchase({mode="demo",status="pending",start=null,state="paid"}={}){
+    const token=crypto.randomUUID();
+    const id=Number(place.run(token,mode,status,now-1000,start).lastInsertRowid);
+    pay.run(id,"fixture-"+id,state,now-900);
+    return {token,id};
+  }
+  const pending=purchase({start:slot}),completed=purchase({status:"completed"});
+  const live=purchase({mode:"production"}),unpaid=purchase({state:"pending"});
+  const refund=(order,expectedStatus,expectedTotal=90,headers=staff,override)=>call("/api/kitchen/demo-refund",{
+    method:"PATCH",headers,data:{id:order.id,expectedStatus,expectedTotal},
+  },override);
+  const receipt=async order=>(await (await call("/api/ticket?progress=1",{headers:{"X-Ticket":order.token}})).json());
+  const remaining=async()=>(await (await call("/api/pickup-slots?date="+date)).json()).slots.find(entry=>entry.start===slot).remaining;
+  assert.equal(await remaining(),10);
+  assert.equal((await refund(pending,"pending",90,{})).status,403);
+  assert.equal((await refund(pending,"pending",90,staff,{TAPPAY_MODE:"sandbox"})).status,403);
+  assert.equal((await refund(live,"pending")).status,403);
+  assert.equal((await refund(unpaid,"pending")).status,409);
+  assert.equal((await refund(pending,"ready")).status,409);
+  assert.equal((await refund(pending,"pending",89)).status,409);
+  db.sqlite.exec(`CREATE TRIGGER reject_cancel BEFORE UPDATE OF status ON orders WHEN NEW.status='cancelled'
+    BEGIN SELECT RAISE(ABORT,'simulated cancellation failure'); END;`);
+  await assert.rejects(refund(pending,"pending"),/simulated cancellation failure/);
+  assert.equal((await receipt(pending)).paymentState,"paid");
+  assert.equal(await remaining(),10);
+  db.sqlite.exec("DROP TRIGGER reject_cancel");
+  const done={id:pending.id,total:90,status:"cancelled",paymentState:"refunded"};
+  assert.deepEqual(await (await refund(pending,"pending")).json(),done);
+  assert.deepEqual(await (await refund(pending,"pending")).json(),done);
+  assert.equal(await remaining(),12);
+  const after=await receipt(pending);
+  assert.equal(after.paymentState,"refunded");
+  assert.deepEqual(after.statusHistory.filter(event=>event.status==="cancelled"),[{status:"cancelled",at:now,actor:"demo_refund"}]);
+  assert.deepEqual(await (await refund(completed,"completed")).json(),
+    {id:completed.id,total:90,status:"completed",paymentState:"refunded"});
+  assert.equal((await receipt(completed)).status,"completed");
+  assert.equal((await receipt(live)).paymentState,"paid");
+});
+
 test("pickup display omits refunded orders even if their kitchen status is still ready",async t=>{
   const db=database();
   t.after(()=>db.sqlite.close());

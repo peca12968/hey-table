@@ -21,14 +21,15 @@ function loadSdk() {
 export default function Payment({order,token,onChange}){
   const [attempt,setAttempt]=useState(null),[busy,setBusy]=useState(false),[error,setError]=useState("");
   const [ready,setReady]=useState(false),[buyer,setBuyer]=useState({name:"",phone_number:"",email:""});
-  const lock=useRef(false),actionVersion=useRef(0),current=useRef(order.paymentState);current.current=order.paymentState;
+  const lock=useRef(false),actionVersion=useRef(0),current=useRef(order.paymentState);
   const [checkError,setCheckError]=useState("");
   const demo=order.paymentEnv==="demo",card=order.paymentMethod==="card";
-  const state=attempt?.state??order.paymentState;
+  const state=order.paymentState==="refunded"?"refunded":attempt?.state??order.paymentState;
   const canStart=["unpaid","failed","cancelled"].includes(state) && order.status==="pending";
   const send=useCallback((path,body={})=>request("/api/payments/"+path,{method:"POST",
     headers:{"Content-Type":"application/json","X-Ticket":token},body:JSON.stringify(body)}),[token]);
   const receive=useCallback(a=>{setAttempt(a);if(a && a.state!==current.current)onChange();},[onChange]);
+  useEffect(()=>{current.current=order.paymentState;},[order.paymentState]);
   useEffect(()=>{
     let live=true,checking=false;
     async function refresh(){
@@ -91,6 +92,7 @@ export default function Payment({order,token,onChange}){
   const name=methods[order.paymentMethod];
   return <section className="payBox" aria-label="線上付款"><h2>{name}</h2>
     <p>{environmentLabel(order.paymentEnv)} · <strong role="status">{paymentStates[state]}</strong></p>
+    {demo&&state==="refunded"&&<p>已模擬全額退款 NT$ {order.total}。</p>}
     {canStart&&<form onSubmit={e=>{e.preventDefault();act("start");}}>
       {!demo&&<><label>付款人姓名<input required maxLength={40} autoComplete="name" value={buyer.name} onChange={e=>setBuyer({...buyer,name:e.target.value})}/></label>
         <label>手機號碼<input required type="tel" pattern="[+]?[0-9]{8,15}" autoComplete="tel" value={buyer.phone_number} onChange={e=>setBuyer({...buyer,phone_number:e.target.value})}/></label>
@@ -98,7 +100,7 @@ export default function Payment({order,token,onChange}){
         {card&&<fieldset><legend>信用卡資料</legend>{[["number","卡號"],["expiry","有效期限"],["ccv","安全碼"]].map(([id,label])=><div key={id}>{label}<div className="payField" id={"pay-"+id}/></div>)}</fieldset>}</>}
       <button className="primary" disabled={busy||(!demo&&!ready)}>{demo?"開始模擬付款":"前往付款"} · NT$ {order.total}</button></form>}
     {state==="pending"&&attempt&&demo&&<div className="actions">{[["paid","模擬付款成功"],["failed","模擬付款失敗"],["cancelled","模擬取消"]].map(([s,label])=><button className="outline" key={s} disabled={busy} onClick={()=>act("demo",s)}>{label}</button>)}</div>}
-    {!demo&&attempt?.redirect&&<button className="primary" disabled={busy} onClick={()=>redirect(attempt)}>繼續原付款</button>}
+    {!demo&&state==="pending"&&attempt?.redirect&&<button className="primary" disabled={busy} onClick={()=>redirect(attempt)}>繼續原付款</button>}
     {!demo&&attempt&&<button className="outline" disabled={busy} onClick={()=>act("check")}>向金流查詢狀態</button>}
     {(error||checkError)&&<p role="alert">{error||checkError}</p>}</section>;
 }

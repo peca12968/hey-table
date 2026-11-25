@@ -31,6 +31,31 @@ export async function checkKitchenPayment(env,id) {
   try{await reconcile(env,order,await latest(env.DB,id));}catch{return fail("無法查詢金流，請稍後再查",503);}
   return result({ok:true});
 }
+export async function refundDemoPayment(env,{id,expectedTotal,expectedStatus}){
+  if(settings(env).mode!=="demo")return fail("只能在示範環境模擬退款。",403);
+  if(!Number.isSafeInteger(id)||id<1||!Number.isSafeInteger(expectedTotal)||expectedTotal<1||
+    !["pending","preparing","ready","completed","cancelled"].includes(expectedStatus))
+    return fail("請重新核對餐單狀態與原付款金額。",400);
+  const db=env.DB,now=Date.now();
+  const eligibleOrder="id=? AND total=? AND payment_env='demo' AND payment_method<>'cash'";
+  const [, ,current]=await db.batch([
+    db.prepare(`UPDATE payment_attempts SET state='refunded',redirect_url=NULL
+      WHERE id=(SELECT id FROM payment_attempts WHERE order_id=? ORDER BY id DESC LIMIT 1)
+      AND state='paid' AND EXISTS(SELECT 1 FROM orders WHERE ${eligibleOrder} AND status=?)`)
+      .bind(id,id,expectedTotal,expectedStatus),
+    db.prepare(`UPDATE orders SET status='cancelled',
+      status_history=json_insert(COALESCE(status_history,'[]'),'$[#]',
+        json_object('from',status,'status','cancelled','at',?,'actor','demo_refund'))
+      WHERE ${eligibleOrder} AND status=? AND status IN ('pending','preparing','ready') AND ${latestState}='refunded'`)
+      .bind(now,id,expectedTotal,expectedStatus),
+    db.prepare(`SELECT id,total,status,payment_env,payment_method,${latestState} AS payment_state FROM orders WHERE id=?`).bind(id),
+  ]);
+  const order=current.results[0];
+  if(!order)return fail("找不到餐單。",404);
+  if(order.payment_env!=="demo"||order.payment_method==="cash")return fail("這張餐單不適用示範退款。",403);
+  if(order.total!==expectedTotal||order.payment_state!=="refunded")return fail("餐單或付款狀態已更新，請重新核對。",409);
+  return result({id,total:order.total,status:order.status,paymentState:"refunded"});
+}
 export async function paymentApi(path,request,env,input) {
   const db=env.DB;
   if(path==="/api/payments/notify"){

@@ -99,6 +99,7 @@ function KitchenTicket({order,busy,update,movePickup,recordCash,refresh,today,sh
   const [previousWindow,newWindow]=latestPickup?pickupChangeWindows(latestPickup):[];
   const prepAt=order.pickupUpcoming?order.pickupSlot-pickupPrepLead:null;
   const prepDay=prepAt===null?"":businessDate(prepAt);
+  const canDemoRefund=!handoffOnly&&paymentEnv==="demo"&&paymentState==="paid"&&paymentMethod!=="cash";
   return <article className="sheet kitchenTicket">
     <div className="menuTitle"><h2>#{numberOf(id)}</h2><Mode table={table} source={order.source}/></div>
     <p aria-live={handoffOnly?"polite":undefined}><b>{labels[status]}</b> · {new Date(created).toLocaleTimeString("zh-TW",{hour:"2-digit",minute:"2-digit",timeZone:"Asia/Taipei"})}</p>
@@ -116,6 +117,11 @@ function KitchenTicket({order,busy,update,movePickup,recordCash,refresh,today,sh
       {["ready","completed"].includes(status)&&<a className="outline" href={"/kitchen/handoff?id="+numberOf(id)}>交餐小票</a>}
       {workingByStation&&<a className="primary" href="/kitchen/station-work">查看分站進度</a>}
       {!handoffOnly&&["sandbox","production"].includes(paymentEnv)&&<button className="outline" disabled={busy} onClick={()=>update("payment",{id})}>查詢金流</button>}
+      {canDemoRefund&&<button className="outline" disabled={busy} onClick={()=>{
+        const effect=["completed","cancelled"].includes(status)?"保留現有餐單狀態。":"同時取消未交餐的餐單並釋回份數。";
+        if(window.confirm("確認模擬全額退款 NT$ "+total+"？"+effect))
+          update("demo-refund",{id,expectedTotal:total,expectedStatus:status});
+      }}>模擬全額退款</button>}
       {!workingByStation&&actions.map(next=><button disabled={busy||(next==="preparing"&&order.pickupUpcoming)||
         (next==="cancelled"?!canCancel(order):!canPrepare(order))} className={next==="cancelled"?"outline":"primary"} key={next}
         onClick={()=>{if(next!=="cancelled"||window.confirm("取消這張訂單？"))
@@ -182,6 +188,11 @@ export default function Kitchen(){
         setActionMessage(handoffOnly?"已完成交餐。":"餐單已更新為「"+labels[body.to]+"」。");
       }
       if(endpoint==="table")setActionMessage("餐單 "+numberOf(body.id)+" 已換到 "+body.to+" 桌。");
+      if(endpoint==="demo-refund"){
+        setRows(rows=>rows?.map(order=>order.id===result.id?{...order,status:result.status,paymentState:result.paymentState,
+          pickupUpcoming:false,overdue:undefined}:order)??null);
+        setActionMessage("餐單 "+numberOf(result.id)+" 已模擬全額退款 NT$ "+result.total+"。");
+      }
       if(endpoint==="table-handoff"){
         const ids=new Set(body.orders.map(order=>order.id));
         setRows(rows=>rows?.map(order=>ids.has(order.id)?{...order,status:"completed",overdue:undefined}:order)??null);
@@ -194,7 +205,7 @@ export default function Kitchen(){
         setActionMessage(e.status===409?"餐單狀態已更新，請核對最新狀態。":e.message);
         setRows(null);
         setRevision(v=>v+1);
-      }else if(endpoint==="table"||endpoint==="table-handoff"||body.tableRevision!==undefined||body.pickupRevision!==undefined){
+      }else if(endpoint==="table"||endpoint==="table-handoff"||endpoint==="demo-refund"||body.tableRevision!==undefined||body.pickupRevision!==undefined){
         setActionMessage(e.message);
         setRevision(v=>v+1);
       }else setError(e.message);

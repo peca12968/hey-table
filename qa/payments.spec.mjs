@@ -322,6 +322,81 @@ for(const [method,resume] of [["line_pay","online"],["px_pay_plus","visibilitych
     expect(starts).toBe(0);
   });
 }
+test("staff can refund a ready demo pickup and the mobile receipt withdraws its collection QR",async({page,request})=>{
+  const token=randomUUID(),ticket={"X-Ticket":token},refund="/api/kitchen/demo-refund";
+  const created=await request.post("/api/orders",{data:{token,mode:"pickup",note:"",items:[{id:"sencha",qty:1}],paymentMethod:"line_pay"}});
+  expect(created.ok()).toBe(true);
+  const {id,total}=await created.json();
+  const start=await request.post("/api/payments/start",{headers:ticket,data:{}});
+  const {attempt}=await start.json();
+  expect((await request.post("/api/payments/demo",{headers:ticket,data:{ref:attempt.ref,outcome:"paid"}})).ok()).toBe(true);
+  const status=(from,to)=>request.patch("/api/kitchen/status",{headers:staff,data:{id,from,to}});
+  expect((await status("pending","preparing")).ok()).toBe(true);
+  expect((await status("preparing","ready")).ok()).toBe(true);
+  const operator=await page.context().newPage();
+  try{
+    for(const browser of [page,operator])await browser.setViewportSize({width:360,height:780});
+    await operator.addInitScript(()=>sessionStorage.setItem("he-ri-staff","local-test-kitchen"));
+    await page.goto("/ticket#"+token);
+    await expect(page.getByText("出示取餐 QR 碼",{exact:true})).toBeVisible();
+    await expect(page.getByText("已付款",{exact:true})).toBeVisible();
+    await operator.goto("/kitchen");
+    await operator.getByRole("searchbox",{name:"取餐號碼"}).fill(String(id));
+    const card=operator.locator(".kitchenTicket");
+    const action=card.getByRole("button",{name:"模擬全額退款"});
+    const payload={id,expectedTotal:total,expectedStatus:"ready"};
+    expect((await request.patch(refund,{headers:ticket,data:payload})).status()).toBe(403);
+    operator.once("dialog",dialog=>dialog.dismiss());
+    await action.click();
+    await expect(action).toBeEnabled();
+    await operator.route("**"+refund,async route=>{
+      expect(route.request().postDataJSON()).toEqual(payload);
+      expect((await route.fetch()).ok()).toBe(true);
+      await route.abort("connectionreset");
+    },{times:1});
+    operator.once("dialog",dialog=>dialog.accept());
+    await action.click();
+    await expect(action).toHaveCount(0);
+    await expect(page.getByText("已模擬全額退款 NT$ 45。",{exact:true})).toBeVisible();
+    await expect(page.getByText("店家退款並取消",{exact:true})).toHaveCount(1);
+    await expect(page.getByText("出示取餐 QR 碼",{exact:true})).toHaveCount(0);
+    await expect(page.getByRole("button",{name:/開始模擬付款/})).toHaveCount(0);
+    const replay=await request.patch(refund,{headers:staff,data:payload});
+    expect(replay.ok()).toBe(true);
+    expect(await replay.json()).toEqual({id,total,status:"cancelled",paymentState:"refunded"});
+    expect((await status("ready","completed")).status()).toBe(409);
+    await operator.getByRole("button",{name:"含近期結單"}).click();
+    await expect(card.getByText("已退款",{exact:false})).toBeVisible();
+    await page.reload();
+    await expect(page.getByText("已模擬全額退款 NT$ 45。",{exact:true})).toBeVisible();
+    expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBe(360);
+    const after=await (await request.get("/api/ticket?progress=1",{headers:ticket})).json();
+    expect(after.statusHistory.filter(event=>event.actor==="demo_refund")).toHaveLength(1);
+  }finally{await operator.close();}
+});
+
+test("a refund reviewed before handoff cannot cancel an order completed by another terminal",async({request})=>{
+  const token=randomUUID(),ticket={"X-Ticket":token};
+  const order=await request.post("/api/orders",{data:{token,mode:"pickup",note:"",items:[{id:"sencha",qty:1}],paymentMethod:"px_pay_plus"}});
+  expect(order.ok()).toBe(true);
+  const {id,total}=await order.json();
+  const pay=await (await request.post("/api/payments/start",{headers:ticket,data:{}})).json();
+  expect((await request.post("/api/payments/demo",{headers:ticket,data:{ref:pay.attempt.ref,outcome:"paid"}})).ok()).toBe(true);
+  const status=(from,to)=>request.patch("/api/kitchen/status",{headers:staff,data:{id,from,to}});
+  const refund=expectedStatus=>request.patch("/api/kitchen/demo-refund",{headers:staff,data:{id,expectedStatus,expectedTotal:total}});
+  expect((await status("pending","preparing")).ok()).toBe(true);
+  expect((await status("preparing","ready")).ok()).toBe(true);
+  const [refundAttempt,handoff]=await Promise.all([refund("ready"),status("ready","completed")]);
+  expect([refundAttempt.status(),handoff.status()].sort()).toEqual([200,409]);
+  if(handoff.ok()){
+    expect((await refund("ready")).status()).toBe(409);
+    expect(await (await refund("completed")).json()).toEqual({id,total,status:"completed",paymentState:"refunded"});
+  }
+  const stored=await (await request.get("/api/ticket?progress=1",{headers:ticket})).json();
+  expect(stored).toMatchObject({status:handoff.ok()?"completed":"cancelled",paymentState:"refunded"});
+  expect(stored.statusHistory.filter(event=>event.status===stored.status)).toHaveLength(1);
+});
+
 test("table checkout simulates failure, retries and restores the paid LINE Pay receipt",async({page,request})=>{
   await page.goto("/?table=A04");
   await page.getByRole("button",{name:"加入雞肉親子丼",exact:true}).click();

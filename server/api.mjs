@@ -22,7 +22,7 @@ const json = (value, status=200) => Response.json(value,{status,headers:{"Cache-
 const fail = (message,status=400) => json({error:message},status);
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
-import {latestState,payableForKitchen,paymentApi,checkKitchenPayment} from "./payment-api.mjs";
+import {latestState,payableForKitchen,paymentApi,checkKitchenPayment,refundDemoPayment} from "./payment-api.mjs";
 import {settings} from "./tappay.mjs";
 import {methods} from "../lib/payments.mjs";
 import {estimate} from "@peca12968/pickup-window";
@@ -76,7 +76,7 @@ function statusHistory(row) {
   const history = [{status:"pending",at:row.created}];
   for (const {from,status,at,actor} of JSON.parse(row.status_history ?? "[]")) {
     if (history.at(-1).status !== from) history.push({status:from,at:null});
-    history.push({status,at,...(status==="cancelled"&&["customer","payment_expiry"].includes(actor)?{actor}:{})});
+    history.push({status,at,...(status==="cancelled"&&["customer","payment_expiry","demo_refund"].includes(actor)?{actor}:{})});
   }
   if (history.at(-1).status !== row.status) history.push({status:row.status,at:null});
   return history;
@@ -158,6 +158,7 @@ export async function api(request, env) {
     if (!input || typeof input !== "object") return fail("資料格式錯誤");
   }
   if(path==="/api/kitchen/payment" && method==="PATCH")return checkKitchenPayment(env,input.id);
+  if(path==="/api/kitchen/demo-refund" && method==="PATCH")return refundDemoPayment(env,input);
   if(path==="/api/kitchen/cash-receipt"&&method==="POST"){
     const {id,operationId,expectedTotal,tendered}=input;
     if(!Number.isSafeInteger(id)||id<1||typeof operationId!=="string"||!uuid.test(operationId)||
