@@ -858,19 +858,82 @@ test("return ledger report groups cross-day corrections by Taipei event date and
     assert.equal((await report(query)).status,400);
   const response=await report("?date=2026-11-25");
   assert.equal(response.headers.get("Cache-Control"),"no-store");
-  const data=await response.json();
+  const {fingerprint,...data}=await response.json();
+  assert.match(fingerprint,/^[a-f0-9]{64}$/);
   assert.deepEqual(data,{format:"hey-table.return-ledger-report.v1",timeZone:"Asia/Taipei",date:"2026-11-25",capturedAt:now,
     totals:{recordedCount:2,recordedAmount:72,voidedCount:1,restoredAmount:85,netAmount:-13},
     events:[
       {orderId:1,revision:3,recordedAt:start+5,kind:"voided",amount:85,targetRevision:1,reason:"更正昨日登記"},
       {orderId:2,revision:1,recordedAt:start,kind:"recorded",amount:0},
       {orderId:1,revision:2,recordedAt:start,kind:"recorded",amount:72},
-    ]});
+    ],reviews:[]});
   const yesterday=await (await report("?date=2026-11-24")).json();
   assert.deepEqual(yesterday.events,[{orderId:1,revision:1,recordedAt:start-1,kind:"recorded",amount:85}]);
   now=end;
   const tomorrow=await (await report("?date=2026-11-26")).json();
   assert.deepEqual(tomorrow.events,[{orderId:3,revision:1,recordedAt:end,kind:"recorded",amount:45}]);
+});
+
+test("return ledger confirmation persists exact activity and rejects a change before the transaction",async t=>{
+  const db=database(),date="2026-11-25";
+  t.after(()=>db.sqlite.close());
+  const start=Date.parse(date+"T00:00:00+08:00");
+  let now=start+50;
+  t.mock.method(Date,"now",()=>now);
+  const runtime={DB:db,STAFF_KEY:"staff"},url="https://order.example/api/kitchen/return-ledger-report";
+  const headers={Authorization:"Bearer staff","Content-Type":"application/json"};
+  const get=async(day=date)=>(await api(new Request(url+"?date="+day,{headers}),runtime)).json();
+  const confirm=(fingerprint,note,day=date,access=headers)=>api(new Request(url,{
+    method:"POST",headers:access,body:JSON.stringify({fingerprint,note,date:day}),
+  }),runtime);
+  db.sqlite.prepare(`INSERT INTO orders(id,token,mode,note,items,total,created) VALUES (1,?,'pickup','','[]',200,?)`)
+    .run(crypto.randomUUID(),start-1);
+  const insert=db.sqlite.prepare(`INSERT INTO return_quote_entries (order_id,revision,operation_id,selection,quote,recorded_at)
+    VALUES (1,?,?,'[]',?,?)`);
+  const append=(revision,amount,at=now)=>insert.run(revision,crypto.randomUUID(),JSON.stringify({amount}),at);
+  append(1,35);
+
+  const original=await get();
+  assert.equal((await confirm(original.fingerprint,"",date,{"Content-Type":"application/json"})).status,403);
+  for(const [fingerprint,note,day] of [["invalid","",date],[original.fingerprint,"a".repeat(161),date],
+    [original.fingerprint,"",{toString:1}],[original.fingerprint,"","2026-11-26"]])
+    assert.equal((await confirm(fingerprint,note,day)).status,400);
+  const competing=await Promise.all([confirm(original.fingerprint,"  晚班核對  "),confirm(original.fingerprint,"另一份備註")]);
+  assert.deepEqual(competing.map(response=>response.status).sort(),[200,409]);
+  const first=await competing.find(response=>response.ok).json();
+  assert.equal(first.reviewedAt,now);
+  assert.equal(first.netAmount,35);
+  assert.equal(first.eventCount,1);
+  assert.ok(["晚班核對","另一份備註"].includes(first.note));
+  now++;
+  assert.equal((await get()).fingerprint,original.fingerprint);
+  assert.deepEqual(await (await confirm(original.fingerprint,first.note)).json(),first);
+
+  append(2,0);
+  const newer=await get();
+  assert.notEqual(newer.fingerprint,original.fingerprint);
+  assert.deepEqual(newer.reviews,[first]);
+  assert.equal(newer.totals.netAmount,original.totals.netAmount);
+  const batch=db.batch.bind(db),race=t.mock.method(db,"batch",statements=>{
+    append(3,80,now+1);
+    return batch(statements);
+  });
+  assert.equal((await confirm(newer.fingerprint,"核對兩筆")).status,409);
+  assert.equal(race.mock.callCount(),1);
+  race.mock.restore();
+  assert.deepEqual((await get()).reviews,[first]);
+  now++;
+  const latest=await get();
+  assert.equal(latest.events.length,3);
+  const responses=await Promise.all([confirm(latest.fingerprint,"完成交班"),confirm(latest.fingerprint,"完成交班")]);
+  const second=await responses[0].json();
+  assert.deepEqual(responses.map(response=>response.status),[200,200]);
+  assert.deepEqual(await responses[1].json(),second);
+  assert.deepEqual(second,{fingerprint:latest.fingerprint,note:"完成交班",reviewedAt:now,eventCount:3,netAmount:115});
+  assert.deepEqual((await get()).reviews,[second,first]);
+  assert.deepEqual(await (await confirm(original.fingerprint,first.note)).json(),first);
+  assert.deepEqual((await get("2026-11-24")).reviews,[]);
+  assert.equal(db.sqlite.prepare("SELECT COUNT(*) AS count FROM return_ledger_reviews").get().count,2);
 });
 
 test("staff can read orders beyond the recent board without exposing checkout references or changing state",async t=>{

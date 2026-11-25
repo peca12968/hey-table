@@ -7,3 +7,14 @@
 .returnLedgerEvents li { border-top: 1px solid var(--line); padding: .55rem 0; break-inside: avoid; }
 .returnLedgerEvents a { color: var(--green); font-weight: 650; }
 .returnLedgerEvents p { margin: .3rem 0 0; }
+.returnReview { margin-top: 1rem; }
+.returnReviewNote { white-space: pre-wrap; overflow-wrap: anywhere; }
+.returnReviewForm { display: grid; gap: .65rem; }
+.returnReviewForm label { display: grid; gap: .3rem; font-weight: 650; }
+.returnReviewForm textarea { width: 100%; min-width: 0; resize: vertical; }
+.returnReviewForm button { justify-self: start; min-height: 40px; }
+.returnReview details { margin-top: .7rem; }
+@media print {
+  .dailyOperations .returnReviewForm { display: none; }
+  .returnReview { break-inside: avoid; }
+}

@@ -46,15 +46,23 @@ export async function readReturnReceipt(db,id,includeLedger){
   return {ticket:receipt(lookup.results[0]),ledger:ledger(history.results,voids.results)};
 }
 
-export async function returnLedgerReport(db,date,[start,end],capturedAt){
-  const {results}=await db.prepare(`SELECT order_id AS orderId,revision,recorded_at AS recordedAt,
+const reviewColumns="fingerprint,event_count,net_amount,reviewed_at,note";
+const reviewLimit=10;
+const reviewFromRow=({fingerprint,event_count,net_amount,reviewed_at,note})=>
+  ({fingerprint,eventCount:event_count,netAmount:net_amount,reviewedAt:reviewed_at,note});
+
+function dailyEvents(db,[start,end],capturedAt){
+  return db.prepare(`SELECT order_id AS orderId,revision,recorded_at AS recordedAt,
       'recorded' AS kind,json_extract(quote,'$.amount') AS amount,NULL AS targetRevision,NULL AS reason
     FROM return_quote_entries WHERE recorded_at>=? AND recorded_at<? AND recorded_at<=?
     UNION ALL
     SELECT order_id,revision,recorded_at,'voided',restored_amount,target_revision,reason
     FROM return_quote_voids WHERE recorded_at>=? AND recorded_at<? AND recorded_at<=?
     ORDER BY recordedAt DESC,orderId DESC,revision DESC`)
-    .bind(start,end,capturedAt,start,end,capturedAt).all();
+    .bind(start,end,capturedAt,start,end,capturedAt);
+}
+
+async function reportFromRows(results,date,capturedAt){
   const totals={recordedCount:0,recordedAmount:0,voidedCount:0,restoredAmount:0,netAmount:0};
   const events=results.map(({kind,amount,targetRevision,reason,...row})=>{
     if(kind==="voided"){
@@ -65,7 +73,39 @@ export async function returnLedgerReport(db,date,[start,end],capturedAt){
     return {...row,kind,amount};
   });
   totals.netAmount=totals.recordedAmount-totals.restoredAmount;
-  return {format:"hey-table.return-ledger-report.v1",date,timeZone:"Asia/Taipei",capturedAt,totals,events};
+  const identity=results.map(({orderId,revision,recordedAt,kind,amount,targetRevision,reason})=>
+    [orderId,revision,recordedAt,kind,amount,targetRevision,reason]);
+  const signature=new TextEncoder().encode(JSON.stringify(["hey-table.return-ledger-review.v1",date,identity]));
+  const digest=await crypto.subtle.digest("SHA-256",signature);
+  const fingerprint=Array.from(new Uint8Array(digest),value=>value.toString(16).padStart(2,"0")).join("");
+  return {format:"hey-table.return-ledger-report.v1",date,timeZone:"Asia/Taipei",capturedAt,totals,events,fingerprint};
+}
+
+export async function returnLedgerReport(db,date,range,capturedAt){
+  const [events,reviews]=await db.batch([dailyEvents(db,range,capturedAt),db.prepare(`SELECT ${reviewColumns}
+    FROM return_ledger_reviews WHERE date=? ORDER BY event_count DESC,reviewed_at DESC,fingerprint LIMIT ?`).bind(date,reviewLimit)]);
+  return {...await reportFromRows(events.results,date,capturedAt),reviews:reviews.results.map(reviewFromRow)};
+}
+
+export async function confirmReturnLedger(db,{date,fingerprint,note},range,now){
+  const byFingerprint=db.prepare(`SELECT ${reviewColumns} FROM return_ledger_reviews WHERE date=? AND fingerprint=?`)
+    .bind(date,fingerprint);
+  const replay=row=>row?.note===note?reviewFromRow(row):null;
+  const already=await byFingerprint.first();
+  if(already)return replay(already);
+  const {results}=await dailyEvents(db,range,now).all();
+  const report=await reportFromRows(results,date,now);
+  if(report.fingerprint!==fingerprint)return null;
+  const {recordedCount,voidedCount,netAmount}=report.totals;
+  // Both event tables only grow. Day-wide counts detect inserts even if their timestamp equals or follows the capture.
+  const [,saved]=await db.batch([db.prepare(`INSERT INTO return_ledger_reviews(date,fingerprint,event_count,net_amount,reviewed_at,note)
+    SELECT ?,?,?,?,?,?
+    WHERE (SELECT COUNT(*) FROM return_quote_entries WHERE recorded_at>=? AND recorded_at<?)=?
+      AND (SELECT COUNT(*) FROM return_quote_voids WHERE recorded_at>=? AND recorded_at<?)=?
+    ON CONFLICT DO NOTHING`).bind(date,fingerprint,results.length,netAmount,now,note,...range,recordedCount,...range,voidedCount),
+    byFingerprint,
+  ]);
+  return replay(saved.results[0]);
 }
 
 export async function recordReturnQuote(db,{id,revision,operationId,items,amount},now){

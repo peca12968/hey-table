@@ -24,7 +24,7 @@ import {pickupWeek} from "./pickup-week.mjs";
 import {cashCorrectionHistory,cashReceiptColumn,collectCash,correctCashReceipt,dailyCashReceipts} from "./cash-receipts.mjs";
 import {cashCloseVersion,cashCloseVersions,saveCashClose} from "./cash-close-versions.mjs";
 import {cashAmount} from "../lib/cash-reconciliation.mjs";
-import {readReturnReceipt,recordReturnQuote,returnLedgerReport,voidReturnQuote} from "./return-ledger.mjs";
+import {confirmReturnLedger,readReturnReceipt,recordReturnQuote,returnLedgerReport,voidReturnQuote} from "./return-ledger.mjs";
 
 const json = (value, status=200) => Response.json(value,{status,headers:{"Cache-Control":"no-store"}});
 const fail = (message,status=400) => json({error:message},status);
@@ -953,6 +953,14 @@ export async function api(request, env) {
     const range=dates.length===1?businessDayRange(date):null;
     if(!range)return fail("請選擇有效的試算交班日期。");
     return json(await returnLedgerReport(db,date,range,Date.now()));
+  }
+  if(path==="/api/kitchen/return-ledger-report"&&method==="POST"){
+    const {date,fingerprint,note}=input;
+    const range=typeof date==="string"?businessDayRange(date):null,now=Date.now();
+    if(!range||range[0]>now||typeof fingerprint!=="string"||!/^[a-f0-9]{64}$/.test(fingerprint)||
+      typeof note!=="string"||note.trim().length>160)return fail("請確認交班日期與報表，備註最多 160 字。");
+    const saved=await confirmReturnLedger(db,{date,fingerprint,note:note.trim()},range,now);
+    return saved?json(saved):fail("報表或確認紀錄已更新，請重新擷取後核對。",409);
   }
   if (path === "/api/kitchen/return-receipt" && method === "GET") {
     const id = collectionId(url);

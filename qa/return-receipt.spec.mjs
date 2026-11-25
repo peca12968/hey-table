@@ -330,3 +330,68 @@ test("mobile handoff downloads the displayed ledger capture and opens the audite
   await expect(original.getByText("已撤銷 · 交班確認更正")).toBeVisible();
   await expect(original.getByText("第 4 筆 · NT$ 45")).toBeVisible();
 });
+
+test("mobile staff confirms one ledger capture and reviews new activity without overwriting the earlier note",async({page,request})=>{
+  const api="/api/kitchen/return-ledger-report";
+  async function appendQuote(){
+    const {ticket}=await place(request);
+    const response=await request.post(endpoint,{headers:staff,data:{id:ticket.id,revision:0,amount:45,
+      operationId:randomUUID(),items:[{id:"sencha",qty:1}]}});
+    expect(response.status()).toBe(200);
+    return response.json();
+  }
+  const {recordedAt}=await appendQuote(),date=businessDate(recordedAt),url=api+"?date="+date;
+  const refresh=async()=>(await request.get(url,{headers:staff})).json();
+  await page.setViewportSize({width:360,height:780});
+  await page.addInitScript(()=>sessionStorage.setItem("he-ri-staff","local-test-kitchen"));
+  await page.goto("/kitchen/return-ledger?date="+date);
+  const review=page.getByRole("region",{name:"交班確認"});
+  const note=review.getByRole("textbox",{name:"交班備註（選填）"});
+  const confirm=review.getByRole("button",{name:"確認這份報表"});
+  const rescan=page.getByRole("button",{name:"重新擷取"});
+  await expect(review.getByRole("status")).toHaveText("這份報表尚未確認。");
+  await note.fill("早班已核對");
+
+  let submitted;
+  await page.route("**"+api,async route=>{
+    submitted=route.request().postDataJSON();
+    expect((await route.fetch()).status()).toBe(200);
+    await route.abort();
+  },{times:1});
+  await confirm.click();
+  await expect(review.getByRole("alert")).toHaveText("尚未收到確認結果，請重試同一份報表。");
+  await expect(note).toBeDisabled();
+  const first=(await refresh()).reviews[0];
+  const retry=page.waitForRequest(req=>req.method()==="POST"&&new URL(req.url()).pathname===api);
+  await review.getByRole("button",{name:"重試確認同一份報表"}).click();
+  expect((await retry).postDataJSON()).toEqual(submitted);
+  await expect(review.getByRole("status")).toHaveText("這份報表已確認。");
+  await expect(review.getByText("早班已核對")).toBeVisible();
+  expect((await refresh()).reviews).toEqual([first]);
+
+  await appendQuote();
+  await rescan.click();
+  await expect(review.getByRole("status")).toHaveText("確認後已有試算異動，請重新核對。");
+  await note.fill("稍早的報表");
+  await appendQuote();
+  await confirm.click();
+  await expect(review.getByRole("alert")).toContainText("請重新擷取後核對");
+  await expect(confirm).toBeDisabled();
+  await rescan.click();
+  await expect(confirm).toBeEnabled();
+  await note.fill("晚班已核對");
+  await confirm.click();
+  await expect(review.getByRole("status")).toHaveText("這份報表已確認。");
+  await review.getByText("較早的確認紀錄（1 筆）").click();
+  await expect(review.getByText("早班已核對")).toBeVisible();
+  const [download]=await Promise.all([page.waitForEvent("download"),page.getByRole("button",{name:"下載試算交班 JSON"}).click()]);
+  const exported=JSON.parse(await readFile(await download.path(),"utf8"));
+  expect(exported.reviews).toEqual((await refresh()).reviews);
+  expect(exported.reviews[1]).toEqual(first);
+  expect(exported.reviews[0]).toMatchObject({fingerprint:exported.fingerprint,eventCount:first.eventCount+2,
+    netAmount:first.netAmount+90,note:"晚班已核對"});
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBe(360);
+  await page.emulateMedia({media:"print"});
+  await expect(review.getByText("晚班已核對")).toBeVisible();
+  await expect(review.getByText("較早的確認紀錄（1 筆）")).toBeHidden();
+});

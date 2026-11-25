@@ -248,3 +248,15 @@ export const returnQuoteVoids = sqliteTable("return_quote_voids", {
   check("return_quote_void_values",sql`${t.targetRevision} > 0 AND ${t.revision} > ${t.targetRevision}
     AND ${t.restoredAmount} >= 0 AND ${t.remainingValue} >= 0`),
 ]);
+
+export const returnLedgerReviews = sqliteTable("return_ledger_reviews", {
+  date: text("date").notNull(),
+  fingerprint: text("fingerprint").notNull(),
+  eventCount: integer("event_count").notNull(),
+  netAmount: integer("net_amount").notNull(),
+  reviewedAt: integer("reviewed_at").notNull(),
+  note: text("note").notNull(),
+}, t => [
+  primaryKey({columns:[t.date,t.fingerprint]}),
+  check("return_review_event_count",sql`${t.eventCount} >= 0`),
+]);
