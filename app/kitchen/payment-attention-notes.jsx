@@ -13,23 +13,24 @@ const staffHeaders=()=>{
   return key?{Authorization:"Bearer "+key}:{};
 };
 
-export default function PaymentAttentionNotes({id,autoOpen}){
+export default function PaymentAttentionNotes({id,autoOpen,attemptId,allNotes}){
   const [open,setOpen]=useState(autoOpen),[version,setVersion]=useState(0),[view,setView]=useState(null);
   const [draft,setDraft]=useState(""),[save,setSave]=useState(null),[more,setMore]=useState(null);
   const current=view?.version===version?view:null;
   const data=current?.data,target=data?.target;
+  const params=new URLSearchParams({id,...(attemptId===null?{}:{attempt:attemptId})}).toString();
   const reload=()=>setVersion(value=>value+1);
   useEffect(()=>{
     if(!open)return;
     const controller=new AbortController();
-    request(endpoint+"?"+new URLSearchParams({id}),{headers:staffHeaders(),
+    request(endpoint+"?"+params,{headers:staffHeaders(),
       signal:AbortSignal.any([controller.signal,AbortSignal.timeout(10_000)])}).then(data=>{
       if(!controller.signal.aborted)setView({version,data});
     }).catch(error=>{
       if(!controller.signal.aborted)setView({version,error:error.name==="TimeoutError"?"讀取備註逾時，請重新讀取。":error.message});
     });
     return ()=>controller.abort();
-  },[id,open,version]);
+  },[params,open,version]);
 
   async function submit(event){
     event.preventDefault();
@@ -53,7 +54,7 @@ export default function PaymentAttentionNotes({id,autoOpen}){
     if(!data?.nextBefore||more?.busy)return;
     setMore({busy:true});
     try{
-      const earlier=await request(endpoint+"?"+new URLSearchParams({id,before:data.nextBefore}),
+      const earlier=await request(endpoint+"?"+params+"&"+new URLSearchParams({before:data.nextBefore}),
         {headers:staffHeaders(),signal:AbortSignal.timeout(10_000)});
       setView(previous=>previous?.data===data?{version,data:{...data,notes:[...data.notes,...earlier.notes],
         nextBefore:earlier.nextBefore}}:previous);
@@ -67,6 +68,7 @@ export default function PaymentAttentionNotes({id,autoOpen}){
     onToggle={event=>setOpen(event.currentTarget.open)}>
     <summary>付款交班備註</summary>
     {open&&<div>
+      {allNotes&&<a className="textLink" href={allNotes}>查看全部付款備註</a>}
       {!current&&<p role="status">正在讀取付款交班備註…</p>}
       {current?.error&&<p className="error" role="alert">{current.error}</p>}
       {save?.message&&<p role="status">{save.message}</p>}
@@ -79,7 +81,7 @@ export default function PaymentAttentionNotes({id,autoOpen}){
             <p>付款開始 {time(entry.startedAt)}</p>
             <p className="paymentAttentionNoteText">{entry.note}</p>
           </li>)}
-        </ol>:<p>這張餐單尚無付款交班備註。</p>}
+        </ol>:<p>{attemptId===null?"這張餐單尚無付款交班備註。":"這次付款尚無交班備註。"}</p>}
         {more?.error&&<p className="error" role="alert">{more.error}</p>}
         {data.nextBefore!==null&&<button className="outline" disabled={more?.busy||save?.busy}
           onClick={loadOlder}>{more?.busy?"載入中…":"載入較早備註"}</button>}

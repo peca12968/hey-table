@@ -35,6 +35,7 @@ const returnReviewFingerprint = /^[a-f0-9]{64}$/;
 import {latestState,payableForKitchen,paymentApi,checkKitchenPayment,refundDemoPayment} from "./payment-api.mjs";
 import {paymentAttention,paymentAttentionQuery} from "./payment-attention.mjs";
 import {readPaymentAttentionNotes,recordPaymentAttentionNote} from "./payment-attention-notes.mjs";
+import {readPaymentAttemptHistory} from "./payment-attempt-history.mjs";
 import {demoRefundDetail,demoRefundReport,demoRefundReceiptColumn,demoRefundReceiptText} from "./demo-refund-report.mjs";
 import {settings} from "./tappay.mjs";
 import {canPrepare,methods,paymentAttentionStates} from "../lib/payments.mjs";
@@ -67,6 +68,12 @@ function collectionId(url) {
   const number = url.searchParams.get("id");
   const id = Number(number);
   return /^[0-9]+$/.test(number ?? "") && Number.isSafeInteger(id) && id > 0 ? id : null;
+}
+function paymentHistoryId(url,name){
+  const values=url.searchParams.getAll(name),[value]=values;
+  if(!values.length)return undefined;
+  const id=Number(value);
+  return values.length===1&&/^[1-9]\d{0,15}$/.test(value)&&Number.isSafeInteger(id)?id:null;
 }
 function receipt(row) {
   return {id:row.id, mode:row.mode, table:row.table_no, note:row.note, items:JSON.parse(row.items),
@@ -180,14 +187,13 @@ export async function api(request, env) {
     const query=paymentAttentionQuery(url.searchParams);
     return query?json(await paymentAttention(env,query,Date.now())):fail("請選擇有效的付款篩選條件或翻頁連結。");
   }
-  if(path==="/api/kitchen/payment-attention-notes"&&method==="GET"){
-    const id=collectionId(url),cursors=url.searchParams.getAll("before"),[cursor]=cursors;
-    const before=cursor===undefined?undefined:Number(cursor);
-    if(id===null||url.searchParams.getAll("id").length!==1||cursors.length>1||
-      (cursor!==undefined&&(!/^[1-9]\d{0,15}$/.test(cursor)||!Number.isSafeInteger(before))))
+  if(["/api/kitchen/payment-attempt-history","/api/kitchen/payment-attention-notes"].includes(path)&&method==="GET"){
+    const id=collectionId(url),before=paymentHistoryId(url,"before"),attempt=paymentHistoryId(url,"attempt");
+    const history=path==="/api/kitchen/payment-attempt-history";
+    if(id===null||url.searchParams.getAll("id").length!==1||before===null||attempt===null||(history&&attempt!==undefined))
       return fail("請輸入有效的餐號或翻頁連結。");
-    const result=await readPaymentAttentionNotes(db,id,before);
-    return result?json(result):fail("找不到這張線上付款餐單。",404);
+    const result=history?await readPaymentAttemptHistory(db,id,before):await readPaymentAttentionNotes(db,id,before,attempt);
+    return result?json(result):fail("找不到這張線上付款餐單或指定的付款嘗試。",404);
   }
   if(path==="/api/kitchen/payment-attention-notes"&&method==="POST"){
     const {id,attemptId,state,note,operationId}=input;

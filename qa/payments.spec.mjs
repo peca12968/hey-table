@@ -312,6 +312,50 @@ test("mobile staff recover a lost payment note reply and find the note after a d
   expect(JSON.stringify(customerView)).not.toContain(written.note);
 });
 
+test("mobile order history distinguishes failed and settled payment attempts and opens only the chosen notes",async({page,request})=>{
+  const token=randomUUID(),customer={"X-Ticket":token},noteApi="/api/kitchen/payment-attention-notes";
+  const created=await request.post("/api/orders",{data:{token,mode:"pickup",note:"",
+    items:[{id:"sencha",qty:1}],paymentMethod:"px_pay_plus",paymentEnv:"demo"}});
+  expect(created.status()).toBe(200);
+  const {id}=await created.json(),number=String(id).padStart(4,"0");
+  async function completeAttempt(note,outcome){
+    const started=await request.post("/api/payments/start",{headers:customer,data:{}});
+    expect(started.status()).toBe(200);
+    const {attempt}=await started.json();
+    const notes=await request.get(noteApi+"?id="+id,{headers:staff});
+    expect(notes.status()).toBe(200);
+    const {target}=await notes.json();
+    expect((await request.post(noteApi,{headers:staff,data:{id,attemptId:target.attemptId,state:target.state,
+      note,operationId:randomUUID()}})).status()).toBe(200);
+    expect((await request.post("/api/payments/demo",{headers:customer,data:{ref:attempt.ref,outcome}})).status()).toBe(200);
+    return attempt.ref;
+  }
+  const firstNote="第一次付款失敗，請顧客重試。",secondNote="已協助顧客開啟第二次全支付。";
+  const first=await completeAttempt(firstNote,"failed"),second=await completeAttempt(secondNote,"paid");
+  expect(first).not.toBe(second);
+  await page.setViewportSize({width:360,height:780});
+  await page.addInitScript(()=>sessionStorage.setItem("he-ri-staff","local-test-kitchen"));
+  await page.goto("/kitchen/order-detail?id="+number);
+  await page.getByText("歷次付款嘗試",{exact:true}).click();
+  const attempts=page.getByRole("list",{name:"付款嘗試歷程"});
+  const rows=attempts.getByRole("listitem");
+  await expect(rows).toHaveCount(2);
+  await expect(rows.first()).toContainText("第 2 次付款 · 已付款");
+  await expect(rows.first()).toContainText("首次可接單");
+  await expect(rows.last()).toContainText("第 1 次付款 · 付款失敗");
+  await expect(attempts).not.toContainText(first);
+  await expect(attempts).not.toContainText(second);
+  await rows.last().getByRole("link",{name:"第 1 次付款備註（1 筆）"}).click();
+  const notes=page.getByRole("list",{name:"付款交班備註歷程"});
+  await expect(notes.getByText(firstNote,{exact:true})).toBeVisible();
+  await expect(notes.getByText(secondNote,{exact:true})).toHaveCount(0);
+  await expect(page.getByRole("textbox",{name:"交班備註"})).toHaveCount(0);
+  await page.getByRole("link",{name:"查看全部付款備註"}).click();
+  await expect(notes.getByText(firstNote,{exact:true})).toBeVisible();
+  await expect(notes.getByText(secondNote,{exact:true})).toBeVisible();
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBe(360);
+});
+
 test("mobile cash collection previews change and resumes the same operation after a lost request",async({page,request})=>{
   page.setDefaultTimeout(9000);
   const token=randomUUID(),ticket={"X-Ticket":token},endpoint="/api/kitchen/cash-receipt";

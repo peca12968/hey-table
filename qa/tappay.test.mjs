@@ -454,6 +454,65 @@ test("staff payment notes follow one attempt, are retry-safe after settlement, a
   assert.deepEqual((await (await read("?id=1&before="+page.nextBefore)).json()).notes,[saved]);
 });
 
+test("staff payment attempt history paginates stable ordinals and isolates notes by order and attempt",async t=>{
+  const db=database();
+  t.after(()=>db.sqlite.close());
+  const startedAt=Date.parse("2026-11-25T23:55:00+08:00");
+  const origin="https://order.example/api/kitchen/",headers={Authorization:"Bearer staff"};
+  const runtime={DB:db,STAFF_KEY:"staff"};
+  const get=(path,access=headers)=>api(new Request(origin+path,{headers:access}),runtime);
+  const order=db.sqlite.prepare(`INSERT INTO orders(id,token,mode,note,items,total,created,payment_method,payment_env)
+    VALUES (?,?,'pickup','','[]',45,?,?,'demo')`);
+  for(const [id,method] of [[1,"line_pay"],[2,"px_pay_plus"],[3,"cash"],[4,"line_pay"]])
+    order.run(id,crypto.randomUUID(),startedAt-60_000,method);
+  const attempt=db.sqlite.prepare(`INSERT INTO payment_attempts(id,order_id,reference,merchant,trade_id,redirect_url,state,
+    created,checked,kitchen_payable_at) VALUES (?,?,?,'private-merchant',?,'https://pay.example/private',?,?,?,?)`);
+  const add=(id,orderId,state,checked=0,firstPayable=null)=>
+    attempt.run(id,orderId,crypto.randomUUID(),crypto.randomUUID(),state,startedAt,checked,firstPayable);
+  for(let id=1;id<=11;id++)add(id,1,"failed");
+  add(12,1,"pending",startedAt+60_000);
+  add(50,2,"authorized",startedAt+30_000,startedAt+40_000);
+  const note=db.sqlite.prepare(`INSERT INTO payment_attention_notes(attempt_id,operation_id,state,note,recorded_at)
+    VALUES (?,?,'pending',?,?)`);
+  note.run(1,crypto.randomUUID(),"第一筆的備註",startedAt+30_000);
+  note.run(12,crypto.randomUUID(),"最新嘗試的備註",startedAt+40_000);
+  note.run(50,crypto.randomUUID(),"另一張餐單的備註",startedAt+40_000);
+  const path="payment-attempt-history?id=1";
+  assert.equal((await get(path,{})).status,403);
+  for(const query of ["?id=3","?id=999"])assert.equal((await get("payment-attempt-history"+query)).status,404);
+  for(const query of ["?id=1&id=2","?id=1&attempt=1","?id=1&before=0","?id=1&before=1&before=2","?id=1&before=9007199254740992"])
+    assert.equal((await get("payment-attempt-history"+query)).status,400);
+  assert.deepEqual((await (await get("payment-attempt-history?id=4")).json()).attempts,[]);
+  const first=await get(path);
+  assert.equal(first.headers.get("Cache-Control"),"no-store");
+  const page=await first.json();
+  assert.equal(page.method,"line_pay");
+  assert.equal(page.environment,"demo");
+  assert.deepEqual(page.attempts.map(row=>row.number),[12,11,10,9,8,7,6,5,4,3]);
+  assert.equal(page.nextBefore,3);
+  assert.deepEqual(page.attempts[0],{attemptId:12,state:"pending",startedAt,lastCheckedAt:startedAt+60_000,
+    firstPayableAt:null,noteCount:1,number:12,latest:true});
+  const px=await (await get("payment-attempt-history?id=2")).json();
+  assert.equal(px.attempts[0].firstPayableAt,startedAt+40_000);
+  assert.doesNotMatch(JSON.stringify(page),/private-merchant|pay\.example|tradeId|reference|operationId/);
+  const filter="payment-attention-notes?id=1&attempt=";
+  const historical=await (await get(filter+"1")).json();
+  assert.equal(historical.target,null);
+  assert.deepEqual(historical.notes.map(row=>row.note),["第一筆的備註"]);
+  assert.equal((await get(filter+"50")).status,404);
+  assert.equal((await get(filter+"0")).status,400);
+  assert.equal((await get(filter+"1&attempt=12")).status,400);
+  assert.deepEqual((await (await get(filter+"12")).json()).target,{attemptId:12,state:"pending",startedAt});
+  db.sqlite.prepare("UPDATE payment_attempts SET state='failed' WHERE id=12").run();
+  add(13,1,"pending");
+  const next=await (await get(path+"&before="+page.nextBefore)).json();
+  assert.deepEqual(next.attempts.map(row=>[row.attemptId,row.number,row.latest]),[[2,2,false],[1,1,false]]);
+  assert.equal(next.nextBefore,null);
+  assert.equal((await (await get(path)).json()).attempts[0].number,13);
+  assert.deepEqual((await (await get(filter+"12")).json()).notes.map(row=>row.note),["最新嘗試的備註"]);
+  assert.equal((await (await get(filter+"12")).json()).target,null);
+});
+
 test("the payment handoff fixture comes from the queue, idempotent notes and simulated settlement",async()=>{
   const saved=JSON.parse(readFileSync(new URL("../examples/payment-attention-demo.json",import.meta.url),"utf8"));
   const demo=await buildPaymentAttentionDemo();

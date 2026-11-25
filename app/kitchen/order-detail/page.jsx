@@ -10,6 +10,7 @@ import {environmentLabel,methods,paymentStates} from "../../../lib/payments.mjs"
 import {pickupChangeWindows} from "../../../lib/pickup-slots.mjs";
 import {stationLabels} from "../../../lib/kitchen-timing.mjs";
 import PaymentAttentionNotes from "../payment-attention-notes";
+import PaymentAttemptHistory from "../payment-attempt-history";
 import "../daily/daily.css";
 
 const pagePath="/kitchen/order-detail";
@@ -46,11 +47,15 @@ function OperationalHistory({order}){
   </>;
 }
 
-function OrderDetails({order,openPaymentNotes}){
+function OrderDetails({order,query}){
   const payment=order.paymentMethod==="cash"
     ?order.cashReceipt?"已登記":"尚無現金收款紀錄"
     :paymentStates[order.paymentState]??order.paymentState;
   const paymentEnvironment=environmentLabel(order.paymentEnv);
+  const selectedAttempt=query.get("attempt"),paymentBefore=query.get("paymentBefore");
+  const allNotes=new URLSearchParams(query);
+  allNotes.delete("attempt");
+  allNotes.set("notes","1");
   return <article className="sheet orderLookup" aria-labelledby="order-detail-number">
     <div className="menuTitle"><h2 id="order-detail-number">餐單 #{numberOf(order.id)}</h2>
       <strong>{order.status==="completed"?"已交餐":labels[order.status]}</strong></div>
@@ -66,7 +71,13 @@ function OrderDetails({order,openPaymentNotes}){
     <p>{methods[order.paymentMethod]??"付款方式未記錄"} · {payment}{paymentEnvironment?" · "+paymentEnvironment:""}</p>
     {order.cashReceipt&&<CashReceipt record={order.cashReceipt}/>}
     {order.demoRefund&&<p>示範退款 {currency(order.demoRefund.amount)} · <ProgressTime at={order.demoRefund.refundedAt}/></p>}
-    {order.paymentMethod!=="cash"&&<PaymentAttentionNotes key={order.id} id={order.id} autoOpen={openPaymentNotes}/>}
+    {order.paymentMethod!=="cash"&&<>
+      <PaymentAttemptHistory key={"attempts:"+order.id+":"+paymentBefore} id={order.id} query={query.toString()}
+        autoOpen={query.get("attempts")==="1"||selectedAttempt!==null}/>
+      <PaymentAttentionNotes key={"notes:"+order.id+":"+selectedAttempt} id={order.id} attemptId={selectedAttempt}
+        autoOpen={query.get("notes")==="1"||selectedAttempt!==null}
+        allNotes={selectedAttempt!==null?pagePath+"?"+allNotes+"#payment-attention-notes":null}/>
+    </>}
     <OrderProgress history={order.statusHistory}/>
     <OperationalHistory order={order}/>
   </article>;
@@ -112,7 +123,7 @@ export default function KitchenOrderDetail(){
     {current?.error&&<p role="alert" className="error">{current.error}</p>}
     {current?.denied&&<a className="outline" target="_top"
       href={"/signin-with-chatgpt?return_to="+encodeURIComponent(pagePath+(search??""))}>使用 ChatGPT 登入</a>}
-    {current?.order&&<OrderDetails order={current.order} openPaymentNotes={query.get("notes")==="1"}/>}
+    {current?.order&&<OrderDetails order={current.order} query={query}/>}
     {current&&!current.denied&&<button className="outline orderLookupRefresh" onClick={()=>setRevision(value=>value+1)}>重新查詢</button>}
   </main><Footer/></>;
 }

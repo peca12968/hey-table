@@ -5,3 +5,4 @@
 .paymentAttentionNoteList p { margin: .25rem 0; }
 .paymentAttentionNoteText { white-space: pre-wrap; overflow-wrap: anywhere; }
 .paymentAttentionNotesRefresh { display: block; margin-top: .7rem; }
+.paymentAttemptPages { margin: .7rem 0; }

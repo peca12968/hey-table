@@ -7,21 +7,25 @@ const columns="note.id,note.state,note.note,note.recorded_at AS recordedAt,attem
 export const latestPaymentAttentionNote=`(SELECT json_object('note',recent.note,'recordedAt',recent.recorded_at)
   FROM payment_attention_notes AS recent WHERE recent.attempt_id=attempt.id ORDER BY recent.id DESC LIMIT 1)`;
 
-export async function readPaymentAttentionNotes(db,id,before){
+export async function readPaymentAttentionNotes(db,id,before,attemptId){
   const bound=before===undefined?"":" AND note.id<?";
+  const selected=attemptId===undefined?"":" AND attempt.id=?";
+  const belongs=attemptId===undefined?"":" AND EXISTS (SELECT 1 FROM payment_attempts WHERE order_id=orders.id AND id=?)";
+  const attemptArgs=attemptId===undefined?[]:[attemptId];
   const [order,history]=await db.batch([
     db.prepare(`SELECT attempt.id AS attemptId,attempt.state,attempt.created AS startedAt
       FROM orders LEFT JOIN payment_attempts AS attempt ON attempt.id=(${newest})
-      WHERE orders.id=? AND orders.payment_method<>'cash'`).bind(id),
+      WHERE orders.id=? AND orders.payment_method<>'cash'${belongs}`).bind(id,...attemptArgs),
     db.prepare(`SELECT ${columns}
       FROM payment_attempts AS attempt JOIN payment_attention_notes AS note ON note.attempt_id=attempt.id
-      WHERE attempt.order_id=?${bound} ORDER BY note.id DESC LIMIT ?`)
-      .bind(id,...(before===undefined?[]:[before]),limit+1),
+      WHERE attempt.order_id=?${selected}${bound} ORDER BY note.id DESC LIMIT ?`)
+      .bind(id,...attemptArgs,...(before===undefined?[]:[before]),limit+1),
   ]);
   const current=order.results[0];
   if(!current)return null;
   const notes=history.results.slice(0,limit);
-  return {id,target:paymentAttentionStates.includes(current.state)?current:null,notes,
+  const editable=(attemptId===undefined||attemptId===current.attemptId)&&paymentAttentionStates.includes(current.state);
+  return {id,target:editable?current:null,notes,
     nextBefore:history.results.length>limit?notes.at(-1).id:null};
 }
 
