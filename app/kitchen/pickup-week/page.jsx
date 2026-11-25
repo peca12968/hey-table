@@ -4,6 +4,7 @@ import {useEffect,useState} from "react";
 import {Header,Footer,request} from "../../shared";
 import {businessDayRange} from "../../../lib/business-day.mjs";
 import {pickupRosterPath,pickupSettingsPath} from "../../../lib/pickup-slots.mjs";
+import WeekPrep from "./week-prep";
 import "./week.css";
 
 const path="/kitchen/pickup-week";
@@ -60,6 +61,7 @@ export default function PickupWeek(){
     {current?.denied&&<a className="primary" href={"/signin-with-chatgpt?return_to="+encodeURIComponent(path)} target="_top">使用 ChatGPT 登入</a>}
     {snapshot&&<>
       {!snapshot.onlineAccepting&&<p className="sheet">線上自取接單暫停。店員仍可依日期和時段設定代建預約。</p>}
+      <WeekPrep snapshot={snapshot}/>
       <p className="muted">可預約時段依上限與截止時間計算，送單時也會檢查餐點供應量。</p>
       <ul className="pickupWeekList">{snapshot.days.map(day=><WeekDay key={day.date} day={day}/>)}</ul>
     </>}

@@ -1311,7 +1311,7 @@ test("staff pickup roster groups one Taipei day and excludes private receipt and
   }
 });
 
-test("staff pickup week uses Taipei dates and counts available slots after expiring payment holds",async t=>{
+test("staff pickup week groups capacity and unfinished prep in the same Taipei snapshot",async t=>{
   const db=database();
   t.after(()=>db.sqlite.close());
   const date="2026-11-30",pausedDate="2026-12-01",openDate="2026-12-02";
@@ -1340,18 +1340,25 @@ test("staff pickup week uses Taipei dates and counts available slots after expir
   order(start(pausedDate,"12:00"),1);
   const overdue=order(start(openDate,"12:00"),4,{method:"line_pay",due:now});
   const underway=order(start(openDate,"12:00"),2,{method:"line_pay",due:now});
-  db.sqlite.prepare("INSERT INTO payment_attempts(order_id,reference,merchant,state,created) VALUES (?,'private-ref','fixture','pending',?)").run(underway,now-1000);
+  const preparing=order(start(openDate,"12:15"),2,{status:"preparing",method:"line_pay",due:now});
+  const tea={id:"sencha",qty:2,note:"private tea note"},gyoza={id:"gyoza",qty:3};
+  db.sqlite.prepare("UPDATE orders SET items=?,station_progress=? WHERE id=?").run(JSON.stringify([tea,gyoza]),
+    JSON.stringify({groups:{fryer:[gyoza],drinks:[tea]},done:{fryer:now-500}}),preparing);
+  order(start(openDate,"12:30"),1,{status:"preparing"});
+  const payment=db.sqlite.prepare("INSERT INTO payment_attempts(order_id,reference,merchant,state,created) VALUES (?,?,'fixture',?,?)");
+  payment.run(underway,"private-ref","pending",now-1000);
+  payment.run(preparing,"private-prep-ref","authorized",now-1000);
   db.sqlite.prepare("INSERT INTO pickup_day_intake VALUES (?,0,1)").run(pausedDate);
   db.sqlite.prepare("INSERT INTO order_intake VALUES ('pickup',0,1)").run();
   assert.equal((await call()).status,403);
   const response=await call(staff);
   assert.equal(response.status,200);
   assert.equal(response.headers.get("Cache-Control"),"no-store");
-  const expectedEmpty={accepting:true,ended:false,bookings:0,portions:0,available:36,full:0,closed:0};
+  const expectedEmpty={accepting:true,ended:false,bookings:0,portions:0,available:36,full:0,closed:0,prep:[]};
   assert.deepEqual(await response.json(),{capturedAt:now,onlineAccepting:false,days:[
-    {date,accepting:true,ended:false,bookings:3,portions:7,available:31,full:1,closed:1},
-    {date:pausedDate,accepting:false,ended:false,bookings:1,portions:1,available:0,full:0,closed:0},
-    {date:openDate,...expectedEmpty,bookings:1,portions:2},
+    {date,accepting:true,ended:false,bookings:3,portions:7,available:31,full:1,closed:1,prep:[{id:"sencha",pending:2,preparing:0}]},
+    {date:pausedDate,accepting:false,ended:false,bookings:1,portions:1,available:0,full:0,closed:0,prep:[{id:"sencha",pending:1,preparing:0}]},
+    {date:openDate,...expectedEmpty,bookings:3,portions:8,prep:[{id:"sencha",pending:0,preparing:3}]},
     ...["2026-12-03","2026-12-04","2026-12-05","2026-12-06"].map(day=>({date:day,...expectedEmpty})),
   ]});
   const status=id=>db.sqlite.prepare("SELECT status FROM orders WHERE id=?").get(id).status;
@@ -1359,7 +1366,7 @@ test("staff pickup week uses Taipei dates and counts available slots after expir
   assert.equal(status(underway),"pending");
   now=start(date,"19:16");
   assert.deepEqual((await (await call(staff)).json()).days[0],{
-    date,accepting:true,ended:true,bookings:3,portions:7,available:0,full:0,closed:0,
+    date,accepting:true,ended:true,bookings:3,portions:7,available:0,full:0,closed:0,prep:[{id:"sencha",pending:2,preparing:0}],
   });
   now=start(pausedDate,"00:00");
   const moved=(await (await call(staff)).json()).days;

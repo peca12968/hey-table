@@ -2,7 +2,7 @@
 import {useEffect,useState} from "react";
 import {Header,Footer,request} from "../../shared";
 import {useBusinessToday} from "../../use-business-today.mjs";
-import {downloadFile} from "../../../lib/download-file.mjs";
+import {downloadCsv} from "../../../lib/download-csv.mjs";
 import {downloadJson} from "../../../lib/download-json.mjs";
 import "./daily.css";
 
@@ -18,13 +18,7 @@ function downloadPortions(report) {
   const capturedAt = new Date(report.capturedAt).toISOString();
   const rows = [["餐單日期","擷取時間 (UTC)","品項編號","餐點","自取份數","內用份數","合計份數"],
     ...report.items.map(({id,name,pickupQty,tableQty,qty})=>[report.date,capturedAt,id,name,pickupQty,tableQty,qty])];
-  const csv = rows.map(row=>row.map(value=>{
-    if(typeof value==="number")return String(value);
-    const text=String(value);
-    const escaped=/^\s*[=+@-]|^[\t\r\n]/.test(text)?"'"+text:text;
-    return '"'+escaped.replaceAll('"','""')+'"';
-  }).join(",")).join("\r\n")+"\r\n";
-  downloadFile(new Blob(["\uFEFF",csv],{type:"text/csv;charset=utf-8"}),"hey-table-portions-"+report.date+"-"+capturedAt.replaceAll(":","-")+".csv");
+  downloadCsv(rows,"hey-table-portions-"+report.date+"-"+capturedAt.replaceAll(":","-")+".csv");
 }
 
 function ChannelSummary({name,summary}) {

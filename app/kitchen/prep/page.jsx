@@ -50,7 +50,10 @@ export default function Prep() {
   const rangeLabel=remainingOnly?"未完成品項":"完整餐單";
 
   return <><Header/><main className="shell section prep">
-    <a href="/kitchen" className="textLink prepControl">返回店家接單台</a>
+    <div className="actions prepControl">
+      <a href="/kitchen" className="textLink">返回店家接單台</a>
+      <a href="/kitchen/pickup-week" className="textLink">七天自取預約總覽</a>
+    </div>
     <h1>廚房備料單</h1>
     <div className="prepControl"><PickupDate label="備料日期" value={day} onChange={setDay}/></div>
     {error && <p role="alert" className="error">{error}</p>}

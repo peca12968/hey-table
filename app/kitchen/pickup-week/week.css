@@ -7,4 +7,10 @@
 .pickupWeekMetrics{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:8px;margin:0}
 .pickupWeekMetrics dd{font-weight:700;margin:0;font-variant-numeric:tabular-nums}
 .pickupWeekDay .actions{gap:8px}.pickupWeek .outline{min-height:42px}
+.pickupWeekPrep{margin-bottom:14px}.pickupWeekPrep summary{font-weight:700;cursor:pointer}
+.pickupWeekPrepDays{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(340px,100%),1fr));align-items:start;gap:14px;margin:0 0 12px}
+.pickupWeekPrepDays table{width:100%;border-collapse:collapse}
+.pickupWeekPrepDays caption{text-align:left;font-weight:700;margin:0 0 4px}
+.pickupWeekPrepDays :is(th,td){padding:6px 4px;border-bottom:1px solid var(--line);text-align:left}
+.pickupWeekPrepDays :is(th,td):not(:first-child){text-align:right;font-variant-numeric:tabular-nums}
 @media(max-width:850px){.pickupWeekDay{grid-template-columns:1fr}.pickupWeekMetrics{grid-template-columns:repeat(auto-fit,minmax(54px,1fr))}}

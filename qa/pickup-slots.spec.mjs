@@ -662,6 +662,20 @@ test("mobile staff compare seven days and follow date-scoped roster and settings
     const suspended=rows.filter({has:page.locator(`time[datetime="${paused}"]`)});
     await expect(selected.locator("dl")).toHaveText("有效預約1 張已占用1 份可預約時段34滿額時段1停收時段1");
     await expect(suspended.getByText("整日停收",{exact:true})).toBeVisible();
+    await page.getByText(/七天備料需求 ·/).click();
+    const prep=page.getByRole("region",{name:"七天備料需求"});
+    const tea=prep.getByRole("table",{name:date+" 備料需求"}).getByRole("row",{name:/日式熱煎茶/});
+    await expect(tea.getByRole("cell")).toHaveText(["1","0"]);
+    const capturedAt=await page.locator(".pickupWeekControls time").getAttribute("datetime");
+    const [file]=await Promise.all([page.waitForEvent("download"),prep.getByRole("button",{name:"下載備料 CSV"}).click()]);
+    expect(file.suggestedFilename()).toBe("hey-table-pickup-prep-"+businessDate(Date.parse(capturedAt))+"-"+capturedAt.replaceAll(":","-")+".csv");
+    const bytes=await readFile(await file.path());
+    expect([...bytes.subarray(0,3)]).toEqual([0xef,0xbb,0xbf]);
+    expect(bytes.toString("utf8").slice(1).split("\r\n")).toEqual([
+      '"取餐日期","品項編號","餐點","待接單份數","製作中未完成份數","合計份數","擷取時間（UTC）"',
+      '"'+date+'","sencha","日式熱煎茶",1,0,1,"'+capturedAt+'"',
+      "",
+    ]);
     expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBe(360);
     await selected.getByRole("link",{name:/的預約清單$/}).click();
     await expect(page).toHaveURL(new RegExp("/kitchen/pickup-roster\\?date="+date+"$"));
