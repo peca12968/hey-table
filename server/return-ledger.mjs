@@ -46,6 +46,28 @@ export async function readReturnReceipt(db,id,includeLedger){
   return {ticket:receipt(lookup.results[0]),ledger:ledger(history.results,voids.results)};
 }
 
+export async function returnLedgerReport(db,date,[start,end],capturedAt){
+  const {results}=await db.prepare(`SELECT order_id AS orderId,revision,recorded_at AS recordedAt,
+      'recorded' AS kind,json_extract(quote,'$.amount') AS amount,NULL AS targetRevision,NULL AS reason
+    FROM return_quote_entries WHERE recorded_at>=? AND recorded_at<? AND recorded_at<=?
+    UNION ALL
+    SELECT order_id,revision,recorded_at,'voided',restored_amount,target_revision,reason
+    FROM return_quote_voids WHERE recorded_at>=? AND recorded_at<? AND recorded_at<=?
+    ORDER BY recordedAt DESC,orderId DESC,revision DESC`)
+    .bind(start,end,capturedAt,start,end,capturedAt).all();
+  const totals={recordedCount:0,recordedAmount:0,voidedCount:0,restoredAmount:0,netAmount:0};
+  const events=results.map(({kind,amount,targetRevision,reason,...row})=>{
+    if(kind==="voided"){
+      totals.voidedCount++;totals.restoredAmount+=amount;
+      return {...row,kind,amount,targetRevision,reason};
+    }
+    totals.recordedCount++;totals.recordedAmount+=amount;
+    return {...row,kind,amount};
+  });
+  totals.netAmount=totals.recordedAmount-totals.restoredAmount;
+  return {format:"hey-table.return-ledger-report.v1",date,timeZone:"Asia/Taipei",capturedAt,totals,events};
+}
+
 export async function recordReturnQuote(db,{id,revision,operationId,items,amount},now){
   const selection=items.map(({id,qty})=>[id,qty]).sort(([a],[b])=>a<b?-1:a>b?1:0);
   const encoded=JSON.stringify(selection);

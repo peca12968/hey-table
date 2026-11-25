@@ -834,6 +834,45 @@ test("station batch history isolates Taipei days, station and order filters, and
   assert.ok(plan.some(row=>row.detail.includes("station_batch_receipts_station_day")));
 });
 
+test("return ledger report groups cross-day corrections by Taipei event date and keeps audit fields private",async t=>{
+  const db=database();
+  t.after(()=>db.sqlite.close());
+  const start=Date.parse("2026-11-25T00:00:00+08:00"),end=Date.parse("2026-11-26T00:00:00+08:00");
+  let now=start+50;
+  t.mock.method(Date,"now",()=>now);
+  const runtime={DB:db,STAFF_KEY:"staff"};
+  const report=(query,staff=true)=>api(new Request("https://order.example/api/kitchen/return-ledger-report"+query,{
+    headers:staff?{Authorization:"Bearer staff"}:{},
+  }),runtime);
+  for(let id=1;id<=3;id++)db.sqlite.prepare(`INSERT INTO orders(id,token,mode,note,items,total,created)
+    VALUES (?,?,'pickup','private customer note','[]',345,?)`).run(id,crypto.randomUUID(),start-100);
+  const add=db.sqlite.prepare(`INSERT INTO return_quote_entries
+    (order_id,revision,operation_id,selection,quote,recorded_at) VALUES (?,?,?,'private selection',?,?)`);
+  const addAt=(id,revision,amount,at)=>add.run(id,revision,crypto.randomUUID(),JSON.stringify({amount,lines:[],remainingValue:0}),at);
+  addAt(1,1,85,start-1);addAt(1,2,72,start);addAt(2,1,0,start);addAt(3,1,45,end);addAt(3,2,167,start+51);
+  db.sqlite.prepare(`INSERT INTO return_quote_voids
+    (order_id,revision,target_revision,operation_id,reason,restored_amount,remaining_value,recorded_at)
+    VALUES (1,3,1,?,'更正昨日登記',85,273,?)`).run(crypto.randomUUID(),start+5);
+  assert.equal((await report("?date=2026-11-25",false)).status,403);
+  for(const query of ["","?date=2026-02-30","?date=2026-11-25&date=2026-11-26"])
+    assert.equal((await report(query)).status,400);
+  const response=await report("?date=2026-11-25");
+  assert.equal(response.headers.get("Cache-Control"),"no-store");
+  const data=await response.json();
+  assert.deepEqual(data,{format:"hey-table.return-ledger-report.v1",timeZone:"Asia/Taipei",date:"2026-11-25",capturedAt:now,
+    totals:{recordedCount:2,recordedAmount:72,voidedCount:1,restoredAmount:85,netAmount:-13},
+    events:[
+      {orderId:1,revision:3,recordedAt:start+5,kind:"voided",amount:85,targetRevision:1,reason:"更正昨日登記"},
+      {orderId:2,revision:1,recordedAt:start,kind:"recorded",amount:0},
+      {orderId:1,revision:2,recordedAt:start,kind:"recorded",amount:72},
+    ]});
+  const yesterday=await (await report("?date=2026-11-24")).json();
+  assert.deepEqual(yesterday.events,[{orderId:1,revision:1,recordedAt:start-1,kind:"recorded",amount:85}]);
+  now=end;
+  const tomorrow=await (await report("?date=2026-11-26")).json();
+  assert.deepEqual(tomorrow.events,[{orderId:3,revision:1,recordedAt:end,kind:"recorded",amount:45}]);
+});
+
 test("staff can read orders beyond the recent board without exposing checkout references or changing state",async t=>{
   const db=database();
   t.after(()=>db.sqlite.close());

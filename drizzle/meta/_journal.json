@@ -288,6 +288,13 @@
       "when": 1795609133437,
       "tag": "0040_return_quote_voids",
       "breakpoints": true
+    },
+    {
+      "idx": 41,
+      "version": "6",
+      "when": 1795609884617,
+      "tag": "0041_return_ledger_by_day",
+      "breakpoints": true
     }
   ]
 }

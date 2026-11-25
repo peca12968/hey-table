@@ -227,6 +227,7 @@ export const returnQuoteEntries = sqliteTable("return_quote_entries", {
   recordedAt: integer("recorded_at").notNull(),
 }, t => [
   primaryKey({columns:[t.orderId,t.revision]}),
+  index("return_quote_entries_by_day").on(t.recordedAt,t.orderId,t.revision),
   check("return_quote_revision",sql`${t.revision} > 0`),
 ]);
 
@@ -243,6 +244,7 @@ export const returnQuoteVoids = sqliteTable("return_quote_voids", {
   primaryKey({columns:[t.orderId,t.revision]}),
   foreignKey({columns:[t.orderId,t.targetRevision],foreignColumns:[returnQuoteEntries.orderId,returnQuoteEntries.revision]}),
   uniqueIndex("return_quote_void_target").on(t.orderId,t.targetRevision),
+  index("return_quote_voids_by_day").on(t.recordedAt,t.orderId,t.revision),
   check("return_quote_void_values",sql`${t.targetRevision} > 0 AND ${t.revision} > ${t.targetRevision}
     AND ${t.restoredAmount} >= 0 AND ${t.remainingValue} >= 0`),
 ]);

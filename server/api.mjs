@@ -24,7 +24,7 @@ import {pickupWeek} from "./pickup-week.mjs";
 import {cashCorrectionHistory,cashReceiptColumn,collectCash,correctCashReceipt,dailyCashReceipts} from "./cash-receipts.mjs";
 import {cashCloseVersion,cashCloseVersions,saveCashClose} from "./cash-close-versions.mjs";
 import {cashAmount} from "../lib/cash-reconciliation.mjs";
-import {readReturnReceipt,recordReturnQuote,voidReturnQuote} from "./return-ledger.mjs";
+import {readReturnReceipt,recordReturnQuote,returnLedgerReport,voidReturnQuote} from "./return-ledger.mjs";
 
 const json = (value, status=200) => Response.json(value,{status,headers:{"Cache-Control":"no-store"}});
 const fail = (message,status=400) => json({error:message},status);
@@ -947,6 +947,12 @@ export async function api(request, env) {
       return json(await pickupRoster(db,date,[start,start+1],capturedAt));
     }
     return json(await pickupRoster(db,date,range,capturedAt));
+  }
+  if(path==="/api/kitchen/return-ledger-report"&&method==="GET"){
+    const dates=url.searchParams.getAll("date"),[date]=dates;
+    const range=dates.length===1?businessDayRange(date):null;
+    if(!range)return fail("請選擇有效的試算交班日期。");
+    return json(await returnLedgerReport(db,date,range,Date.now()));
   }
   if (path === "/api/kitchen/return-receipt" && method === "GET") {
     const id = collectionId(url);

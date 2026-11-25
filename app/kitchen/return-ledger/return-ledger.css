@@ -1,0 +1,9 @@
+.returnLedgerReport { overflow-wrap: anywhere; }
+.returnLedgerReport h2 { margin-top: 0; }
+.returnLedgerTotals { display: grid; gap: .45rem; }
+.returnLedgerTotals div { display: flex; flex-wrap: wrap; justify-content: space-between; gap: .3rem 1rem; }
+.returnLedgerTotals dd { font-weight: 700; margin: 0; }
+.returnLedgerEvents { list-style: none; padding: 0; margin-bottom: 0; }
+.returnLedgerEvents li { border-top: 1px solid var(--line); padding: .55rem 0; break-inside: avoid; }
+.returnLedgerEvents a { color: var(--green); font-weight: 650; }
+.returnLedgerEvents p { margin: .3rem 0 0; }

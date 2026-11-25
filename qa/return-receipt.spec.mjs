@@ -5,6 +5,7 @@ import {execFileSync} from "node:child_process";
 import {join} from "node:path";
 import {fileURLToPath} from "node:url";
 import {quoteReturn,returnLots} from "../modules/receipt-returns/quote.mjs";
+import {businessDate} from "../lib/business-day.mjs";
 
 const endpoint="/api/kitchen/return-receipt";
 const staff={Authorization:"Bearer local-test-kitchen"};
@@ -288,4 +289,44 @@ test("mobile staff give a reason, safely retry a void and quote the restored por
   await preview.getByRole("button",{name:"試算退餐金額"}).click();
   await expect(preview.getByRole("region",{name:"本次退餐試算"})).toContainText("單點 · 1 份 × NT$ 85");
   expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBe(360);
+});
+
+test("mobile handoff downloads the displayed ledger capture and opens the audited receipt by number",async({page,request})=>{
+  const {ticket}=await place(request,combo());
+  await saveTwoQuotes(request,ticket.id);
+  const cancelled=await request.patch(endpoint,{headers:staff,data:{id:ticket.id,revision:2,targetRevision:1,
+    reason:"交班確認更正",operationId:randomUUID()}});
+  expect(cancelled.ok(),await cancelled.text()).toBe(true);
+  const {recordedAt}=await cancelled.json(),date=businessDate(recordedAt);
+  const api="/api/kitchen/return-ledger-report";
+  await page.setViewportSize({width:360,height:780});
+  await page.addInitScript(()=>sessionStorage.setItem("he-ri-staff","local-test-kitchen"));
+  const incoming=page.waitForResponse(response=>new URL(response.url()).pathname===api);
+  await page.goto("/kitchen/return-ledger?date="+date);
+  const report=await (await incoming).json();
+  expect(report.events.filter(row=>row.orderId===ticket.id).map(row=>[row.kind,row.amount]))
+    .toEqual([["voided",85],["recorded",72],["recorded",85]]);
+  const displayed=page.getByRole("region",{name:date+" 試算簿異動"});
+  const correction=displayed.getByRole("listitem").filter({hasText:"交班確認更正"});
+  await expect(correction).toContainText("撤銷第 1 筆 · NT$ 85");
+  const label=String(ticket.id).padStart(4,"0");
+  const receiptLink=correction.getByRole("link",{name:"餐單 #"+label});
+  await expect(receiptLink).toBeVisible();
+  const extra=await request.post(endpoint,{headers:staff,data:{id:ticket.id,revision:3,amount:45,
+    operationId:randomUUID(),items:[{id:"sencha",qty:1}]}});
+  expect(extra.ok(),await extra.text()).toBe(true);
+  const [file]=await Promise.all([page.waitForEvent("download"),page.getByRole("button",{name:"下載試算交班 JSON"}).click()]);
+  expect(file.suggestedFilename()).toContain("hey-table-return-ledger-"+date+"-");
+  expect(JSON.parse(await readFile(await file.path(),"utf8"))).toEqual(report);
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBe(360);
+  await page.emulateMedia({media:"print"});
+  await expect(page.getByRole("button",{name:"下載試算交班 JSON"})).toBeHidden();
+  await expect(correction).toBeVisible();
+  await page.emulateMedia({media:"screen"});
+  await receiptLink.click();
+  await expect(page.locator(".returnReceipt")).toHaveJSProperty("open",true);
+  await expect(page.getByRole("textbox",{name:"取餐號碼",exact:true})).toHaveValue(label);
+  const original=page.getByRole("region",{name:"部分退餐試算"});
+  await expect(original.getByText("已撤銷 · 交班確認更正")).toBeVisible();
+  await expect(original.getByText("第 4 筆 · NT$ 45")).toBeVisible();
 });

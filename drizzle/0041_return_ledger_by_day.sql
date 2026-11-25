@@ -1,0 +1,2 @@
+CREATE INDEX `return_quote_entries_by_day` ON `return_quote_entries` (`recorded_at`,`order_id`,`revision`);--> statement-breakpoint
+CREATE INDEX `return_quote_voids_by_day` ON `return_quote_voids` (`recorded_at`,`order_id`,`revision`);

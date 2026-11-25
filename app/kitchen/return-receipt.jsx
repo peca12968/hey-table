@@ -1,5 +1,5 @@
 "use client";
-import {useMemo,useRef,useState} from "react";
+import {useEffect,useMemo,useRef,useState,useSyncExternalStore} from "react";
 import {request} from "../shared";
 import {numberOf} from "../../lib/menu.mjs";
 import {downloadJson} from "../../lib/download-json.mjs";
@@ -10,6 +10,15 @@ const endpoint="/api/kitchen/return-receipt";
 const taipei=new Intl.DateTimeFormat("zh-TW",{timeZone:"Asia/Taipei",dateStyle:"short",timeStyle:"short"});
 const staffHeaders=key=>key?{Authorization:"Bearer "+key}:{};
 const focusHeading=node=>node?.focus();
+const noLinkedReceipt=()=>"";
+function linkedReceipt(){
+  const value=new URLSearchParams(window.location.search).get("returnId")??"";
+  return /^\d{1,16}$/.test(value)&&Number.isSafeInteger(Number(value))&&Number(value)>0?value:"";
+}
+function subscribeToReceipt(notify){
+  window.addEventListener("popstate",notify);
+  return ()=>window.removeEventListener("popstate",notify);
+}
 
 function ReturnPreview({ticket,ledger,staffKey,onChanged,onReload}){
   const [quantities,setQuantities]=useState(()=>new Map()),[result,setResult]=useState(null),[error,setError]=useState("");
@@ -137,45 +146,57 @@ function ReturnPreview({ticket,ledger,staffKey,onChanged,onReload}){
 }
 
 export default function ReturnReceipt({staffKey}) {
-  const [number,setNumber] = useState("");
-  const [view,setView] = useState(null);
-  const [busy,setBusy] = useState(false);
-  const [error,setError] = useState("");
-  async function lookup(event) {
-    event?.preventDefault();
-    if (busy) return;
-    setView(null);
-    setError("");
-    setBusy(true);
-    try {
-      const result = await request(endpoint+"?"+new URLSearchParams({id:number.trim(),ledger:"1"}), {
-        headers:staffHeaders(staffKey),signal:AbortSignal.timeout(10_000),
-      });
-      setView(result);
-    } catch (e) {
-      setError(e.name==="TimeoutError"?"查詢餐單逾時，請再試一次。":e.message);
-    } finally {
-      setBusy(false);
+  const linked=useSyncExternalStore(subscribeToReceipt,linkedReceipt,noLinkedReceipt);
+  const [entered,setEntered]=useState(null),[requested,setRequested]=useState(null);
+  const [view,setView]=useState(null),[revision,setRevision]=useState(0);
+  const panel=useRef(null);
+  const number=entered??linked;
+  const id=requested??(entered===null?linked:"");
+  const current=view?.id===id&&view.revision===revision?view:null;
+  const busy=!!id&&!current;
+  useEffect(()=>{
+    if(linked&&panel.current){
+      panel.current.open=true;
+      panel.current.scrollIntoView({block:"start"});
     }
+  },[linked]);
+  useEffect(()=>{
+    if(!id)return;
+    const controller=new AbortController();
+    request(endpoint+"?"+new URLSearchParams({id,ledger:"1"}),{
+      headers:staffHeaders(staffKey),signal:AbortSignal.any([controller.signal,AbortSignal.timeout(10_000)]),
+    }).then(result=>{
+      if(!controller.signal.aborted)setView({id,revision,...result});
+    }).catch(failure=>{
+      if(!controller.signal.aborted)setView({id,revision,
+        error:failure.name==="TimeoutError"?"查詢餐單逾時，請再試一次。":failure.message});
+    });
+    return ()=>controller.abort();
+  },[id,revision,staffKey]);
+
+  function lookup(event) {
+    event?.preventDefault();
+    if(busy)return;
+    setRequested(number.trim());setRevision(value=>value+1);
   }
   function applyChange(id,method,entry){
     setView(current=>{
-      if(current?.ticket.id!==id||entry.revision!==current.ledger.revision+1)return current;
+      if(current?.ticket?.id!==id||entry.revision!==current.ledger.revision+1)return current;
       const records=method==="POST"?[...current.ledger.records,entry]:current.ledger.records.map(record=>
         record.revision===entry.targetRevision?{...record,voided:entry}:record);
-      return {ticket:current.ticket,ledger:{revision:entry.revision,records}};
+      return {...current,ledger:{revision:entry.revision,records}};
     });
   }
-  const {ticket,ledger}=view??{};
+  const {ticket,ledger,error}=current??{};
   const quote=ticket?.combo?.quote;
   const prices = new Map(Array.isArray(quote?.lines)?quote.lines.filter(Boolean).map(line=>[line.id,line.total]):[]);
-  return <details className="sheet returnReceipt">
+  return <details id="return-receipt" className="sheet returnReceipt" ref={panel}>
     <summary>匯出退餐試算收據</summary>
     <p>依餐號查詢原單計價與退餐試算登記。可下載原收據供離線核對。</p>
     <form onSubmit={lookup}>
       <label>取餐號碼<input type="text" inputMode="numeric" pattern="[0-9]+" required
         value={number} disabled={busy} onChange={event=>{
-          setNumber(event.target.value);setView(null);setError("");
+          setEntered(event.target.value);setRequested("");setView(null);
         }}/></label>
       <button className="outline" disabled={busy}>{busy?"查詢中…":"查詢計價明細"}</button>
     </form>
