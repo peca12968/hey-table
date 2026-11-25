@@ -1,4 +1,4 @@
-import {demoKitchen,stationLabels,stationReview} from "../lib/kitchen-timing.mjs";
+import {demoKitchen,stationLabels,stationReview,stationReviewDigest} from "../lib/kitchen-timing.mjs";
 import {payableForKitchen} from "./payment-api.mjs";
 
 function stationProgress(row) {
@@ -72,42 +72,71 @@ export async function finishStation(db,id,station) {
   return current.results[0];
 }
 
-export async function finishStationBatch(db,station,orders) {
-  const reviews=new Map(orders.map(({id,review})=>[id,review]));
+const batchReceiptSql=`SELECT operation_id AS operationId, station, order_ids AS orderIds,
+  recorded_at AS recordedAt, fingerprint FROM station_batch_receipts WHERE operation_id=?`;
+
+function batchReceipt({operationId,station,orderIds,recordedAt}){
+  const ids=JSON.parse(orderIds);
+  return {operationId,station,completed:ids.length,orderIds:ids,recordedAt};
+}
+
+export async function readStationBatch(db,operationId) {
+  const row=await db.prepare(batchReceiptSql).bind(operationId).first();
+  return row?batchReceipt(row):null;
+}
+
+export async function finishStationBatch(db,station,orders,operationId) {
+  const reviewed=await Promise.all(orders.map(async ({id,review})=>[id,operationId?review:await stationReviewDigest(review)]));
+  reviewed.sort(([a],[b])=>a-b);
+  const reviews=new Map(reviewed),ids=JSON.stringify([...reviews.keys()]);
+  const fingerprint=await stationReviewDigest(JSON.stringify([station,reviewed]));
+  const key=operationId??crypto.randomUUID(),writeId=crypto.randomUUID();
   const {results}=await db.prepare(`SELECT id,table_no,pickup_slot,note,items,station_progress
-    FROM orders WHERE id IN (SELECT value FROM json_each(?))`).bind(JSON.stringify([...reviews.keys()])).all();
-  if(results.length!==orders.length)return 0;
+    FROM orders WHERE id IN (SELECT value FROM json_each(?))`).bind(ids).all();
   const expected=[];
   for(const row of results){
     const progress=stationProgress(row),items=progress.groups[station];
-    if(!items||stationReview({table:row.table_no,pickupSlot:row.pickup_slot,note:row.note,items})!==reviews.get(row.id))
-      return 0;
+    if(!items)continue;
+    const review=stationReview({table:row.table_no,pickupSlot:row.pickup_slot,note:row.note,items});
+    if(await stationReviewDigest(review)!==reviews.get(row.id))continue;
     expected.push({id:row.id,table:row.table_no,slot:row.pickup_slot,note:row.note,
       items:row.items,group:JSON.stringify(items),initial:JSON.stringify(progress)});
   }
   const at=Date.now(),donePath="$.done."+station,groupPath="$.groups."+station;
-  // Freeze eligibility and the next progress for the entire selection before writing any row.
-  const {meta}=await db.prepare(`WITH expected AS (
-    SELECT value AS snapshot FROM json_each(?)
-  ), revised AS MATERIALIZED (
-    SELECT orders.id,json_set(COALESCE(station_progress,json_extract(snapshot,'$.initial')),?,CAST(? AS INTEGER)) AS progress
-    FROM orders JOIN expected ON orders.id=json_extract(snapshot,'$.id')
-    WHERE status='preparing' AND ${payableForKitchen}
-      AND table_no IS json_extract(snapshot,'$.table') AND pickup_slot IS json_extract(snapshot,'$.slot')
-      AND note IS json_extract(snapshot,'$.note') AND items=json_extract(snapshot,'$.items')
-      AND json_extract(COALESCE(station_progress,json_extract(snapshot,'$.initial')),?)=json(json_extract(snapshot,'$.group'))
-      AND json_type(station_progress,?) IS NULL
-  ), outcomes AS (
-    SELECT id,progress,NOT EXISTS (
-      SELECT 1 FROM json_each(progress,'$.groups') AS assigned
-      WHERE json_type(progress,'$.done.'||assigned.key) IS NULL
-    ) AS ready FROM revised
-  )
-  UPDATE orders SET station_progress=outcomes.progress,
-    status=CASE WHEN outcomes.ready THEN 'ready' ELSE orders.status END,
-    status_history=CASE WHEN outcomes.ready THEN json_insert(COALESCE(status_history,'[]'),'$[#]',
-      json_object('from','preparing','status','ready','at',?)) ELSE status_history END
-  FROM outcomes WHERE orders.id=outcomes.id AND (SELECT COUNT(*) FROM revised)=?`)
-    .bind(JSON.stringify(expected),donePath,at,groupPath,donePath,at,orders.length).run();
-  return meta.changes;
+  const snapshots=JSON.stringify(expected);
+  // The receipt claims all reviewed orders in the same transaction as their progress update.
+  // Only this transaction's new claim authorizes a write, including on a same-key retry.
+  const [,,saved]=await db.batch([
+    db.prepare(`WITH expected AS (SELECT value AS snapshot FROM json_each(?))
+      INSERT INTO station_batch_receipts (operation_id,write_id,station,fingerprint,order_ids,recorded_at)
+      SELECT ?,?,?,?,?,? WHERE (SELECT COUNT(*)
+        FROM orders JOIN expected ON orders.id=json_extract(snapshot,'$.id')
+        WHERE status='preparing' AND ${payableForKitchen}
+          AND table_no IS json_extract(snapshot,'$.table') AND pickup_slot IS json_extract(snapshot,'$.slot')
+          AND note IS json_extract(snapshot,'$.note') AND items=json_extract(snapshot,'$.items')
+          AND json_extract(COALESCE(station_progress,json_extract(snapshot,'$.initial')),?)=json(json_extract(snapshot,'$.group'))
+          AND json_type(station_progress,?) IS NULL)=?
+      ON CONFLICT(operation_id) DO NOTHING`)
+      .bind(snapshots,key,writeId,station,fingerprint,ids,at,groupPath,donePath,orders.length),
+    db.prepare(`WITH revised AS MATERIALIZED (
+      SELECT orders.id,json_set(COALESCE(station_progress,json_extract(expected.value,'$.initial')),?,CAST(? AS INTEGER)) AS progress
+      FROM station_batch_receipts receipt
+      JOIN json_each(?) AS expected
+      JOIN orders ON orders.id=json_extract(expected.value,'$.id')
+      WHERE receipt.operation_id=? AND receipt.write_id=?
+    ), outcomes AS (
+      SELECT id,progress,NOT EXISTS (
+        SELECT 1 FROM json_each(progress,'$.groups') AS assigned
+        WHERE json_type(progress,'$.done.'||assigned.key) IS NULL
+      ) AS ready FROM revised
+    )
+    UPDATE orders SET station_progress=outcomes.progress,
+      status=CASE WHEN outcomes.ready THEN 'ready' ELSE orders.status END,
+      status_history=CASE WHEN outcomes.ready THEN json_insert(COALESCE(status_history,'[]'),'$[#]',
+        json_object('from','preparing','status','ready','at',?)) ELSE status_history END
+    FROM outcomes WHERE orders.id=outcomes.id`).bind(donePath,at,snapshots,key,writeId,at),
+    db.prepare(batchReceiptSql).bind(key),
+  ]);
+  const row=saved.results[0];
+  return row?.fingerprint===fingerprint?batchReceipt(row):null;
 }

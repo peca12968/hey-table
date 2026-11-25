@@ -12,7 +12,7 @@ import {paymentPrime,openPaymentUrl} from "../lib/tappay-client.mjs";
 import {sqliteD1} from "../scripts/sqlite-d1.mjs";
 import {applyDemoMigrations} from "../scripts/apply-demo-migrations.mjs";
 import {bookablePickupSlots} from "../lib/pickup-slots.mjs";
-import {stationReview} from "../lib/kitchen-timing.mjs";
+import {stationReview,stationReviewDigest} from "../lib/kitchen-timing.mjs";
 
 const env={TAPPAY_MODE:"sandbox",TAPPAY_APP_ID:"123",TAPPAY_APP_KEY:"test-public",TAPPAY_PARTNER_KEY:"test-only",
   TAPPAY_SITE_ORIGIN:"https://order.example",TAPPAY_NOTIFY_URL:"https://notify.example/api/payments/notify"};
@@ -683,6 +683,48 @@ test("station batches reject stale and unpaid orders without writes and preserve
   assert.deepEqual(JSON.parse(row(two).status_history),[{from:"preparing",status:"ready",at:done.hot}]);
   assert.equal((await batch(current)).status,409);
 });
+test("station batch receipts survive same-key retries and roll back with order updates",async t=>{
+  const db=database();
+  t.after(()=>db.sqlite.close());
+  const runtime={DB:db,STAFF_KEY:"staff"};
+  const headers={Authorization:"Bearer staff","Content-Type":"application/json"};
+  const path="https://order.example/api/kitchen/station-work";
+  const call=(suffix,data,staff=headers)=>api(new Request(path+suffix,{
+    headers:staff,...(data?{method:"PATCH",body:JSON.stringify(data)}:{}),
+  }),runtime);
+  const insert=db.sqlite.prepare(`INSERT INTO orders(token,mode,note,items,total,created,status)
+    VALUES (?,'pickup','private batch fixture',?,190,?,'preparing')`);
+  for(let index=0;index<4;index++)insert.run(crypto.randomUUID(),
+    JSON.stringify([{id:"katsudon",name:"滑蛋豬排丼",qty:1}]),Date.now());
+  const queue=(await (await call("?station=hot")).json()).orders;
+  const reviews=await Promise.all(queue.map(async order=>({id:order.id,review:await stationReviewDigest(stationReview(order))})));
+  const payload={operationId:crypto.randomUUID(),station:"hot",orders:reviews.slice(0,2)};
+  const read="/batch?operationId="+payload.operationId;
+  assert.equal((await call(read,undefined,{})).status,403);
+  assert.equal((await call(read)).status,404);
+  db.sqlite.exec(`CREATE TRIGGER reject_second_batch_order BEFORE UPDATE ON orders WHEN NEW.id=${reviews[1].id}
+    BEGIN SELECT RAISE(ABORT, 'fixture late failure'); END`);
+  await assert.rejects(()=>call("/batch",payload),/fixture late failure/);
+  assert.equal((await call(read)).status,404);
+  assert.deepEqual(db.sqlite.prepare("SELECT DISTINCT status FROM orders").all().map(row=>row.status),["preparing"]);
+  db.sqlite.exec("DROP TRIGGER reject_second_batch_order");
+  const [first,retry]=await Promise.all([call("/batch",payload),call("/batch",{...payload,orders:[...payload.orders].reverse()})]);
+  assert.equal(first.status,200);
+  assert.equal(retry.status,200);
+  const receipt=await first.json();
+  assert.deepEqual(receipt,{operationId:payload.operationId,station:"hot",completed:2,
+    orderIds:reviews.slice(0,2).map(order=>order.id),recordedAt:receipt.recordedAt});
+  assert.equal(Number.isInteger(receipt.recordedAt),true);
+  assert.deepEqual(await retry.json(),receipt);
+  db.sqlite.prepare("UPDATE orders SET status='completed' WHERE id=?").run(reviews[0].id);
+  assert.deepEqual(await (await call(read)).json(),receipt);
+  assert.equal((await call("/batch",{...payload,orders:reviews.slice(2)})).status,409);
+  assert.equal(db.sqlite.prepare("SELECT COUNT(*) AS count FROM orders WHERE status='preparing'").get().count,2);
+  const persisted=db.sqlite.prepare("SELECT * FROM station_batch_receipts").all();
+  assert.equal(persisted.length,1);
+  assert.ok(!JSON.stringify(persisted).includes("private batch fixture"));
+});
+
 test("prep station views use saved assignments and group old stations without exposing order notes",async t=>{
   const db=database();
   t.after(()=>db.sqlite.close());

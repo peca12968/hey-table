@@ -1614,6 +1614,53 @@ test("overlapping station batches on D1 only finish one selected set",async({req
   expect((await queue()).filter(order=>ids.includes(order.id)&&order.doneAt!==null).map(order=>order.id)).toEqual(winning);
 });
 
+for(const saved of [true,false])test(`mobile station batch recovers after reload when the first write was ${saved?"committed":"lost"}`,async({page,request})=>{
+  const headers={Authorization:"Bearer local-test-kitchen"},url="/api/kitchen/station-work/batch";
+  const ids=[];
+  for(let index=0;index<2;index++){
+    const result=await request.post("/api/orders",{data:{mode:"pickup",token:randomUUID(),note:"測試備註勿留於分頁",
+      items:[{id:"katsudon",qty:1,note:"不要蔥"}]}});
+    expect(result.ok(),await result.text()).toBe(true);
+    const {id}=await result.json();
+    expect((await request.patch("/api/kitchen/status",{headers,data:{id,from:"pending",to:"preparing"}})).ok()).toBe(true);
+    ids.push(id);
+  }
+  await page.setViewportSize({width:360,height:780});
+  await page.addInitScript(()=>sessionStorage.setItem("he-ri-staff","local-test-kitchen"));
+  await page.goto("/kitchen/station-work");
+  for(const id of ids)await page.getByRole("checkbox",{name:"選取餐單 "+String(id).padStart(4,"0")}).check();
+  await page.getByRole("button",{name:/核對批次備妥/}).click();
+  let original;
+  await page.route("**"+url,async route=>{
+    original=route.request().postDataJSON();
+    if(saved)expect((await route.fetch()).status()).toBe(200);
+    await route.abort();
+  },{times:1});
+  await page.getByRole("button",{name:"確認 2 張本站已備妥"}).click();
+  const status=page.getByRole("status");
+  await expect(status).toHaveText("尚未收到批次結果。請查詢原批次。");
+  const serialized=await page.evaluate(()=>sessionStorage.getItem("he-ri-station-batch"));
+  expect(JSON.parse(serialized)).toEqual(original);
+  expect(serialized).not.toMatch(/測試備註勿留於分頁|不要蔥/);
+  await page.reload();
+  const pending=page.getByRole("region",{name:"待確認的熱台批次"});
+  await expect(pending).toBeVisible();
+  const lookup=page.waitForResponse(response=>response.url().includes(url+"?operationId="));
+  await pending.getByRole("button",{name:"查詢批次結果"}).click();
+  const found=await lookup;
+  expect(found.status()).toBe(saved?200:404);
+  if(!saved){
+    const repeat=page.waitForRequest(req=>new URL(req.url()).pathname===url&&req.method()==="PATCH");
+    await pending.getByRole("button",{name:"重送原批次"}).click();
+    expect((await repeat).postDataJSON()).toEqual(original);
+  }
+  await expect(status).toHaveText("熱台已回報 2 張餐單備妥。");
+  await expect(pending).toHaveCount(0);
+  expect(await page.evaluate(()=>sessionStorage.getItem("he-ri-station-batch"))).toBeNull();
+  if(saved)expect((await found.json()).orderIds).toEqual(ids);
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBe(360);
+});
+
 test("mobile prep can print and export the remaining items from one station snapshot",async({page,request})=>{
   await page.setViewportSize({width:360,height:780});
   await page.addInitScript(()=>sessionStorage.setItem("he-ri-staff","local-test-kitchen"));

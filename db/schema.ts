@@ -205,3 +205,12 @@ export const tableIntake = sqliteTable("table_intake", {
   check("table_intake_accepting", sql`${t.accepting} IN (0,1)`),
   check("table_intake_revision", sql`${t.revision} > 0`),
 ]);
+
+export const stationBatchReceipts = sqliteTable("station_batch_receipts", {
+  operationId: text("operation_id").primaryKey().notNull(),
+  writeId: text("write_id").notNull(),
+  station: text("station").notNull(),
+  fingerprint: text("fingerprint").notNull(),
+  orderIds: text("order_ids").notNull(),
+  recordedAt: integer("recorded_at").notNull(),
+});
