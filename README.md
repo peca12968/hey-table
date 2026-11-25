@@ -169,6 +169,8 @@ Stockroom 支援在一筆交易內保留多個 SKU。若其中一項缺貨，該
 
 結帳會保留顧客原選的付款方式。若下線，顧客可在同一份餐單改選可用方式，餐點、備註及取餐時段會一起保留。同一付款方式切換到另一個金流環境時，需確認目前環境後才能送出。伺服器在建立新餐單前核對前端確認的環境；已成立餐單以原識別碼重試仍可取回原收據。[付款環境與舊單重試測試](qa/tappay.test.mjs) · [手機結帳測試](qa/payments.spec.mjs)
 
+已送出的線上餐單若還在待接單、付款保留未到期，且從未開始付款嘗試，可在原收據確認改用現場付款。D1 在同一筆操作更新付款方式，保留餐號、品項、金額及預約時段，也記下原付款方式和變更時間。開始線上付款與改付現金只能先成立其中一項。接單等候時間從改付成功起算。[切換付款與並行測試](qa/tappay.test.mjs) · [手機收據與接單測試](qa/payments.spec.mjs)
+
 ## 送單時斷線，如何找回收據？
 
 在同一台裝置、同一個瀏覽器開啟「查詢餐單」，選取待確認的自取或桌號。也可以重新掃同一張桌牌。頁面會用上次送單的識別碼查詢廚房。若廚房已收到，直接開啟原收據。若尚未找到，可按「重試同一張訂單」沿用原本的品項、備註與識別碼送出。送單回覆超過 15 秒時，頁面會保留原餐單並立即查詢。查詢超過 10 秒時，可以按「重新查詢送單結果」，切回點餐頁或恢復連線也會重查。只有按下重試才會再次送單。
@@ -306,24 +308,16 @@ React、Vinext、Cloudflare Workers、D1 SQLite 與 Drizzle 遷移。訂單與�
 ```sh
 npm ci --include=optional
 npm run build
-node --import ./scripts/sites-env.mjs ./node_modules/wrangler/bin/wrangler.js d1 execute DB --local --config dist/server/wrangler.json --persist-to .wrangler/state --file drizzle/0000_fresh_white_tiger.sql
-node --import ./scripts/sites-env.mjs ./node_modules/wrangler/bin/wrangler.js d1 execute DB --local --config dist/server/wrangler.json --persist-to .wrangler/state --file drizzle/0001_online_payments.sql
-node --import ./scripts/sites-env.mjs ./node_modules/wrangler/bin/wrangler.js d1 execute DB --local --config dist/server/wrangler.json --persist-to .wrangler/state --file drizzle/0002_kitchen_queue_index.sql
-node --import ./scripts/sites-env.mjs ./node_modules/wrangler/bin/wrangler.js d1 execute DB --local --config dist/server/wrangler.json --persist-to .wrangler/state --file drizzle/0003_kitchen_timing_revisions.sql
-node --import ./scripts/sites-env.mjs ./node_modules/wrangler/bin/wrangler.js d1 execute DB --local --config dist/server/wrangler.json --persist-to .wrangler/state --file drizzle/0004_combo_pricing.sql
-node --import ./scripts/sites-env.mjs ./node_modules/wrangler/bin/wrangler.js d1 execute DB --local --config dist/server/wrangler.json --persist-to .wrangler/state --file drizzle/0005_order_intake.sql
-node --import ./scripts/sites-env.mjs ./node_modules/wrangler/bin/wrangler.js d1 execute DB --local --config dist/server/wrangler.json --persist-to .wrangler/state --file drizzle/0006_table_intake.sql
-node --import ./scripts/sites-env.mjs ./node_modules/wrangler/bin/wrangler.js d1 execute DB --local --config dist/server/wrangler.json --persist-to .wrangler/state --file drizzle/0007_receipt_progress.sql
-node --import ./scripts/sites-env.mjs ./node_modules/wrangler/bin/wrangler.js d1 execute DB --local --config dist/server/wrangler.json --persist-to .wrangler/state --file drizzle/0008_order_created_index.sql
-node --import ./scripts/sites-env.mjs ./node_modules/wrangler/bin/wrangler.js d1 execute DB --local --config dist/server/wrangler.json --persist-to .wrangler/state --file drizzle/0009_station_progress.sql
-node --import ./scripts/sites-env.mjs ./node_modules/wrangler/bin/wrangler.js d1 execute DB --local --config dist/server/wrangler.json --persist-to .wrangler/state --file drizzle/0010_daily_portion_limits.sql
-node --import ./scripts/sites-env.mjs ./node_modules/wrangler/bin/wrangler.js d1 execute DB --local --config dist/server/wrangler.json --persist-to .wrangler/state --file drizzle/0011_payment_hold_expiry.sql
-node --import ./scripts/sites-env.mjs ./node_modules/wrangler/bin/wrangler.js d1 execute DB --local --config dist/server/wrangler.json --persist-to .wrangler/state --file drizzle/0012_table_moves.sql
-node --import ./scripts/sites-env.mjs ./node_modules/wrangler/bin/wrangler.js d1 execute DB --local --config dist/server/wrangler.json --persist-to .wrangler/state --file drizzle/0013_staff_pickup_source.sql
-node --import ./scripts/sites-env.mjs ./node_modules/wrangler/bin/wrangler.js d1 execute DB --local --config dist/server/wrangler.json --persist-to .wrangler/state --file drizzle/0014_kitchen_payment_start.sql
-node --import ./scripts/sites-env.mjs ./node_modules/wrangler/bin/wrangler.js d1 execute DB --local --config dist/server/wrangler.json --persist-to .wrangler/state --file drizzle/0015_pickup_slots.sql
-node --import ./scripts/sites-env.mjs ./node_modules/wrangler/bin/wrangler.js d1 execute DB --local --config dist/server/wrangler.json --persist-to .wrangler/state --file drizzle/0016_pickup_changes.sql
-node --import ./scripts/sites-env.mjs ./node_modules/wrangler/bin/wrangler.js d1 execute DB --local --config dist/server/wrangler.json --persist-to .wrangler/state --file drizzle/0017_pickup_slot_limits.sql
+node --input-type=module -e '
+  import {execFileSync} from "node:child_process";
+  import {readFileSync} from "node:fs";
+  const journal = JSON.parse(readFileSync("drizzle/meta/_journal.json", "utf8"));
+  for (const {tag} of journal.entries) {
+    execFileSync(process.execPath, ["--import", "./scripts/sites-env.mjs", "./node_modules/wrangler/bin/wrangler.js",
+      "d1", "execute", "DB", "--local", "--config", "dist/server/wrangler.json",
+      "--persist-to", ".wrangler/state", "--file", "drizzle/" + tag + ".sql"], {stdio: "inherit"});
+  }
+'
 npm start
 ```
 

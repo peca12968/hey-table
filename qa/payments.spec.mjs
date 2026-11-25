@@ -4,6 +4,51 @@ import {readFile} from "node:fs/promises";
 import {businessDate} from "../lib/business-day.mjs";
 const staff={Authorization:"Bearer local-test-kitchen"};
 
+test("mobile receipt switches the original unpaid order to cash and recovers a lost switch response",async({page,request})=>{
+  await page.setViewportSize({width:360,height:780});
+  const token=randomUUID(),guest={"X-Ticket":token};
+  const payload={token,mode:"pickup",note:"原餐單保留",items:[{id:"sencha",qty:1}],paymentMethod:"line_pay",paymentEnv:"demo"};
+  const response=await request.post("/api/orders",{data:payload});
+  expect(response.ok()).toBe(true);
+  const original=await response.json();
+  const number="取餐號碼 "+String(original.id).padStart(4,"0");
+  const move=()=>request.patch("/api/kitchen/status",{headers:staff,data:{id:original.id,from:"pending",to:"preparing"}});
+  expect((await move()).status()).toBe(409);
+  let sent=0;
+  await page.route("**/api/payments/cash",async route=>{
+    sent++;
+    expect((await route.fetch()).ok()).toBe(true);
+    await route.abort("connectionreset");
+  });
+  await page.goto("/ticket#"+token);
+  await expect(page.getByRole("heading",{name:number})).toBeVisible();
+  const cash=page.getByRole("button",{name:"改用現場付款",exact:true});
+  await cash.click();
+  const confirm=page.getByRole("button",{name:"確認改用現場付款"});
+  await expect(confirm).toBeVisible();
+  await expect(page.getByRole("button",{name:/開始模擬付款/})).toBeDisabled();
+  await page.getByRole("button",{name:"保留線上付款"}).click();
+  expect(sent).toBe(0);
+  await cash.click();
+  await confirm.click();
+  await expect(page.getByText("已由 LINE Pay 改為現場付款。")).toBeVisible();
+  await expect(page.getByRole("heading",{name:number})).toBeVisible();
+  await expect(page.getByRole("region",{name:"線上付款"})).toHaveCount(0);
+  await expect(page.getByText(/付款保留至/)).toHaveCount(0);
+  expect(sent).toBe(1);
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBe(360);
+  const saved=await (await request.get("/api/ticket?progress=1",{headers:guest})).json();
+  expect(saved).toMatchObject({id:original.id,paymentMethod:"cash",paymentEnv:"cash",total:original.total,
+    cashPaymentChange:{fromMethod:"line_pay",fromEnvironment:"demo"}});
+  expect(saved.paymentDueAt).toBeUndefined();
+  expect(saved.cashReceipt).toBeUndefined();
+  expect((await (await request.post("/api/orders",{data:payload})).json()).id).toBe(original.id);
+  expect((await move()).ok()).toBe(true);
+  await page.reload();
+  await expect(page.getByRole("heading",{name:number})).toBeVisible();
+  await expect(page.getByText("已由 LINE Pay 改為現場付款。")).toBeVisible();
+});
+
 test("mobile checkout can replace an unavailable wallet without losing a future pickup or notes",async({page,request})=>{
   const day=businessDate(Date.now()+86400000),slot=Date.parse(day+"T14:00:00+08:00");
   const available={mode:"demo",methods:["cash","px_pay_plus"]};

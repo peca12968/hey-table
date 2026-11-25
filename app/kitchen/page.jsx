@@ -134,6 +134,7 @@ function KitchenTicket({order,busy,update,movePickup,recordCash,refresh,today,st
     <p>{Object.hasOwn(methods,paymentMethod)?methods[paymentMethod]:"付款方式未記錄"} {paymentMethod!=="cash"&&
       [environmentLabel(paymentEnv)||"環境未記錄",Object.hasOwn(paymentStates,paymentState)?paymentStates[paymentState]:"付款狀態未記錄"].join(" · ")}</p>
     {paymentReview&&paymentMethod==="cash"&&!order.cashReceipt&&<p>未登記現金</p>}
+    {order.cashPaymentChange&&<p className="muted">顧客已由 {methods[order.cashPaymentChange.fromMethod]} 改為現場付款。</p>}
     <div className="total"><span>合計</span><b>NT$ {total}</b></div>
     {paymentMethod==="cash"&&["ready","completed"].includes(status)&&
       <CashCollection order={order} disabled={busy} submit={recordCash} onChange={refresh}/>}

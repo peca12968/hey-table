@@ -154,6 +154,7 @@ export default function Ticket(){
     <ul className="orderLines">{order.items.map(d=><li key={d.id}><div><b>{d.name} × {d.qty}</b><ItemNote note={d.note}/></div><span>NT$ {d.price*d.qty}</span></li>)}</ul>
     {order.combo&&<p>餐點原價 NT$ {order.combo.quote.subtotal} · 套餐折抵 NT$ {order.combo.quote.discount}</p>}
     {order.note&&<p>備註　{order.note}</p>}<div className="total"><span>{methods[order.paymentMethod]}</span><b>NT$ {order.total}</b></div>
+    {order.cashPaymentChange&&<p role="status">已由 {methods[order.cashPaymentChange.fromMethod]} 改為現場付款。</p>}
     {order.cashReceipt&&<CashReceipt record={order.cashReceipt}/>}
     <TextDownload key={"order-details-"+route.token} kind="order" token={route.token} id={order.id}/>
     {order.paymentMethod!=="cash"&&!closedBeforePayment&&<Payment key={"payment-"+route.token} order={order} token={route.token} onChange={refreshReceipt}/>}

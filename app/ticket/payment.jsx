@@ -24,12 +24,14 @@ export default function Payment({order,token,onChange}){
   const [ready,setReady]=useState(false),[buyer,setBuyer]=useState({name:"",phone_number:"",email:""});
   const lock=useRef(false),actionVersion=useRef(0),current=useRef(order.paymentState);
   const [checkError,setCheckError]=useState("");
+  const [checked,setChecked]=useState(false),[confirmCash,setConfirmCash]=useState(false),[cashConfirmed,setCashConfirmed]=useState(false);
   const demo=order.paymentEnv==="demo",card=order.paymentMethod==="card";
   const state=order.paymentState==="refunded"?"refunded":attempt?.state??order.paymentState;
   const canStart=["unpaid","failed","cancelled"].includes(state) && order.status==="pending";
-  const send=useCallback((path,body={})=>request("/api/payments/"+path,{method:"POST",
-    headers:{"Content-Type":"application/json","X-Ticket":token},body:JSON.stringify(body)}),[token]);
-  const receive=useCallback(a=>{setAttempt(a);if(a && a.state!==current.current)onChange();},[onChange]);
+  const canChangeToCash=checked&&!attempt&&state==="unpaid"&&order.status==="pending";
+  const send=useCallback((path,body={},signal)=>request("/api/payments/"+path,{method:"POST",
+    headers:{"Content-Type":"application/json","X-Ticket":token},body:JSON.stringify(body),signal}),[token]);
+  const receive=useCallback(a=>{setAttempt(a);setChecked(true);if(a && a.state!==current.current)onChange();},[onChange]);
   useEffect(()=>{current.current=order.paymentState;},[order.paymentState]);
   useEffect(()=>{
     let live=true,checking=false;
@@ -85,12 +87,22 @@ export default function Payment({order,token,onChange}){
       let body={};
       if(action==="start" && !demo)body={prime:await paymentPrime(window.TPDirect,order.paymentMethod),buyer};
       if(action==="demo")body={ref:attempt.ref,outcome};
-      const {attempt:a}=await send(action,body);
+      const reply=await send(action,body,action==="cash"?AbortSignal.timeout(15000):undefined);
+      if(action==="cash"){
+        setCashConfirmed(true);
+        onChange();
+        return;
+      }
+      const a=reply.attempt;
       receive(a);
       if(action==="start" && a?.redirect)redirect(a);
-    }catch(e){setError(e.message);if(e.status===409)onChange();}finally{lock.current=false;setBusy(false);}
+    }catch(e){
+      setError(action==="cash"&&!e.status?"目前無法確認付款變更，可更新收據或再試一次。":e.message);
+      if(e.status===409||action==="cash")onChange();
+    }finally{lock.current=false;setBusy(false);}
   }
   const name=methods[order.paymentMethod];
+  if(cashConfirmed)return <p role="status">已改用現場付款，正在更新收據。</p>;
   return <section className="payBox" aria-label="線上付款"><h2>{name}</h2>
     <p>{environmentLabel(order.paymentEnv)} · <strong role="status">{paymentStates[state]}</strong></p>
     {demo&&state==="refunded"&&<DemoRefund order={order} token={token}/>}
@@ -99,7 +111,14 @@ export default function Payment({order,token,onChange}){
         <label>手機號碼<input required type="tel" pattern="[+]?[0-9]{8,15}" autoComplete="tel" value={buyer.phone_number} onChange={e=>setBuyer({...buyer,phone_number:e.target.value})}/></label>
         <label>電子郵件<input required type="email" autoComplete="email" maxLength={40} value={buyer.email} onChange={e=>setBuyer({...buyer,email:e.target.value})}/></label>
         {card&&<fieldset><legend>信用卡資料</legend>{[["number","卡號"],["expiry","有效期限"],["ccv","安全碼"]].map(([id,label])=><div key={id}>{label}<div className="payField" id={"pay-"+id}/></div>)}</fieldset>}</>}
-      <button className="primary" disabled={busy||(!demo&&!ready)}>{demo?"開始模擬付款":"前往付款"} · NT$ {order.total}</button></form>}
+      <button className="primary" disabled={busy||(canChangeToCash&&confirmCash)||(!demo&&!ready)}>{demo?"開始模擬付款":"前往付款"} · NT$ {order.total}</button></form>}
+    {canChangeToCash&&(confirmCash?<div className="supplyReview">
+      <p>保留原餐單，改到現場支付 NT$ {order.total}。</p>
+      <div className="actions">
+        <button className="outline" disabled={busy} onClick={()=>{setConfirmCash(false);setError("");}}>保留線上付款</button>
+        <button className="outline" disabled={busy} onClick={()=>act("cash")}>{busy?"正在變更…":"確認改用現場付款"}</button>
+      </div>
+    </div>:<button className="outline" disabled={busy} onClick={()=>{setConfirmCash(true);setError("");}}>改用現場付款</button>)}
     {state==="pending"&&attempt&&demo&&<div className="actions">{[["paid","模擬付款成功"],["failed","模擬付款失敗"],["cancelled","模擬取消"]].map(([s,label])=><button className="outline" key={s} disabled={busy} onClick={()=>act("demo",s)}>{label}</button>)}</div>}
     {!demo&&state==="pending"&&attempt?.redirect&&<button className="primary" disabled={busy} onClick={()=>redirect(attempt)}>繼續原付款</button>}
     {!demo&&attempt&&<button className="outline" disabled={busy} onClick={()=>act("check")}>向金流查詢狀態</button>}

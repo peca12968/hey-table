@@ -6,7 +6,7 @@ const taipeiTime=new Intl.DateTimeFormat("zh-TW",{timeZone:"Asia/Taipei",dateSty
 const amount=value=>"NT$ "+value;
 
 export function orderDetailsText(order,capturedAt){
-  const {id,mode,table,status,created,pickupSlot,items,total,paymentMethod,paymentState,paymentEnv,cashReceipt,demoRefund,combo}=order;
+  const {id,mode,table,status,created,pickupSlot,items,total,paymentMethod,paymentState,paymentEnv,cashReceipt,cashPaymentChange,demoRefund,combo}=order;
   const payment=paymentMethod==="cash"?(cashReceipt?"已登記現金收款":"未登記現金收款"):
     paymentStates[paymentState]??"未記錄";
   const environment=environmentLabel(paymentEnv);
@@ -16,6 +16,7 @@ export function orderDetailsText(order,capturedAt){
     `用餐方式 ${dining}`,
     ...(pickupSlot==null?[]:[`預約取餐 ${datedPickupWindow(pickupSlot)}`]),
     `付款方式 ${methods[paymentMethod]??"未記錄"}`,`付款狀態 ${payment}`,
+    ...(cashPaymentChange?[`付款變更（台灣） ${taipeiTime.format(cashPaymentChange.changedAt)} 由 ${methods[cashPaymentChange.fromMethod]} 改為現場付款`]:[]),
     ...(environment?[`付款環境 ${environment}`]:[]),"","餐點明細"];
   for(const {id:itemId,name,price,qty} of items){
     const label=String(name??itemId??"餐點").replace(/\s+/gu," ").trim()||"餐點";

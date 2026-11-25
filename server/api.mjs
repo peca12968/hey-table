@@ -69,6 +69,7 @@ function receipt(row) {
     ...(row.mode==="pickup"&&row.pickup_arrived_at!=null ? {pickupArrivedAt:row.pickup_arrived_at} : {}),
     ...(row.combo_quote ? {combo:JSON.parse(row.combo_quote)} : {}),
     ...(row.cash_receipt ? {cashReceipt:JSON.parse(row.cash_receipt)} : {}),
+    ...(row.cash_payment_change ? {cashPaymentChange:JSON.parse(row.cash_payment_change)} : {}),
     paymentMethod:row.payment_method,paymentEnv:row.payment_env,paymentState:row.payment_state??'unpaid',total:row.total, status:row.status, created:row.created};
 }
 function kitchenOrder(row,capturedAt){
@@ -547,7 +548,8 @@ export async function api(request, env) {
       order.items.some(item => item.id === line.id && item.qty === line.qty && (item.note??"")===(line.note??"")));
     if ((row.source??null)!==source || (!staffPickup && saved.combo?.version !== input.comboVersion) ||
         ((selected||staffPickup) && saved.total !== input.expectedTotal) ||
-        row.payment_method!==method || (expectedEnv!==undefined&&row.payment_env!==expectedEnv) ||
+        (saved.cashPaymentChange?.fromMethod??row.payment_method)!==method ||
+        (expectedEnv!==undefined&&(saved.cashPaymentChange?.fromEnvironment??row.payment_env)!==expectedEnv) ||
         row.mode!==order.mode || submittedTable!==order.table || row.note!==order.note ||
         submittedSlot!==order.pickupSlot || !sameItems)
       return fail("送單識別碼已用於另一張訂單",409);

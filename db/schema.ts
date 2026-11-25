@@ -16,6 +16,7 @@ export const orders = sqliteTable("orders", {
   paymentMethod: text("payment_method").notNull().default("cash"),
   paymentEnv: text("payment_env").notNull().default("cash"),
   paymentDueAt: integer("payment_due_at"),
+  cashPaymentChange: text("cash_payment_change"),
   comboQuote: text("combo_quote"),
   total: integer("total").notNull(),
   status: text("status").notNull().default("pending"),

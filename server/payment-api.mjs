@@ -10,6 +10,23 @@ const publicAttempt=a=>a&&({ref:a.reference,state:a.state,redirect:a.state==="pe
 const latest=(db,id)=>db.prepare("SELECT * FROM payment_attempts WHERE order_id=? ORDER BY id DESC LIMIT 1").bind(id).first();
 const transitions={pending:["pending","authorized","paid","failed","cancelled","partial","refunded"],
   authorized:["authorized","paid","cancelled","partial","refunded"],paid:["paid","partial","refunded"],partial:["partial","refunded"]};
+async function switchToCash(db,token,now){
+  const [,,current]=await db.batch([
+    expirePaymentHolds(db,now,token),
+    db.prepare(`UPDATE orders SET
+      cash_payment_change=json_object('fromMethod',payment_method,'fromEnvironment',payment_env,'changedAt',?),
+      payment_method='cash',payment_env='cash',payment_due_at=NULL
+      WHERE token=? AND status='pending' AND payment_method<>'cash'
+      AND (payment_due_at IS NULL OR payment_due_at>?)
+      AND NOT EXISTS(SELECT 1 FROM payment_attempts WHERE order_id=orders.id)`).bind(now,token,now),
+    db.prepare("SELECT id,payment_method,cash_payment_change FROM orders WHERE token=?").bind(token),
+  ]);
+  const row=current.results[0];
+  if(!row)return fail("找不到餐單",404);
+  if(row.payment_method!=="cash"||!row.cash_payment_change)return fail("付款已開始或餐單已更新，請重新核對收據。",409);
+  return result({id:row.id,paymentMethod:"cash",cashPaymentChange:JSON.parse(row.cash_payment_change)});
+}
+
 async function reconcile(env,order,a) {
   if(!a)return {outcome:"noAttempt"};
   if(!["sandbox","production"].includes(order.payment_env)||env.TAPPAY_MODE!==order.payment_env)return {outcome:"unavailable"};
@@ -93,6 +110,7 @@ export async function paymentApi(path,request,env,input) {
   }
   const token=request.headers.get("X-Ticket");
   if(!token || token.length!==36)return fail("找不到餐單",404);
+  if(path==="/api/payments/cash")return switchToCash(db,token,Date.now());
   if(path==="/api/payments/start")await expirePaymentHolds(db,Date.now(),token).run();
   const order=await db.prepare("SELECT * FROM orders WHERE token=?").bind(token).first();
   if(!order || order.payment_method==="cash")return fail("找不到線上付款餐單",404);
@@ -119,16 +137,18 @@ export async function paymentApi(path,request,env,input) {
   const claimedAt=Date.now();
   const claimed=await db.prepare(`INSERT INTO payment_attempts(order_id,reference,merchant,created)
     SELECT id,?,?,? FROM orders WHERE id=? AND status='pending'
+    AND payment_method=? AND payment_env=?
     AND (payment_due_at IS NULL OR payment_due_at>?)
     AND COALESCE(${latestState},'unpaid') IN ('unpaid','failed','cancelled')`)
-    .bind(ref,demo?"demo":merchantFor(env,order.payment_method),claimedAt,order.id,claimedAt).run();
+    .bind(ref,demo?"demo":merchantFor(env,order.payment_method),claimedAt,order.id,order.payment_method,order.payment_env,claimedAt).run();
   attempt=await latest(db,order.id);
   if(!claimed.meta.changes){
     const [,current]=await db.batch([
       expirePaymentHolds(db,claimedAt,token),
-      db.prepare("SELECT status FROM orders WHERE id=?").bind(order.id),
+      db.prepare("SELECT status,payment_method FROM orders WHERE id=?").bind(order.id),
     ]);
     const row=current.results[0];
+    if(row?.payment_method==="cash")return fail("餐單已改用現場付款",409);
     return row?.status==="cancelled"?fail("餐單已取消",409):result({attempt:publicAttempt(attempt)});
   }
   if(demo || !attempt || attempt.reference!==ref)return result({attempt:publicAttempt(attempt)});

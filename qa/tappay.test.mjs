@@ -103,6 +103,113 @@ test("order submission rejects changed payment options without creating an order
   assert.equal(db.sqlite.prepare("SELECT COUNT(*) AS count FROM orders").get().count,2);
 });
 
+test("changing an untouched payment to cash preserves the booked order and original submission identity",async t=>{
+  const db=database();
+  t.after(()=>db.sqlite.close());
+  let now=Date.parse("2026-11-25T12:00:00+08:00");
+  t.mock.method(Date,"now",()=>now);
+  const runtime={DB:db,STAFF_KEY:"fixture-staff"};
+  const pickupSlot=Date.parse("2026-11-26T12:00:00+08:00");
+  const order={token:crypto.randomUUID(),mode:"pickup",pickupSlot,paymentMethod:"line_pay",paymentEnv:"demo",
+    note:"原餐單備註",items:[{id:"sencha",qty:1,note:"原單品備註"}]};
+  const send=(path,body={},token=order.token)=>api(new Request("https://order.example/api/"+path,{method:"POST",
+    headers:{"Content-Type":"application/json","X-Ticket":token},body:JSON.stringify(body),
+  }),runtime);
+  const read=(path,headers)=>api(new Request("https://order.example/api/"+path,{headers}),runtime);
+  const guest={"X-Ticket":order.token},staff={Authorization:"Bearer fixture-staff"};
+  const original=await (await send("orders",order)).json();
+  const before=await (await read("ticket?progress=1",guest)).json();
+  assert.equal(before.paymentDueAt,now+900_000);
+  assert.equal((await send("payments/cash",{},crypto.randomUUID())).status,404);
+  now+=600_000;
+  const changed=now;
+  const [a,b]=await Promise.all(Array.from({length:2},()=>send("payments/cash")));
+  assert.equal(a.status,200);
+  assert.equal(b.status,200);
+  const cashPaymentChange={fromMethod:"line_pay",fromEnvironment:"demo",changedAt:changed};
+  const confirmation={id:original.id,paymentMethod:"cash",cashPaymentChange};
+  assert.deepEqual(await a.json(),confirmation);
+  assert.deepEqual(await b.json(),confirmation);
+  now+=1_800_000;
+  assert.deepEqual(await (await send("payments/cash")).json(),confirmation);
+  const ticket=await (await read("ticket?progress=1",guest)).json();
+  assert.equal(ticket.paymentDueAt,undefined);
+  assert.equal(ticket.cashReceipt,undefined);
+  assert.equal(ticket.pickupSlot,pickupSlot);
+  assert.equal(ticket.status,"pending");
+  assert.deepEqual(await (await send("orders",order)).json(),{...original,paymentMethod:"cash",paymentEnv:"cash",cashPaymentChange});
+  assert.equal((await send("orders",{...order,paymentMethod:"cash"})).status,409);
+  assert.equal((await send("payments/start")).status,404);
+  const booked=await (await read("kitchen/pickup-booking?id="+original.id,staff)).json();
+  assert.equal(booked.pickupSlot,pickupSlot);
+  assert.equal(booked.paymentMethod,"cash");
+  const receipt=await (await read("ticket/order-details",guest)).text();
+  assert.match(receipt,/由 LINE Pay 改為現場付款/);
+  assert.ok(!receipt.includes(order.token));
+  assert.equal(db.sqlite.prepare("SELECT COUNT(*) AS n FROM orders").get().n,1);
+  assert.equal(db.sqlite.prepare("SELECT COUNT(*) AS n FROM payment_attempts").get().n,0);
+  const immediate={...order,token:crypto.randomUUID(),pickupSlot:undefined};
+  const added=await (await send("orders",immediate)).json();
+  now+=600_000;
+  assert.equal((await send("payments/cash",{},immediate.token)).status,200);
+  const queue=async()=>(await (await read("kitchen",staff)).json()).find(row=>row.id===added.id);
+  assert.equal((await queue()).overdue,undefined);
+  now+=300_000;
+  assert.deepEqual((await queue()).overdue,{elapsedMs:300_000,overByMs:0});
+});
+
+test("cash conversion and starting payment exclude each other at the database write",async t=>{
+  const db=database();
+  t.after(()=>db.sqlite.close());
+  let now=Date.parse("2026-11-25T12:00:00+08:00");
+  t.mock.method(Date,"now",()=>now);
+  const runtime={DB:db};
+  const send=(path,token,body={},db=runtime.DB)=>api(new Request("https://order.example/api/"+path,{method:"POST",
+    headers:{"Content-Type":"application/json","X-Ticket":token},body:JSON.stringify(body),
+  }),{...runtime,DB:db});
+  const place=async()=>{
+    const token=crypto.randomUUID();
+    const response=await send("orders",token,{token,mode:"pickup",note:"",items:[{id:"sencha",qty:1}],paymentMethod:"px_pay_plus"});
+    assert.equal(response.status,200);
+    return token;
+  };
+  const first=await place();
+  const attempt=(await (await send("payments/start",first)).json()).attempt;
+  assert.equal((await send("payments/cash",first)).status,409);
+  assert.equal((await send("payments/demo",first,{ref:attempt.ref,outcome:"failed"})).status,200);
+  assert.equal((await send("payments/cash",first)).status,409);
+  const second=await place();
+  let raced=false;
+  const interleaved={...db,prepare(sql){
+    const statement=db.prepare(sql);
+    if(!sql.startsWith("INSERT INTO payment_attempts"))return statement;
+    return {...statement,bind(...args){
+      const bound=statement.bind(...args);
+      return {...bound,async run(){
+        raced=true;
+        assert.equal((await send("payments/cash",second)).status,200);
+        return bound.run();
+      }};
+    }};
+  }};
+  const lateStart=await send("payments/start",second,{},interleaved);
+  assert.equal(raced,true);
+  assert.equal(lateStart.status,409);
+  assert.deepEqual(await lateStart.json(),{error:"餐單已改用現場付款"});
+  const counts=token=>db.sqlite.prepare(`SELECT payment_method,payment_due_at,status,
+    (SELECT count(*) FROM payment_attempts WHERE order_id=orders.id) AS attempts FROM orders WHERE token=?`).get(token);
+  assert.equal(counts(first).attempts,1);
+  assert.equal(counts(second).attempts,0);
+  assert.equal(counts(second).payment_method,"cash");
+  assert.equal(counts(second).payment_due_at,null);
+  const timed=await place(),legacy=await place();
+  db.sqlite.prepare("UPDATE orders SET payment_due_at=NULL WHERE token=?").run(legacy);
+  now+=900_000;
+  assert.equal((await send("payments/cash",timed)).status,409);
+  assert.equal(counts(timed).status,"cancelled");
+  assert.equal((await send("payments/cash",legacy)).status,200);
+});
+
 test("staff payment lookup distinguishes verified records, missing attempts, mode, retries and failures",async t=>{
   const db=database();
   t.after(()=>db.sqlite.close());

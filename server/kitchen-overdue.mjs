@@ -10,7 +10,7 @@ export function kitchenOverdue(row,order,capturedAt){
   if(!limit||!canPrepare(order))return null;
   let startedAt;
   if(order.status==="pending"){
-    startedAt=order.paymentMethod==="cash"?row.created:row.kitchen_payable_at;
+    startedAt=order.paymentMethod==="cash"?(order.cashPaymentChange?.changedAt??row.created):row.kitchen_payable_at;
   }else{
     try{
       const last=JSON.parse(row.status_history??"[]").at(-1);

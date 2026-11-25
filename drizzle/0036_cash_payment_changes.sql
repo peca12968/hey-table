@@ -1,0 +1,1 @@
+ALTER TABLE `orders` ADD `cash_payment_change` text;
