@@ -96,22 +96,25 @@ export async function pickupSlotLimits(db,date,now){
   return {intake:{accepting,revision,editable:editable.size>0},slots:slots.map(slot=>({...slot,editable:editable.has(slot.start)}))};
 }
 
-export async function savePickupSlotLimits(db,date,slots,kind,now,restoredFromId=null){
+export async function savePickupSlotLimits(db,date,slots,kind,now,{restoredFromId=null,sourceDate=null}={}){
   const operation=crypto.randomUUID();
   const [,saved]=await db.batch([db.prepare(`WITH plan AS MATERIALIZED (
     SELECT json_extract(chosen.value,'$.start') AS start,
-      json_extract(chosen.value,'$.revision') AS expectedRevision,json_extract(chosen.value,'$.capacity') AS capacity,
-      COALESCE(limits.revision,0) AS actualRevision,limits.capacity AS previousCapacity
+      json_extract(chosen.value,'$.revision') AS expectedRevision,
+      CASE WHEN ? IS NULL THEN json_extract(chosen.value,'$.capacity') ELSE source.capacity END AS capacity,
+      COALESCE(limits.revision,0) AS actualRevision,limits.capacity AS previousCapacity,
+      (? IS NULL OR COALESCE(source.revision,0)=json_extract(chosen.value,'$.sourceRevision')) AS sourceMatches
     FROM json_each(?) AS chosen
     LEFT JOIN pickup_slot_limits AS limits ON limits.start=json_extract(chosen.value,'$.start')
+    LEFT JOIN pickup_slot_limits AS source ON source.start=json_extract(chosen.value,'$.sourceStart')
     ORDER BY start
   )
-  INSERT INTO pickup_limit_events(operation_id,date,changed_at,kind,restored_from_id,changes)
-    SELECT ?,?,?,?,?,json_group_array(json_object('start',start,'previousCapacity',previousCapacity,
+  INSERT INTO pickup_limit_events(operation_id,date,changed_at,kind,restored_from_id,source_date,changes)
+    SELECT ?,?,?,?,?,?,json_group_array(json_object('start',start,'previousCapacity',previousCapacity,
       'capacity',capacity,'revision',actualRevision+1)) FROM plan
-    HAVING count(*)>0 AND count(*)=sum(actualRevision=expectedRevision)
+    HAVING count(*)>0 AND count(*)=sum(actualRevision=expectedRevision AND sourceMatches)
       AND (? IS NULL OR sum(previousCapacity IS NOT capacity)>0)`)
-    .bind(JSON.stringify(slots),operation,date,now,kind,restoredFromId,restoredFromId),
+    .bind(sourceDate,sourceDate,JSON.stringify(slots),operation,date,now,kind,restoredFromId,sourceDate,restoredFromId??sourceDate),
   db.prepare(`INSERT INTO pickup_slot_limits(start,capacity,revision)
     SELECT json_extract(chosen.value,'$.start'),json_extract(chosen.value,'$.capacity'),json_extract(chosen.value,'$.revision')
     FROM pickup_limit_events AS event JOIN json_each(event.changes) AS chosen WHERE event.operation_id=?
@@ -140,11 +143,12 @@ export async function savePickupDay(db,date,accepting,revision,now,restoredFromI
 
 export async function pickupLimitHistory(db,date,before){
   const size=25;
-  const {results}=await db.prepare(`SELECT id,kind,changed_at AS changedAt,restored_from_id AS restoredFromId,changes FROM pickup_limit_events
+  const {results}=await db.prepare(`SELECT id,kind,changed_at AS changedAt,restored_from_id AS restoredFromId,
+    source_date AS sourceDate,changes FROM pickup_limit_events
     WHERE date=? ${before===null?"":"AND id<?"} ORDER BY id DESC LIMIT ?`)
     .bind(date,...(before===null?[]:[before]),size+1).all();
-  const events=results.slice(0,size).map(({restoredFromId,changes,...event})=>({
-    ...event,...(restoredFromId===null?{}:{restoredFromId}),changes:JSON.parse(changes),
+  const events=results.slice(0,size).map(({restoredFromId,sourceDate,changes,...event})=>({
+    ...event,...(restoredFromId===null?{}:{restoredFromId}),...(sourceDate===null?{}:{sourceDate}),changes:JSON.parse(changes),
   }));
   return {date,events,nextBefore:results.length>size?events.at(-1).id:null};
 }

@@ -211,6 +211,13 @@
       "when": 1795582093382,
       "tag": "0029_pickup_limit_restore_sources",
       "breakpoints": true
+    },
+    {
+      "idx": 30,
+      "version": "6",
+      "when": 1795582723844,
+      "tag": "0030_pickup_limit_copy_sources",
+      "breakpoints": true
     }
   ]
 }

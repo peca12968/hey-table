@@ -1453,6 +1453,62 @@ test("restore pickup history uses original values and rejects stale, expired and
     changes:[{previousAccepting:false,accepting:true,revision:2}]});
 });
 
+test("copy pickup limits checks both dates and records mixed capacities without touching bookings",async t=>{
+  const date="2026-11-25",sourceDate="2026-11-24",first=Date.parse(date+"T12:00:00+08:00"),second=first+900_000;
+  const sourceSecond=second-86_400_000,db=database();
+  t.after(()=>db.sqlite.close());
+  let now=first-75*60_000;
+  t.mock.method(Date,"now",()=>now);
+  const runtime={DB:db,STAFF_KEY:"fixture-staff"},staff={Authorization:"Bearer fixture-staff"};
+  const call=(path,options)=>api(new Request("https://order.example/api/"+path,options),runtime);
+  const send=(path,input,method="PATCH",headers=staff)=>call(path,{
+    method,headers:{...headers,"Content-Type":"application/json"},body:JSON.stringify(input),
+  });
+  const copy=(slots,extra={},headers=staff)=>send("kitchen/pickup-slots/copy",{date,sourceDate,slots,...extra},"PATCH",headers);
+  const get=async(path,headers=staff)=>(await (await call(path,{headers})).json());
+  const history=()=>get("kitchen/pickup-slots/history?date="+date);
+  const limits=()=>get("kitchen/pickup-slots?date="+date);
+  const setSource=db.sqlite.prepare("INSERT INTO pickup_slot_limits VALUES (?,?,?)");
+  setSource.run(sourceSecond,0,1);
+  db.sqlite.prepare("INSERT INTO pickup_day_intake VALUES (?,0,1)").run(sourceDate);
+  assert.equal((await send("kitchen/pickup-slots",{date,start:first,revision:0,capacity:5})).status,200);
+  const token=crypto.randomUUID();
+  assert.equal((await send("orders",{token,mode:"pickup",note:"",pickupSlot:second,items:[{id:"sencha",qty:2}]},"POST",{})).status,200);
+  const slots=[{start:second,revision:0,sourceRevision:1},{start:first,revision:1,sourceRevision:0}];
+  assert.equal((await copy(slots,{},{})).status,403);
+  assert.equal((await copy(slots,{sourceDate:date})).status,400);
+  assert.equal((await copy([slots[0],slots[0]])).status,400);
+  assert.equal((await copy([{...slots[0],start:sourceSecond}])).status,400);
+  const baseline=await limits();
+  for(const stale of [[{...slots[0],sourceRevision:0},slots[1]],[slots[0],{...slots[1],revision:0}]]){
+    assert.equal((await copy(stale)).status,409);
+    assert.deepEqual(await limits(),baseline);
+  }
+  now=first-29*60_000;
+  assert.equal((await copy(slots)).status,409);
+  now=first-50*60_000;
+  assert.equal((await history()).events.length,1);
+  const [one,two]=await Promise.all([copy(slots),copy(slots)]);
+  assert.deepEqual([one.status,two.status].sort(),[200,409]);
+  assert.deepEqual(await (one.ok?one:two).json(),{date,sourceDate,slots:[
+    {start:first,capacity:null,revision:2},{start:second,capacity:0,revision:1},
+  ]});
+  const after=await limits();
+  assert.deepEqual(after.intake,baseline.intake);
+  assert.deepEqual(after.slots.find(slot=>slot.start===second),{start:second,end:second+900_000,capacity:0,used:2,remaining:0,revision:1,editable:true});
+  assert.equal((await get("ticket",{"X-Ticket":token})).pickupSlot,second);
+  const {events}=await history();
+  assert.deepEqual(events[0],{id:2,kind:"batch",sourceDate,changedAt:now,changes:[
+    {start:first,previousCapacity:5,capacity:null,revision:2},{start:second,previousCapacity:null,capacity:0,revision:1},
+  ]});
+  assert.equal((await copy([{...slots[0],revision:1},{...slots[1],revision:2}])).status,409);
+  const restored=await send("kitchen/pickup-slots/restore",{date,fromId:events[0].id,slots:events[0].changes});
+  assert.deepEqual(await restored.json(),{date,restoredFromId:2,slots:[
+    {start:first,capacity:5,revision:3},{start:second,capacity:null,revision:2},
+  ]});
+  assert.equal((await get("kitchen/pickup-slots?date="+sourceDate)).slots.find(slot=>slot.start===sourceSecond).capacity,0);
+});
+
 test("authorized staff can close, raise and reset an individual slot without displacing bookings",async t=>{
   const db=database();
   t.after(()=>db.sqlite.close());

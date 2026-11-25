@@ -26,3 +26,9 @@
 .historyRestoreButton{margin-top:8px;min-height:42px}
 .pickupRestore{margin-top:10px;padding:10px;border:1px solid var(--line);border-radius:8px}
 .pickupRestore h4,.pickupRestore p{margin:0 0 6px}.pickupRestore ul{margin-bottom:6px}.pickupRestore .actions{gap:8px}
+.copySlotLimits{margin-bottom:14px}.copySlotLimits summary{font-weight:700;cursor:pointer}
+.copySlotLimits form{margin-top:12px}.copySlotLimits ul{list-style:none;padding:0;margin:8px 0}
+.copySlotLimits li{border-bottom:1px solid var(--line)}
+.copySlotLimits li label{display:flex;gap:8px;align-items:flex-start;padding:8px 0}
+.copySlotLimits li label span{display:grid;gap:2px}.copySlotLimits li small{color:var(--muted)}
+.copySlotLimits input[type=checkbox]{width:1rem;height:1rem;accent-color:var(--green)}

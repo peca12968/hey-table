@@ -347,6 +347,23 @@ export async function api(request, env) {
       return fail("請確認取餐日期與紀錄查詢範圍。");
     return json(await pickupLimitHistory(db,date,before));
   }
+  if(path==="/api/kitchen/pickup-slots/copy"&&method==="PATCH"){
+    const {date,sourceDate,slots}=input;
+    const range=businessDayRange(date),sourceRange=businessDayRange(sourceDate);
+    if(!range||!sourceRange||date===sourceDate)return fail("請選擇有效且不同的來源與目的日期。");
+    const allowed=new Set(pickupSlotsForDay(date));
+    if(!Array.isArray(slots)||!slots.length||slots.length>allowed.size||
+      slots.some(slot=>!slot||!allowed.has(slot.start)||
+        !Number.isSafeInteger(slot.revision)||slot.revision<0||slot.revision>=Number.MAX_SAFE_INTEGER||
+        !Number.isSafeInteger(slot.sourceRevision)||slot.sourceRevision<0)||
+      new Set(slots.map(slot=>slot.start)).size!==slots.length)return fail("請確認時段與兩天的設定版本。");
+    const now=Date.now(),editable=new Set(editablePickupSlots(date,now));
+    const conflict="來源或目的上限已更新、相同或截止，請重新讀取兩天設定。";
+    if(slots.some(slot=>!editable.has(slot.start)))return fail(conflict,409);
+    const plan=slots.map(({start,revision,sourceRevision})=>({start,revision,sourceRevision,sourceStart:sourceRange[0]+(start-range[0])}));
+    const saved=await savePickupSlotLimits(db,date,plan,"batch",now,{sourceDate});
+    return saved.length?json({date,sourceDate,slots:saved}):fail(conflict,409);
+  }
   if(path==="/api/kitchen/pickup-slots/restore"&&method==="PATCH"){
     const {date,fromId,revision,slots}=input;
     if(!businessDayRange(date)||!Number.isSafeInteger(fromId)||fromId<1)return fail("請確認取餐日期與還原來源。");
@@ -367,7 +384,7 @@ export async function api(request, env) {
     if(source.changes.some(change=>!versions.has(change.start)))return fail("請核對所有時段與版本。");
     if(source.changes.some(change=>!editable.has(change.start)))return fail(conflict,409);
     const plan=source.changes.map(({start,previousCapacity})=>({start,capacity:previousCapacity,revision:versions.get(start)}));
-    const saved=await savePickupSlotLimits(db,date,plan,source.kind,now,fromId);
+    const saved=await savePickupSlotLimits(db,date,plan,source.kind,now,{restoredFromId:fromId});
     return saved.length?json({date,slots:saved,restoredFromId:fromId}):fail(conflict,409);
   }
   if(path==="/api/kitchen/pickup-day"&&method==="PATCH"){

@@ -63,9 +63,10 @@ export default function PickupLimitHistory({snapshot,busy,revision,staffHeaders,
           const plan=restorePlan(event,snapshot,slots);
           const preview=review?.id===event.id&&review.revision===revision?review.plan:null;
           return <li key={event.id}>
-            <h3>{event.restoredFromId?"還原 · ":""}{actions[event.kind]}{event.kind==="batch"?` · ${event.changes.length} 個時段`:""}</h3>
+            <h3>{event.restoredFromId?"還原 · ":""}{event.sourceDate?"跨日複製":actions[event.kind]}{event.kind==="batch"?` · ${event.changes.length} 個時段`:""}</h3>
             <p className="historyEventDate">第 {event.id} 筆 · <time dateTime={new Date(event.changedAt).toISOString()}>{changedTime.format(event.changedAt)}</time>
-              {event.restoredFromId&&<> · 依第 {event.restoredFromId} 筆還原</>}</p>
+              {event.restoredFromId&&<> · 依第 {event.restoredFromId} 筆還原</>}
+              {event.sourceDate&&<> · 來源日 {event.sourceDate}</>}</p>
             <ul>{event.changes.map(change=>event.kind==="day"?<li key="day">{accepting(change.previousAccepting)} → {accepting(change.accepting)}</li>:
               <li key={change.start}>{pickupWindow(change.start)} · {capacity(change.previousCapacity)} → {capacity(change.capacity)}</li>)}</ul>
             {preview?<section className="pickupRestore" aria-label="核對還原設定">

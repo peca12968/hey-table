@@ -630,6 +630,66 @@ test("mobile staff preview a slot batch, recover a conflict and preserve existin
   }
 });
 
+test("mobile staff copy selected limits across dates and recompare after a source change",async({page,request})=>{
+  page.setDefaultTimeout(9000);
+  const sourceDate=businessDate(Date.now()+4*86_400_000),date=businessDate(Date.now()+5*86_400_000);
+  const src=Date.parse(sourceDate+"T15:00:00+08:00"),dst=Date.parse(date+"T15:00:00+08:00"),later=900_000;
+  const headers={Authorization:"Bearer local-test-kitchen"},endpoint="/api/kitchen/pickup-slots",token=randomUUID();
+  const snapshot=async day=>(await (await request.get(endpoint+"?date="+day,{headers})).json());
+  const find=(report,start)=>report.slots.find(slot=>slot.start===start);
+  const write=(day,start,capacity,revision)=>request.patch(endpoint,{headers,data:{date:day,start,capacity,revision}});
+  const before=await snapshot(date),sourceBefore=await snapshot(sourceDate);
+  let booked=false;
+  try{
+    expect((await write(sourceDate,src,0,find(sourceBefore,src).revision)).ok()).toBe(true);
+    expect((await write(sourceDate,src+later,3,find(sourceBefore,src+later).revision)).ok()).toBe(true);
+    expect((await request.post("/api/orders",{data:{token,mode:"pickup",pickupSlot:dst,note:"",items:[{id:"sencha",qty:1}]}})).ok()).toBe(true);
+    booked=true;
+    await page.setViewportSize({width:360,height:780});
+    await page.addInitScript(()=>sessionStorage.setItem("he-ri-staff","local-test-kitchen"));
+    await page.goto("/kitchen/pickup-slots");
+    await page.getByLabel("取餐日期").fill(date);
+    await page.getByText("從其他日期複製時段上限",{exact:true}).click();
+    await page.getByLabel("來源日期").fill(sourceDate);
+    const compare=page.getByRole("button",{name:"比較時段上限"});
+    const comparison=page.getByRole("region",{name:"比較預約時段上限"});
+    const choice=comparison.getByRole("checkbox",{name:"15:00～15:15"});
+    const apply=comparison.getByRole("button",{name:"套用已選時段上限"});
+    await compare.click();
+    await expect(comparison.getByText("預設 12 份 → 0 份",{exact:true})).toBeVisible();
+    await expect(comparison.getByText("目的日已占用 1 份 · 套用後暫停新增預約",{exact:true})).toBeVisible();
+    await choice.check();
+    const changed=await snapshot(sourceDate);
+    expect((await write(sourceDate,src,1,find(changed,src).revision)).ok()).toBe(true);
+    await apply.click();
+    await expect(page.getByRole("alert")).toHaveText("來源或目的上限已更新、相同或截止，請重新讀取兩天設定。");
+    expect(find(await snapshot(date),dst).capacity).toBe(find(before,dst).capacity);
+    await compare.click();
+    await expect(comparison.getByText("預設 12 份 → 1 份",{exact:true})).toBeVisible();
+    await choice.check();
+    await apply.click();
+    await expect(page.getByText("已複製 1 個時段的上限。",{exact:true})).toBeVisible();
+    await page.getByText("查看預約調整紀錄",{exact:true}).click();
+    const history=page.getByRole("region",{name:"預約調整紀錄"});
+    await expect(history.getByRole("heading",{name:"跨日複製 · 1 個時段",exact:true})).toBeVisible();
+    await expect(history.getByText(new RegExp("來源日 "+sourceDate))).toBeVisible();
+    const after=await snapshot(date);
+    expect(find(after,dst)).toMatchObject({capacity:1,used:1,remaining:0});
+    expect(find(after,dst+later)).toEqual(find(before,dst+later));
+    expect(after.intake).toEqual(before.intake);
+    expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBe(360);
+  }finally{
+    if(booked)await request.post("/api/ticket/cancel",{headers:{"X-Ticket":token},data:{}});
+    for(const [day,prior,starts] of [[date,before,[dst]],[sourceDate,sourceBefore,[src,src+later]]]){
+      const current=await snapshot(day);
+      for(const start of starts){
+        const priorLimit=find(prior,start),currentLimit=find(current,start);
+        if(priorLimit.capacity!==currentLimit.capacity)await write(day,start,priorLimit.capacity,currentLimit.revision);
+      }
+    }
+  }
+});
+
 test("mobile staff pause and reopen a date without displacing orders or erasing a slot limit",async({page,request})=>{
   page.setDefaultTimeout(9000);
   const day=businessDate(Date.now()+3*86_400_000),start=Date.parse(day+"T12:00:00+08:00");

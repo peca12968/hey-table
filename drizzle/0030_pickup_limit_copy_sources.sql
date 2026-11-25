@@ -1,0 +1,1 @@
+ALTER TABLE `pickup_limit_events` ADD `source_date` text;

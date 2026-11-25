@@ -146,6 +146,7 @@ export const pickupLimitEvents = sqliteTable("pickup_limit_events", {
   kind: text("kind").notNull(),
   changes: text("changes").notNull(),
   restoredFromId: integer("restored_from_id"),
+  sourceDate: text("source_date"),
 }, t => [
   check("pickup_limit_event_kind",sql`${t.kind} IN ('slot','batch','day')`),
   index("pickup_limit_events_date").on(t.date,t.id),

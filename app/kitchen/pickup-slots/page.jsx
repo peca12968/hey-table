@@ -4,6 +4,7 @@ import {Header,Footer,request} from "../../shared";
 import {businessDate} from "../../../lib/business-day.mjs";
 import {pickupRosterPath,pickupWindow} from "../../../lib/pickup-slots.mjs";
 import BatchSlotLimits from "./batch-slot-limits";
+import CopySlotLimits from "./copy-slot-limits";
 import PickupLimitHistory from "./limit-history";
 import "./slots.css";
 
@@ -12,6 +13,7 @@ function staffHeaders(){
   const key=sessionStorage.getItem("he-ri-staff");
   return key?{Authorization:"Bearer "+key}:{};
 }
+const readSlots=(date,signal)=>request(endpoint+"?date="+encodeURIComponent(date),{headers:staffHeaders(),signal});
 
 function SlotLimit({slot,date,defaultCapacity,busy,onSave}){
   const windowText=pickupWindow(slot.start);
@@ -39,8 +41,7 @@ export default function PickupSlotLimits(){
   useEffect(()=>{
     if(date==="")return;
     const controller=new AbortController(),target=date??businessDate(Date.now());
-    request(endpoint+"?date="+encodeURIComponent(target),{headers:staffHeaders(),
-      signal:AbortSignal.any([controller.signal,AbortSignal.timeout(10_000)])}).then(value=>{
+    readSlots(target,AbortSignal.any([controller.signal,AbortSignal.timeout(10_000)])).then(value=>{
       if(!controller.signal.aborted){setSnapshot(value);setLoadError("");setBusy(false);}
     }).catch(error=>{
       if(!controller.signal.aborted){setSnapshot(null);setLoadError(error.name==="TimeoutError"?"讀取時段逾時，請重新載入。":error.message);setBusy(false);}
@@ -93,6 +94,7 @@ export default function PickupSlotLimits(){
       </div>
     </section>}
     {current&&<BatchSlotLimits key={current.date} snapshot={current} busy={busy} save={save}/>}
+    {current&&<CopySlotLimits key={"copy-"+current.date} snapshot={current} busy={busy} loadSource={readSlots} save={save}/>}
     {current&&<PickupLimitHistory key={"history-"+current.date} snapshot={current} busy={busy}
       revision={revision} staffHeaders={staffHeaders} save={save}/>}
     {current&&rows.length===0&&<p role="status">這天目前沒有可調整的時段。</p>}
