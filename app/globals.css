@@ -56,6 +56,8 @@
 .supplyReview ul{list-style:none;padding:0;margin:0 0 8px}
 .supplyReview li{display:flex;flex-wrap:wrap;gap:4px 10px;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--line)}
 .supplyReview button{min-height:40px}
+.supplyReplacement{display:grid;gap:4px;width:100%;min-width:0}
+.supplyReplacement select{width:100%;min-width:0}
 .cartShare{margin:12px 0}
 .cartShare input{margin-bottom:8px}
 .cartShare [role=status]{margin-top:8px}

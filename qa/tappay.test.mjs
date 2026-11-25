@@ -10,6 +10,8 @@ import {api} from "../server/api.mjs";
 import {settings,lookup} from "../server/tappay.mjs";
 import {paymentPrime,openPaymentUrl} from "../lib/tappay-client.mjs";
 import {comparePaymentHandoffSummaries,readPaymentHandoffSummary} from "../lib/payment-handoff-compare.mjs";
+import {planSupplyReview,supplyReviewRows} from "../lib/supply-review.mjs";
+import {dishes} from "../lib/menu.mjs";
 import {sqliteD1} from "../scripts/sqlite-d1.mjs";
 import {applyDemoMigrations} from "../scripts/apply-demo-migrations.mjs";
 import {buildReturnLedgerDemo} from "../scripts/return-ledger-demo.mjs";
@@ -592,6 +594,19 @@ test("staff payment attempt history paginates stable ordinals and isolates notes
   assert.equal((await (await get(path)).json()).attempts[0].number,13);
   assert.deepEqual((await (await get(filter+"12")).json()).notes.map(row=>row.note),["最新嘗試的備註"]);
   assert.equal((await (await get(filter+"12")).json()).target,null);
+});
+
+test("cart replacement preview counts existing portions and overlapping choices against the same limit",()=>{
+  const cart={gyoza:2,karaage:1,edamame:2,sencha:1};
+  const maxFor=id=>({gyoza:1,edamame:3}[id]??20);
+  const rows=supplyReviewRows(dishes,cart,["karaage"],maxFor);
+  assert.deepEqual(rows.map(({id,from,to,alternatives})=>[id,from,to,alternatives.map(dish=>dish.id)]),
+    [["karaage",1,0,["edamame"]],["gyoza",2,1,["edamame"]]]);
+  assert.equal(planSupplyReview(cart,rows,{gyoza:"edamame",karaage:"edamame"}),null);
+  assert.equal(planSupplyReview(cart,rows,{gyoza:"sencha"}),null);
+  assert.deepEqual(planSupplyReview(cart,rows,{gyoza:"edamame"}),{gyoza:1,karaage:0,edamame:3,sencha:1});
+  assert.equal(planSupplyReview({...cart,edamame:3},rows,{gyoza:"edamame"}),null);
+  assert.deepEqual(cart,{gyoza:2,karaage:1,edamame:2,sencha:1});
 });
 
 test("the receipt recovery fixture is generated from actual order, check and payment APIs",async()=>{

@@ -12,6 +12,7 @@ import Reorder from "./reorder";
 import {PasteSharedCart,ReviewSharedCart,ShareCart} from "./cart-share";
 import {readCartShareHash} from "../lib/cart-share.mjs";
 import {reorderPlan} from "../lib/reorder.mjs";
+import {planSupplyReview,supplyReviewRows} from "../lib/supply-review.mjs";
 import {ItemNotesEditor} from "./item-notes";
 import PickupSlots,{PickupDate,usePickupSlotAvailability} from "./pickup-slots";
 import PickupSuggestion from "./pickup-suggestion";
@@ -202,11 +203,16 @@ export default function Menu(){
   const suggestPickup=loaded&&!invalid&&!draft&&!busy&&!paused&&(blocked||dayPaused||
     (pickupAvailability.snapshot&&(pickupAvailability.selectedBlocked||!pickupAvailability.slots.some(slot=>slot.remaining>=count))));
   const cannotAdd=id=>sold.includes(id)||(cart[id]||0)>=maxFor(id);
-  const adjustments=blocked?lines.flatMap(({id,name})=>{
-    const from=cart[id],to=sold.includes(id)?0:maxFor(id);
-    return from>to?[{id,name,from,to}]:[];
-  }):[];
-  const adjustmentKey=JSON.stringify([supplyDay,adjustments]);
+  const adjustments=blocked?supplyReviewRows(dishes,cart,sold,maxFor):[];
+  const adjustmentKey=JSON.stringify([supplyDay,adjustments,items,useCombo,payments.mode]);
+  const reviewedCart=supplyReview?.key===adjustmentKey?planSupplyReview(cart,adjustments,supplyReview.choices):null;
+  const replacementChosen=Object.values(supplyReview?.choices??{}).some(Boolean);
+  let reviewedTotal=null;
+  if(reviewedCart&&replacementChosen){
+    const preview=dishes.flatMap(({id})=>reviewedCart[id]>0?[{id,qty:reviewedCart[id]}]:[]);
+    reviewedTotal=useCombo&&payments.mode==="demo"?priceCombos(preview).total:
+      dishes.reduce((sum,dish)=>sum+dish.price*(reviewedCart[dish.id]??0),0);
+  }
   function change(id,delta){
     if(draft||busy||(delta>0&&cannotAdd(id)))return;
     setSelection(current=>{
@@ -285,18 +291,18 @@ export default function Menu(){
     }
   }
   function applySupplyReview(){
-    if(!loaded||draft||busy||sending.current||!adjustments.length||supplyReview?.key!==adjustmentKey)return;
+    if(!loaded||draft||busy||sending.current||!adjustments.length||!reviewedCart)return;
     setSelection(current=>{
-      if(adjustments.some(({id,from})=>current.cart[id]!==from))return current;
-      const nextCart={...current.cart},nextNotes={...current.lineNotes};
+      const nextCart=planSupplyReview(current.cart,supplyReviewRows(dishes,current.cart,sold,maxFor),supplyReview.choices);
+      if(!nextCart||dishes.some(({id})=>nextCart[id]!==reviewedCart[id]))return current;
+      const nextNotes={...current.lineNotes};
       for(const {id,to} of adjustments){
-        nextCart[id]=to;
         if(to===0)delete nextNotes[id];
       }
       return {cart:nextCart,lineNotes:nextNotes};
     });
     setError("");setSupplyReview(null);
-    setAnnouncement("已依供應調整餐單，請確認新的份數和金額。");
+    setAnnouncement(replacementChosen?"已更新替換餐點，請確認份數、備註和金額。":"已依供應調整餐單，請確認新的份數和金額。");
   }
   async function submit(){
     if(sending.current||shareApplying.current||invalid||!scope||!count||
@@ -419,16 +425,28 @@ export default function Menu(){
     {loaded&&!draft&&!busy&&!invalid&&adjustments.length>0&&<section className="supplyReview" aria-label="供應份數調整">
       {!supplyReview||supplyReview.key!==adjustmentKey?<>
         {supplyReview&&<p role="status">餐點供應有更新，請重新核對。</p>}
-        <button className="outline" onClick={()=>setSupplyReview({key:adjustmentKey})}>
+        <button className="outline" onClick={()=>setSupplyReview({key:adjustmentKey,choices:{}})}>
           {supplyReview?"更新調整預覽":"查看份數調整"}
         </button>
       </>:<>
-        <ul>{adjustments.map(({id,name,from,to})=><li key={id}>
+        <ul>{adjustments.map(({id,name,from,to,alternatives})=><li key={id}>
           <strong>{name}</strong><span>{from} 份 → {to===0?"移除":to+" 份"}</span>
+          {alternatives.length>0&&<label className="supplyReplacement">替換{name}缺少的 {from-to} 份
+            <select value={supplyReview.choices[id]??""} onChange={event=>{
+              const choice=event.target.value;
+              setSupplyReview(current=>({...current,choices:{...current.choices,[id]:choice}}));
+            }}>
+              <option value="">只調整原餐點份數</option>
+              {alternatives.map(dish=><option key={dish.id} value={dish.id}>{dish.name} · NT$ {dish.price}／份</option>)}
+            </select>
+          </label>}
         </li>)}</ul>
+        {replacementChosen&&<p>替換後請核對新餐點的品項備註。</p>}
+        {replacementChosen&&!reviewedCart&&<p role="status">選到同一餐點的替換份數超過供應。請調整選擇。</p>}
+        {reviewedTotal!==null&&<p role="status">調整後合計 NT$ {reviewedTotal}</p>}
         <div className="actions">
           <button className="outline" onClick={()=>setSupplyReview(null)}>取消調整</button>
-          <button className="primary" onClick={applySupplyReview}>確認份數調整</button>
+          <button className="primary" disabled={!reviewedCart} onClick={applySupplyReview}>確認份數調整</button>
         </div>
       </>}
     </section>}
