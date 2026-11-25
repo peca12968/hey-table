@@ -1,0 +1,151 @@
+{
+  "format": "dispatch-window.parallel-demo.v1",
+  "single": {
+    "start_ms": 100000,
+    "cutoff_ms": 111000,
+    "ship_units": 9,
+    "scheduled": [
+      {
+        "reservation_id": "B",
+        "pack_start_ms": 102000,
+        "dispatch_ms": 107000,
+        "deadline_ms": 108000,
+        "units": 4,
+        "dispatch": {
+          "boxes": [
+            {
+              "reservation_id": "B",
+              "shipment_id": "B1",
+              "quantity": 2
+            },
+            {
+              "reservation_id": "B",
+              "shipment_id": "B2",
+              "quantity": 2
+            }
+          ]
+        }
+      },
+      {
+        "reservation_id": "C",
+        "pack_start_ms": 107000,
+        "dispatch_ms": 109000,
+        "deadline_ms": 110000,
+        "units": 3,
+        "dispatch": {
+          "boxes": [
+            {
+              "reservation_id": "C",
+              "shipment_id": "C1",
+              "quantity": 3
+            }
+          ]
+        }
+      },
+      {
+        "reservation_id": "D",
+        "pack_start_ms": 109000,
+        "dispatch_ms": 110000,
+        "deadline_ms": 111000,
+        "units": 2,
+        "dispatch": {
+          "boxes": [
+            {
+              "reservation_id": "D",
+              "shipment_id": "D1",
+              "quantity": 2
+            }
+          ]
+        }
+      }
+    ],
+    "omitted": [
+      {
+        "reservation_id": "A",
+        "reason": "not_selected"
+      }
+    ]
+  },
+  "parallel": {
+    "start_ms": 100000,
+    "cutoff_ms": 111000,
+    "ship_units": 10,
+    "scheduled": [
+      {
+        "reservation_id": "A",
+        "pack_start_ms": 100000,
+        "dispatch_ms": 104000,
+        "deadline_ms": 105000,
+        "units": 1,
+        "dispatch": {
+          "boxes": [
+            {
+              "reservation_id": "A",
+              "shipment_id": "A1",
+              "quantity": 1
+            }
+          ]
+        },
+        "station": 1
+      },
+      {
+        "reservation_id": "B",
+        "pack_start_ms": 102000,
+        "dispatch_ms": 107000,
+        "deadline_ms": 108000,
+        "units": 4,
+        "dispatch": {
+          "boxes": [
+            {
+              "reservation_id": "B",
+              "shipment_id": "B1",
+              "quantity": 2
+            },
+            {
+              "reservation_id": "B",
+              "shipment_id": "B2",
+              "quantity": 2
+            }
+          ]
+        },
+        "station": 2
+      },
+      {
+        "reservation_id": "C",
+        "pack_start_ms": 107000,
+        "dispatch_ms": 109000,
+        "deadline_ms": 110000,
+        "units": 3,
+        "dispatch": {
+          "boxes": [
+            {
+              "reservation_id": "C",
+              "shipment_id": "C1",
+              "quantity": 3
+            }
+          ]
+        },
+        "station": 2
+      },
+      {
+        "reservation_id": "D",
+        "pack_start_ms": 109000,
+        "dispatch_ms": 110000,
+        "deadline_ms": 111000,
+        "units": 2,
+        "dispatch": {
+          "boxes": [
+            {
+              "reservation_id": "D",
+              "shipment_id": "D1",
+              "quantity": 2
+            }
+          ]
+        },
+        "station": 2
+      }
+    ],
+    "omitted": [],
+    "stations": 2
+  }
+}

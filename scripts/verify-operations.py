@@ -59,7 +59,6 @@ def kitchen_and_fulfillment():
     for module, demo, dependencies in [
         ("batch-clock", "pickup_demo.py", ["pickup-window"]),
         ("batch-waste", "demo.py", ["prep-sheet"]),
-        ("dispatch-window", "demo.py", ["stockroom-reservations"]),
         ("dispatch-window", "resume_demo.py", ["stockroom-reservations"]),
         ("pantry-freight", "prep_demo.py", ["prep-sheet"]),
         ("plate-cost", "demo.py", ["prep-sheet", "receipt-returns"]),
@@ -67,6 +66,7 @@ def kitchen_and_fulfillment():
         ("return-docket", "demo.py", ["stockroom-reservations"]),
     ]:
         run(module, PYTHON, demo, *(MODULES / dependency for dependency in dependencies))
+    run("dispatch-window", PYTHON, "demo.py", MODULES / "stockroom-reservations", "--compare-stations")
 
 
 def cashier():

@@ -15,7 +15,7 @@ from fastapi.testclient import TestClient
 ROOT = Path(__file__).resolve().parent
 
 
-def demo(stockroom):
+def demo(stockroom, stations=1):
     sys.path.insert(0, str(stockroom.resolve()))
     from stockroom.api import create_app
 
@@ -60,27 +60,22 @@ def demo(stockroom):
             document.update(capture)
             input_file = path / "service-snapshot.json"
             input_file.write_text(json.dumps(document), encoding="utf8")
-            output = subprocess.check_output(
-                [sys.executable, ROOT / "dispatch.py", input_file]
-            )
+            output = subprocess.check_output([
+                sys.executable, ROOT / "dispatch.py", input_file, "--stations", str(stations)
+            ])
             chosen = json.loads(output)
-            assert chosen["ship_units"] == 9
+            assert chosen["ship_units"] == (9 if stations == 1 else 10)
             assert [row["reservation_id"] for row in chosen["scheduled"]] == [
-                "B",
-                "C",
-                "D",
+                *([] if stations == 1 else ["A"]), "B", "C", "D",
             ]
-            clock[0] = 105.0
-            at_deadline = client.post(
-                "/dispatch-batches",
-                headers={"Idempotency-Key": "late-A"},
-                json={
-                    "boxes": [
-                        {"reservation_id": "A", "shipment_id": "A1", "quantity": 1}
-                    ]
-                },
-            )
-            assert at_deadline.status_code == 409
+            if stations == 1:
+                clock[0] = 105.0
+                at_deadline = client.post(
+                    "/dispatch-batches",
+                    headers={"Idempotency-Key": "late-A"},
+                    json={"boxes": [{"reservation_id": "A", "shipment_id": "A1", "quantity": 1}]},
+                )
+                assert at_deadline.status_code == 409
             for job in chosen["scheduled"]:
                 clock[0] = job["dispatch_ms"] / 1000
                 reply = client.post(
@@ -93,9 +88,9 @@ def demo(stockroom):
                     sum(box["quantity"] for box in reply.json()["boxes"])
                     == job["units"]
                 )
-            assert client.get("/reservations/A").json()["state"] == "expired"
+            assert client.get("/reservations/A").json()["state"] == ("expired" if stations == 1 else "fulfilled")
             assert client.get("/inventory").json() == [
-                {"sku": "KIT-01", "capacity": 11, "available": 11}
+                {"sku": "KIT-01", "capacity": 20 - chosen["ship_units"], "available": 20 - chosen["ship_units"]}
             ]
         return chosen
 
@@ -103,4 +98,10 @@ def demo(stockroom):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("stockroom", type=Path)
-    print(json.dumps(demo(parser.parse_args().stockroom), indent=2))
+    parser.add_argument("--compare-stations", action="store_true")
+    args = parser.parse_args()
+    result = demo(args.stockroom)
+    if args.compare_stations:
+        result = {"format": "dispatch-window.parallel-demo.v1", "single": result,
+                  "parallel": demo(args.stockroom, stations=2)}
+    print(json.dumps(result, indent=2))

@@ -5,7 +5,7 @@ from pathlib import Path
 import random
 import unittest
 
-from dispatch import Job, optimize, plan
+from dispatch import Job, optimize, optimize_parallel, plan
 
 
 def score(jobs, sequence):
@@ -49,6 +49,62 @@ class DispatchTests(unittest.TestCase):
                 max(s for s in feasible if s is not None),
                 jobs,
             )
+
+    def test_two_stations_match_independent_exhaustive_splits(self):
+        rng = random.Random(219)
+        for _ in range(180):
+            jobs = [Job(str(i), rng.randrange(8), rng.randrange(1, 6),
+                        rng.randrange(4, 17), rng.randrange(1, 12), ())
+                    for i in range(rng.randrange(7))]
+
+            def station_score(left, right):
+                first, second = score(jobs, left), score(jobs, right)
+                if first is not None and second is not None:
+                    return first[0] + second[0], first[1] + second[1], min(first[2], second[2])
+                return None
+
+            feasible = (station_score(order[:split], order[split:])
+                        for length in range(len(jobs) + 1)
+                        for order in permutations(range(len(jobs)), length)
+                        for split in range(length + 1))
+            left, right = optimize_parallel(jobs, 0)
+            self.assertEqual(len(set(left + right)), len(left) + len(right))
+            self.assertEqual(station_score(left, right), max(s for s in feasible if s is not None), jobs)
+
+    def test_second_station_runs_overlapping_work_without_changing_single_station_format(self):
+        single = plan(self.sample)
+        report = plan(self.sample, stations=2)
+        self.assertEqual(single["ship_units"], 9)
+        self.assertNotIn("stations", single)
+        self.assertEqual(report["stations"], 2)
+        self.assertEqual(report["ship_units"], 10)
+        self.assertEqual(report["omitted"], [])
+        self.assertEqual([row["reservation_id"] for row in report["scheduled"]], ["A", "B", "C", "D"])
+        for station in (1, 2):
+            at = self.sample["start_ms"]
+            for order in report["scheduled"]:
+                if order["station"] == station:
+                    self.assertGreaterEqual(order["pack_start_ms"], at)
+                    at = order["dispatch_ms"]
+                    self.assertLess(at, order["deadline_ms"])
+        a, b, *_ = report["scheduled"]
+        self.assertNotEqual(a["station"], b["station"])
+        self.assertLess(b["pack_start_ms"], a["dispatch_ms"])
+        self.sample["work"].reverse()
+        self.sample["holds"].reverse()
+        self.assertEqual(plan(self.sample, stations=2), report)
+
+    def test_resume_and_second_station_can_share_the_same_snapshot(self):
+        self.sample["captured_at_ms"] = self.sample["start_ms"]
+        self.sample["holds"][1]["boxes"] = [{"shipment_id": "B1", "dispatched": 2}]
+        self.sample["holds"][1]["reservation"]["held"] = 2
+        report = plan(self.sample, stations=2, resume=True)
+        self.assertEqual(report["ship_units"], 8)
+        self.assertEqual(report["already_dispatched"], [{"reservation_id": "B", "shipment_id": "B1", "quantity": 2}])
+        self.assertNotIn("B1", [box["shipment_id"] for job in report["scheduled"] for box in job["dispatch"]["boxes"]])
+        for wrong in (0, 3, True, 1.0):
+            with self.assertRaises(ValueError):
+                plan(self.sample, stations=wrong)
 
     def test_example_prefers_waiting_for_more_units_and_has_stable_order(self):
         result = plan(self.sample)

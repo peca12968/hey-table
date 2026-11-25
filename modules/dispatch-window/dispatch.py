@@ -1,4 +1,4 @@
-"""Plan the highest-volume dispatch from a set of Stockroom holds at one packing station."""
+"""Plan the highest-volume dispatch from Stockroom holds at one or two packing stations."""
 
 import argparse
 from dataclasses import dataclass
@@ -133,23 +133,16 @@ def collect(document, start, cutoff, resume):
     return jobs, omitted, already_dispatched, shipment_conflicts
 
 
-def optimize(jobs, start):
-    """Return indices in packing order. Each subset needs only its earliest finish."""
+def packing_states(jobs, start):
+    """Find the earliest feasible finish for every subset on a single station."""
     full = (1 << len(jobs)) - 1
     finish = {0: start}
     parent = {}
     units = {0: 0}
-    best = 0
     for subset in range(full + 1):
         if subset not in finish:
             continue
         at = finish[subset]
-        if (units[subset], subset.bit_count(), -at) > (
-            units[best],
-            best.bit_count(),
-            -finish[best],
-        ):
-            best = subset
         remaining = full ^ subset
         while remaining:
             bit = remaining & -remaining
@@ -163,15 +156,52 @@ def optimize(jobs, start):
                 finish[combined] = end
                 parent[combined] = bit
                 units[combined] = units[subset] + job.units
+    return finish, parent, units
+
+
+def packing_order(parent, subset):
     route = []
-    while best:
-        bit = parent[best]
+    while subset:
+        bit = parent[subset]
         route.append(bit.bit_length() - 1)
-        best ^= bit
+        subset ^= bit
     return route[::-1]
 
 
-def plan(document, *, resume=False):
+def optimize(jobs, start):
+    """Return indices in packing order for a single station."""
+    finish, parent, units = packing_states(jobs, start)
+    best = max(finish, key=lambda mask: (units[mask], mask.bit_count(), -finish[mask], -mask))
+    return packing_order(parent, best)
+
+
+def optimize_parallel(jobs, start):
+    """Choose two disjoint feasible routes without enumerating all pairs of subsets."""
+    finish, parent, units = packing_states(jobs, start)
+    limit = 1 << len(jobs)
+    scores = {mask: (units[mask], mask.bit_count(), -at, -mask) for mask, at in finish.items()}
+    best_subset = [mask if mask in finish else 0 for mask in range(limit)]
+    # After processing each bit, the best route may also omit that order.
+    for index in range(len(jobs)):
+        bit = 1 << index
+        for block in range(0, limit, 2 * bit):
+            for mask in range(block + bit, block + 2 * bit):
+                candidate = best_subset[mask ^ bit]
+                if scores[candidate] > scores[best_subset[mask]]:
+                    best_subset[mask] = candidate
+
+    def score_pair(pair):
+        left, right = pair
+        return (units[left] + units[right], (left | right).bit_count(), -max(finish[left], finish[right]),
+                -min(left, right), -max(left, right))
+
+    full = limit - 1
+    pair = max(((left, best_subset[full ^ left]) for left in finish), key=score_pair)
+    return [packing_order(parent, mask) for mask in sorted(pair, key=lambda mask: (mask == 0, mask))]
+
+
+def plan(document, *, resume=False, stations=1):
+    stations = integer(stations, "stations", 1, 2)
     start = integer(document["start_ms"], "start_ms")
     if resume and "captured_at_ms" not in document:
         raise ValueError("--resume requires the captured_at_ms from a Stockroom packing snapshot")
@@ -181,32 +211,37 @@ def plan(document, *, resume=False):
             raise ValueError("start_ms predates the packing snapshot")
     cutoff = integer(document["cutoff_ms"], "cutoff_ms", start + 1)
     jobs, omitted, confirmed, conflicts = collect(document, start, cutoff, resume)
-    selected = optimize(jobs, start)
+    routes = [optimize(jobs, start)] if stations == 1 else optimize_parallel(jobs, start)
     scheduled = []
-    at = start
-    for index in selected:
-        job = jobs[index]
-        begins = max(at, job.ready)
-        at = begins + job.duration
-        scheduled.append(
-            {
-                "reservation_id": job.reservation,
-                "pack_start_ms": begins,
-                "dispatch_ms": at,
-                "deadline_ms": job.deadline,
-                "units": job.units,
-                "dispatch": {
-                    "boxes": [
-                        {
-                            "reservation_id": job.reservation,
-                            "shipment_id": box,
-                            "quantity": qty,
-                        }
-                        for box, qty in job.boxes
-                    ]
-                },
-            }
-        )
+    for station, route in enumerate(routes, 1):
+        at = start
+        for index in route:
+            job = jobs[index]
+            begins = max(at, job.ready)
+            at = begins + job.duration
+            scheduled.append(
+                {
+                    "reservation_id": job.reservation,
+                    "pack_start_ms": begins,
+                    "dispatch_ms": at,
+                    "deadline_ms": job.deadline,
+                    "units": job.units,
+                    "dispatch": {
+                        "boxes": [
+                            {
+                                "reservation_id": job.reservation,
+                                "shipment_id": box,
+                                "quantity": qty,
+                            }
+                            for box, qty in job.boxes
+                        ]
+                    },
+                }
+            )
+            if stations == 2:
+                scheduled[-1]["station"] = station
+    if stations == 2:
+        scheduled.sort(key=lambda row: (row["dispatch_ms"], row["station"]))
     chosen = {item["reservation_id"] for item in scheduled}
     for job in jobs:
         if job.reservation not in chosen:
@@ -224,6 +259,8 @@ def plan(document, *, resume=False):
     if resume:
         report["already_dispatched"] = confirmed
         report["shipment_conflicts"] = conflicts
+    if stations == 2:
+        report["stations"] = stations
     return report
 
 
@@ -231,9 +268,10 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("input", type=Path)
     parser.add_argument("--resume", action="store_true", help="Replan boxes that have not been dispatched")
+    parser.add_argument("--stations", type=int, choices=(1, 2), default=1, help="Number of equivalent packing stations")
     args = parser.parse_args(argv)
     try:
-        report = plan(json.loads(args.input.read_text(encoding="utf-8-sig")), resume=args.resume)
+        report = plan(json.loads(args.input.read_text(encoding="utf-8-sig")), resume=args.resume, stations=args.stations)
     except (OSError, TypeError, ValueError, KeyError) as error:
         parser.exit(2, f"{error}\n")
     print(json.dumps(report, indent=2))

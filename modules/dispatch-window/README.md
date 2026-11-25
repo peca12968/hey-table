@@ -39,6 +39,14 @@ python demo.py ../stockroom-reservations
 
 動態規劃對每組已完成訂單只保留最早的完成時間，因為越早做完，就越有機會接下後續工作。N 張單最多有 2^N 個子集合，每個集合最多試 N 個下一張訂單。測試用獨立窮舉器比較 300 組小案例的所有順序與跳過方式。[排程實作](dispatch.py) · [獨立窮舉測試](test_dispatch.py) · [跨專案演練](demo.py)
 
+## 兩座包裝台同時作業
+
+`python dispatch.py examples/morning.json --stations 2` 使用兩座工時相同的包裝台。輸出每張單的 `station`，並按預計交運時間排序。同一張單的所有箱子由同一座台包完，同一台每次只處理一張。原有單台指令維持其 JSON 格式，`--stations 2` 可與 `--resume` 一起使用。
+
+規劃器先計算各子集合在一座台上的最早完成時間，再為第一座台找出剩餘訂單的最佳子集合。雙台總體按出貨件數、訂單數與最晚完成時間比較。額外的子集合比對需 O(N × 2^N) 時間，最多仍支援 17 張單。測試以獨立窮舉器比較 180 組案例，核對雙台所有分配及順序。
+
+在早班示範，A 和 B 在第 2 至第 4 秒分別於兩座台包裝，裝車前可出 10 件。單台排程可出 9 件。執行 `python demo.py ../stockroom-reservations --compare-stations` 會以同樣的 Stockroom 初始資料執行兩套排程，核對實際出貨與庫存。[雙台出貨試玩（私人預覽）](https://peca-github-demo.peca12968.chatgpt.site/?demo=dispatchParallel#demos) · [可重建範例](examples/parallel-demo.json)
+
 ## 部分出貨後重排
 
 重新抓取 `POST /packing-snapshots` 的回應，將完整箱單和新的開工時間帶入 `python dispatch.py snapshot.json --resume`。已登記且件數相同的箱子列入 `already_dispatched`。重排只估算未出貨箱，並再次核對剩餘保留量、期限及裝車時間。已全部出貨的訂單會標記為 `already_dispatched`。若箱號相同但件數不符，該單暫緩，`shipment_conflicts` 會列出規劃和已登記的件數。
