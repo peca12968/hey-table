@@ -17,6 +17,7 @@ import {pickupBookingDays,pickupSlotDuration} from "../lib/pickup-slots.mjs";
 
 import {methods,environmentLabel} from "../lib/payments.mjs";
 const groups=["全部","丼飯","小食","飲品"];
+const cashOnly={methods:["cash"]};
 const lookupMessages={
   checking:"正在確認這張餐單是否已送達…",
   missing:"目前查無這張訂單。請重試同一張訂單以送達廚房。",
@@ -44,7 +45,9 @@ export default function Menu(){
   const [supplyReview,setSupplyReview]=useState(null);
   const [draft,setDraft]=useState(null),[busy,setBusy]=useState(false),[error,setError]=useState(""),[panel,setPanel]=useState(false);
   const [announcement,setAnnouncement]=useState(""); const sending=useRef(false);
-  const [method,setMethod]=useState("cash"),[payments,setPayments]=useState({methods:["cash"]});
+  const [method,setMethod]=useState("cash"),[paymentOptions,setPayments]=useState(null);
+  const payments=paymentOptions??cashOnly;
+  const [paymentEnv,setPaymentEnv]=useState(null);
   const [intake,setIntake]=useState({});
   const [tableIntake,setTableIntake]=useState({});
   const activeMenuRequest=useRef(null);
@@ -76,7 +79,7 @@ export default function Menu(){
       if(controller.signal.aborted)return;
       setSold(data.unavailable);
       setRemaining(data.remaining??{});
-      setPayments(data.payments??{methods:["cash"]});
+      setPayments(data.payments??cashOnly);
       setIntake(data.accepting??{});
       setTableIntake(data.acceptingTables??{});
       setPickupPaused(data.pickupPaused===true);
@@ -93,7 +96,9 @@ export default function Menu(){
       .map(id=>[id,old.lineNotes[id].slice(0,itemNoteLimit)]));
     checkoutSeen.current=old.checkout??null;
     setSelection({cart,lineNotes});setUseCombo(old.useCombo===true);
-    setNote(old.note??"");setDraft(old.draft??null);setMethod(old.draft?.paymentMethod??old.method??'cash');
+    const savedMethod=old.draft?.paymentMethod??old.method;
+    setNote(old.note??"");setDraft(old.draft??null);setMethod(Object.hasOwn(methods,savedMethod)?savedMethod:"cash");
+    setPaymentEnv(old.draft?.paymentEnv??old.paymentEnv??null);
     const savedSlot=old.draft?old.draft.pickupSlot:old.pickupSlot;
     const days=pickupBookingDays(Date.now());
     const validDay=!old.pickupDate||days.includes(old.pickupDate);
@@ -124,8 +129,8 @@ export default function Menu(){
     };
   },[refreshMenu]);
   useEffect(()=>{
-    if(scope)persistCart(scope,{cart,lineNotes,note,draft,method,useCombo,pickupSlot,pickupDate},checkoutSeen.current);
-  },[scope,cart,lineNotes,note,draft,method,useCombo,pickupSlot,pickupDate]);
+    if(scope)persistCart(scope,{cart,lineNotes,note,draft,method,paymentEnv,useCombo,pickupSlot,pickupDate},checkoutSeen.current);
+  },[scope,cart,lineNotes,note,draft,method,paymentEnv,useCombo,pickupSlot,pickupDate]);
   useEffect(()=>{
     if(!draft||busy||!scope)return;
     let current;
@@ -172,6 +177,11 @@ export default function Menu(){
   const bookingPaused=dayPaused&&(!!bookingDay||pickupSlot!==null);
   const pickupBlocked=needsPickupSlot||bookingPaused||pickupAvailability.selectedBlocked;
   const blocked=limitBlocked||lines.some(({id})=>sold.includes(id));
+  const online=method!=="cash";
+  const missingMethod=!payments.methods.includes(method);
+  const paymentUnavailable=Boolean(paymentOptions)&&!draft&&missingMethod;
+  const confirmPaymentEnv=Boolean(paymentOptions)&&!draft&&!missingMethod&&online&&paymentEnv!==payments.mode;
+  const paymentLabel=online&&!paymentUnavailable&&!confirmPaymentEnv?environmentLabel(draft?paymentEnv:payments.mode):"";
   const suggestPickup=loaded&&!invalid&&!draft&&!busy&&!paused&&(blocked||dayPaused||
     (pickupAvailability.snapshot&&(pickupAvailability.selectedBlocked||!pickupAvailability.slots.some(slot=>slot.remaining>=count))));
   const cannotAdd=id=>sold.includes(id)||(cart[id]||0)>=maxFor(id);
@@ -232,11 +242,12 @@ export default function Menu(){
     setAnnouncement("已依供應調整餐單，請確認新的份數和金額。");
   }
   async function submit(){
-    if(sending.current||invalid||!scope||!count||(!draft&&(paused||blocked||pickupBlocked||!loaded)))return;
+    if(sending.current||invalid||!scope||!count||
+      (!draft&&(paused||blocked||pickupBlocked||!loaded||paymentUnavailable||confirmPaymentEnv)))return;
     sending.current=true;setBusy(true);setError("");setLookup(null);setSendTimedOut(false);setSharedCheckout(false);
-    const payload=draft??{token:crypto.randomUUID(),...(method==='cash'?{}:{paymentMethod:method}),mode,table,note,
+    const payload=draft??{token:crypto.randomUUID(),...(online?{paymentMethod:method,paymentEnv}:{}),mode,table,note,
       items:withItemNotes(items,lineNotes),...(applied?{comboVersion,expectedTotal:total}:{}),...(pickupSlot!==null?{pickupSlot}:{})};
-    const snapshot={cart,lineNotes,note,draft:payload,method,useCombo,pickupSlot,pickupDate};
+    const snapshot={cart,lineNotes,note,draft:payload,method,paymentEnv,useCombo,pickupSlot,pickupDate};
     let leaving=false;
     async function dispatch(){
       const claimed=await claimCart(scope,snapshot,checkoutSeen.current);
@@ -273,6 +284,7 @@ export default function Menu(){
           }
           if(e.code==="intake_paused")setIntake(current=>({...current,[mode]:false}));
           else if(e.code==="table_paused")setTableIntake(current=>({...current,[table]:false}));
+          else if(["payment_unavailable","payment_environment_changed"].includes(e.code)&&e.payments)setPayments(e.payments);
           else setError(e.message);
           if(["pickup_slot_closed","pickup_slot_full","pickup_day_paused"].includes(e.code))setSlotRevision(value=>value+1);
           refreshMenu(true);
@@ -320,9 +332,24 @@ export default function Menu(){
       date={supplyDay} items={items} onChoose={({date,start})=>{
         selectPickupDate(date,start);setAnnouncement("已帶入新的預約時段，請核對餐單後再送出。");
       }}/>}
-    {count>0&&<label className="payChoice">付款方式<select value={method} disabled={!!draft||busy} onChange={e=>setMethod(e.target.value)}>
-      {payments.methods.map(m=><option key={m} value={m}>{methods[m]}</option>)}</select>
-      {method!=="cash"&&<small>{environmentLabel(payments.mode)}</small>}</label>}
+    {count>0&&<div className="payChoice">
+      <label htmlFor="order-payment">付款方式</label>
+      <select id="order-payment" value={method} disabled={!!draft||busy}
+        aria-invalid={paymentUnavailable||undefined} aria-describedby={paymentUnavailable||confirmPaymentEnv?"payment-review":undefined}
+        onChange={event=>{
+          const choice=event.target.value;
+          setMethod(choice);setPaymentEnv(choice==="cash"?null:payments.mode);setError("");
+        }}>
+        {missingMethod&&<option value={method} disabled>{methods[method]}{paymentUnavailable?"（暫停使用）":""}</option>}
+        {payments.methods.map(m=><option key={m} value={m}>{methods[m]}</option>)}
+      </select>
+      {paymentLabel&&<small>{paymentLabel}</small>}
+      {paymentUnavailable&&<p id="payment-review" className="error" role="status">{methods[method]} 暫停使用，請改選付款方式。</p>}
+      {confirmPaymentEnv&&<div id="payment-review" className="supplyReview">
+        <p role="status">{paymentEnv?"付款環境已變更。":"請重新確認付款環境。"}目前為 {environmentLabel(payments.mode)}。</p>
+        <button className="outline" disabled={busy} onClick={()=>{setPaymentEnv(payments.mode);setError("");}}>確認目前付款環境</button>
+      </div>}
+    </div>}
     {offer?.discount>0&&<label className="comboChoice"><input type="checkbox" checked={Boolean(applied)} disabled={!!draft||busy}
       onChange={e=>setUseCombo(e.target.checked)}/><span>套用套餐優惠 <small>省 NT$ {offer.discount}</small></span></label>}
     <div className="total"><span>合計</span><b>NT$ {total}</b></div>
@@ -358,7 +385,7 @@ export default function Menu(){
     {scope&&!loaded&&(menuFailed?<div className="supplyReview"><p role="status">暫時無法確認餐點供應，餐單已保留。</p>
       <button className="outline" onClick={()=>refreshMenu(true)}>重新檢查供應</button></div>:
       <p role="status">正在確認餐點供應狀態…</p>)}
-    <button className="primary full" disabled={busy||!count||invalid||(!draft&&(paused||blocked||pickupBlocked||!loaded||!payments.methods.includes(method)))} onClick={submit}><Check size={17}/>{busy?"送單中…":draft?"重試同一張訂單":paused?"暫停接單":"確認送出訂單"}</button></aside></div>
+    <button className="primary full" disabled={busy||!count||invalid||(!draft&&(paused||blocked||pickupBlocked||!loaded||paymentUnavailable||confirmPaymentEnv))} onClick={submit}><Check size={17}/>{busy?"送單中…":draft?"重試同一張訂單":paused?"暫停接單":"確認送出訂單"}</button></aside></div>
     <span className="sr" aria-live="polite">{announcement}</span></main><Footer/>
     <button className="mobileCart" onClick={()=>setPanel(true)}><ShoppingBag size={18}/> 我的餐單 · {count} 件 <b>NT$ {total}</b></button></>;
 }

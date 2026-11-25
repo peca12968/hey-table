@@ -66,6 +66,43 @@ function database(beforeMigration=()=>{}){
   }
   return sqliteD1(sqlite);
 }
+test("order submission rejects changed payment options without creating an order or consuming a pickup slot",async t=>{
+  const db=database();
+  t.after(()=>db.sqlite.close());
+  const now=Date.parse("2026-11-25T12:00:00+08:00"),pickupSlot=Date.parse("2026-11-26T12:00:00+08:00");
+  t.mock.method(Date,"now",()=>now);
+  const runtime={...env,DB:db,TAPPAY_MODE:"production",TAPPAY_MERCHANT_LINE_PAY:"live-merchant"};
+  const place=(body,settings=runtime)=>api(new Request("https://order.example/api/orders",{method:"POST",
+    headers:{"Content-Type":"application/json"},body:JSON.stringify(body),
+  }),settings);
+  const draft={token:crypto.randomUUID(),mode:"pickup",pickupSlot,note:"保留備註",items:[{id:"sencha",qty:1,note:"無冰"}],
+    paymentMethod:"line_pay",paymentEnv:"demo"};
+  const changed=await place(draft);
+  assert.equal(changed.status,409);
+  assert.deepEqual(await changed.json(),{code:"payment_environment_changed",error:"付款環境已變更，請重新確認",
+    payments:{mode:"production",methods:["cash","line_pay"]}});
+  const disabled=await place({...draft,paymentMethod:"px_pay_plus",paymentEnv:"production"});
+  assert.equal(disabled.status,409);
+  assert.deepEqual(await disabled.json(),{code:"payment_unavailable",error:"此付款方式暫停使用",
+    payments:{mode:"production",methods:["cash","line_pay"]}});
+  assert.equal((await place({...draft,paymentEnv:"live"})).status,400);
+  assert.equal(db.sqlite.prepare("SELECT COUNT(*) AS count FROM orders").get().count,0);
+  const demo={...runtime,TAPPAY_MODE:"demo"},accepted=await place(draft,demo);
+  assert.equal(accepted.status,200);
+  const first=await accepted.json();
+  assert.equal(first.paymentEnv,"demo");
+  assert.equal(first.pickupSlot,pickupSlot);
+  assert.equal(first.note,draft.note);
+  assert.equal(first.items[0].note,draft.items[0].note);
+  assert.deepEqual(await (await place(draft)).json(),first);
+  assert.deepEqual(await (await place(draft,{...runtime,TAPPAY_MERCHANT_LINE_PAY:""})).json(),first);
+  assert.equal((await place({...draft,paymentEnv:"production"})).status,409);
+  const next=await place({...draft,token:crypto.randomUUID(),paymentEnv:"production"});
+  assert.equal(next.status,200);
+  assert.equal((await next.json()).paymentEnv,"production");
+  assert.equal(db.sqlite.prepare("SELECT COUNT(*) AS count FROM orders").get().count,2);
+});
+
 test("staff payment lookup distinguishes verified records, missing attempts, mode, retries and failures",async t=>{
   const db=database();
   t.after(()=>db.sqlite.close());

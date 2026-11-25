@@ -484,6 +484,9 @@ export async function api(request, env) {
     const source=staffPickup ? "staff" : null;
     const method=staffPickup ? "cash" : input.paymentMethod ?? "cash", config=settings(env);
     if(!Object.hasOwn(methods,method))return fail("付款方式無效");
+    const expectedEnv=method==="cash"?undefined:input.paymentEnv;
+    if(expectedEnv!==undefined&&!["demo","sandbox","production"].includes(expectedEnv))return fail("付款環境無效");
+    const sameEnvironment=expectedEnv===undefined||expectedEnv===config.mode;
     if(staffPickup && !Number.isSafeInteger(input.expectedTotal))return fail("請確認餐單金額");
     const selected = !staffPickup && Object.hasOwn(input,"comboVersion");
     if (selected && (typeof input.comboVersion !== "string" || !Number.isSafeInteger(input.expectedTotal)))
@@ -509,7 +512,7 @@ export async function api(request, env) {
     const [,,savedOrder,intake,exceeded,slotUsage]=await db.batch([
       expirePaymentHolds(db,created),
       stmt.bind(order.token,order.mode,source,order.table,order.note,lines,quote?.total??order.total,created,method,method==='cash'?'cash':config.mode,snapshot,
-        method==="cash"?null:created+paymentHoldMs,order.pickupSlot,available&&validPrice&&date?1:0,staffPickup?1:0,
+        method==="cash"?null:created+paymentHoldMs,order.pickupSlot,available&&sameEnvironment&&validPrice&&date?1:0,staffPickup?1:0,
         order.mode,order.table,lines,lines,date??today,...range,...(booked?[date,order.pickupSlot,portions,order.pickupSlot]:[])),
       db.prepare(selectOrders+" WHERE token=?").bind(order.token),
       db.prepare(`SELECT ${modePaused} AS mode_paused, ${tablePaused} AS table_paused`).bind(order.mode,order.table),
@@ -518,8 +521,12 @@ export async function api(request, env) {
       ...(booked?[pickupSlotUsage(db,order.pickupSlot,date)]:[]),
     ]);
     const row=savedOrder.results[0];
+    if(!row&&(!available||!sameEnvironment))return json({
+      code:!available?"payment_unavailable":"payment_environment_changed",
+      error:!available?"此付款方式暫停使用":"付款環境已變更，請重新確認",
+      payments:{mode:config.mode,methods:config.methods},
+    },409);
     if (!row && !validPrice) return fail(staffPickup?"菜單金額已變更，請重新整理後確認餐單。":"套餐優惠或金額已變更，請重新確認餐單",409);
-    if (!row && !available) return fail('此付款方式暫停使用',409);
     if (!row && !staffPickup && intake.results[0].mode_paused)
       return json({error:intakeNotice(order.mode),code:"intake_paused"},409);
     if (!row && intake.results[0].table_paused)
@@ -540,7 +547,8 @@ export async function api(request, env) {
       order.items.some(item => item.id === line.id && item.qty === line.qty && (item.note??"")===(line.note??"")));
     if ((row.source??null)!==source || (!staffPickup && saved.combo?.version !== input.comboVersion) ||
         ((selected||staffPickup) && saved.total !== input.expectedTotal) ||
-        row.payment_method!==method || row.mode!==order.mode || submittedTable!==order.table || row.note!==order.note ||
+        row.payment_method!==method || (expectedEnv!==undefined&&row.payment_env!==expectedEnv) ||
+        row.mode!==order.mode || submittedTable!==order.table || row.note!==order.note ||
         submittedSlot!==order.pickupSlot || !sameItems)
       return fail("送單識別碼已用於另一張訂單",409);
     return json(saved);

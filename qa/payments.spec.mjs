@@ -4,6 +4,104 @@ import {readFile} from "node:fs/promises";
 import {businessDate} from "../lib/business-day.mjs";
 const staff={Authorization:"Bearer local-test-kitchen"};
 
+test("mobile checkout can replace an unavailable wallet without losing a future pickup or notes",async({page,request})=>{
+  const day=businessDate(Date.now()+86400000),slot=Date.parse(day+"T14:00:00+08:00");
+  const available={mode:"demo",methods:["cash","px_pay_plus"]};
+  const posts=[];
+  let walletUnavailable=false,menuOffline=false;
+  await page.setViewportSize({width:360,height:780});
+  await page.route(/\/api\/menu(?:\?.*)?$/,async route=>{
+    if(menuOffline)return route.abort("connectionreset");
+    const upstream=await route.fetch(),body=await upstream.json();
+    return route.fulfill({status:upstream.status(),json:walletUnavailable?{...body,payments:available}:body});
+  });
+  await page.route("**/api/orders",route=>{
+    posts.push(route.request().postDataJSON());
+    if(walletUnavailable)return route.continue();
+    walletUnavailable=true;menuOffline=true;
+    return route.fulfill({status:409,json:{error:"此付款方式暫停使用",code:"payment_unavailable",payments:available}});
+  });
+  await page.goto("/");
+  const booking=page.getByLabel("取餐日期",{exact:true});
+  await booking.selectOption(day);
+  await page.getByRole("button",{name:"加入日式熱煎茶",exact:true}).click();
+  await page.getByRole("button",{name:/我的餐單/}).click();
+  const choose=page.getByRole("combobox",{name:"付款方式"}),submit=page.getByRole("button",{name:"確認送出訂單"});
+  const time=page.getByLabel("自取時段"),note=page.getByLabel(/訂單備註/);
+  await time.selectOption(String(slot));
+  await note.fill("保留預約備註");
+  await page.locator(".itemNotes summary").click();
+  await page.getByLabel("日式熱煎茶備註").fill("無冰");
+  await choose.selectOption("line_pay");
+  await submit.click();
+  await expect(page.getByText("LINE Pay 暫停使用，請改選付款方式。")).toBeVisible();
+  await expect(choose).toHaveValue("line_pay");
+  await expect(submit).toBeDisabled();
+  await expect(time).toHaveValue(String(slot));
+  await expect(note).toHaveValue("保留預約備註");
+  await expect(page.getByLabel("日式熱煎茶備註")).toHaveValue("無冰");
+  await choose.selectOption("px_pay_plus");
+  expect(posts).toHaveLength(1);
+  menuOffline=false;
+  await page.evaluate(()=>window.dispatchEvent(new Event("online")));
+  await expect(submit).toBeEnabled();
+  await submit.click();
+  await page.waitForURL("**/ticket#*");
+  expect(posts).toHaveLength(2);
+  expect(posts[0]).toMatchObject({paymentMethod:"line_pay",paymentEnv:"demo",pickupSlot:slot});
+  expect(posts[1]).toMatchObject({paymentMethod:"px_pay_plus",paymentEnv:"demo",pickupSlot:slot,note:"保留預約備註",
+    items:[{id:"sencha",qty:1,note:"無冰"}]});
+  expect(posts[1].token).not.toBe(posts[0].token);
+  expect((await request.get("/api/ticket",{headers:{"X-Ticket":posts[0].token}})).status()).toBe(404);
+  const ticket=await (await request.get("/api/ticket",{headers:{"X-Ticket":posts[1].token}})).json();
+  expect(ticket).toMatchObject({pickupSlot:slot,paymentMethod:"px_pay_plus",paymentEnv:"demo"});
+});
+
+test("stale checkout confirmation must be renewed for each changed payment environment",async({page})=>{
+  let mode="demo";
+  const sends=[];
+  await page.setViewportSize({width:360,height:780});
+  await page.route(/\/api\/menu(?:\?.*)?$/,async route=>{
+    const upstream=await route.fetch(),body=await upstream.json();
+    return route.fulfill({status:upstream.status(),json:{...body,payments:{mode,methods:["cash","line_pay"]}}});
+  });
+  await page.route("**/api/orders",route=>{
+    sends.push(route.request().postDataJSON());
+    if(sends.length===1){
+      mode="sandbox";
+      return route.fulfill({status:409,json:{error:"付款環境已變更，請重新確認",code:"payment_environment_changed",
+        payments:{mode,methods:["cash","line_pay"]}}});
+    }
+    return route.fulfill({json:{id:701,mode:"table",table:"A06",created:Date.now()}});
+  });
+  await page.goto("/?table=A06");
+  await page.getByRole("button",{name:"加入日式熱煎茶",exact:true}).click();
+  const cart=page.getByRole("button",{name:/我的餐單/});
+  await cart.click();
+  const choose=page.getByRole("combobox",{name:"付款方式"}),submit=page.getByRole("button",{name:"確認送出訂單"});
+  const confirm=page.getByRole("button",{name:"確認目前付款環境"});
+  await choose.selectOption("line_pay");
+  await expect(submit).toBeEnabled();
+  mode="production";
+  await page.reload();
+  await cart.click();
+  await expect(page.getByText(/付款環境已變更。.*正式付款/)).toBeVisible();
+  await expect(choose).toHaveValue("line_pay");
+  await expect(submit).toBeDisabled();
+  await confirm.click();
+  expect(sends).toEqual([]);
+  await submit.click();
+  await expect(page.getByText(/付款環境已變更。.*TapPay 測試環境/)).toBeVisible();
+  await expect(submit).toBeDisabled();
+  await confirm.click();
+  expect(sends).toHaveLength(1);
+  await submit.click();
+  await page.waitForURL("**/ticket#*");
+  expect(sends.map(({paymentMethod,paymentEnv})=>({paymentMethod,paymentEnv}))).toEqual([
+    {paymentMethod:"line_pay",paymentEnv:"production"},{paymentMethod:"line_pay",paymentEnv:"sandbox"},
+  ]);
+});
+
 test("mobile payment review distinguishes an unconfirmed, unavailable and verified lookup",async({page})=>{
   const id=91,date="2026-11-24",next=Promise.withResolvers();
   let paymentState="authorized",calls=0;

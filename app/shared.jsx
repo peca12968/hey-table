@@ -18,6 +18,6 @@ export function Footer(){return <footer className="shell bottom"><span>禾日食
 export async function request(url,options) {
   const res=await fetch(url,{cache:"no-store",...options});
   const body=await res.json();
-  if(!res.ok){const e=new Error(body.error||"無法完成操作"); e.status=res.status;e.code=body.code;throw e;}
+  if(!res.ok){const e=new Error(body.error||"無法完成操作"); e.status=res.status;e.code=body.code;e.payments=body.payments;throw e;}
   return body;
 }

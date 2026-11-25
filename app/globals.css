@@ -16,6 +16,7 @@
 .payBox h2,.payBox p{margin:0}.payBox form,.payBox label{display:grid;gap:.5rem}
 .payBox input,.payField,.payChoice select{min-height:42px;border:1px solid #b9b3a7;border-radius:6px;padding:.45rem;background:white;color:#28291f;font:inherit}
 .payBox .actions{flex-wrap:wrap}.payChoice small{color:#655c4e}
+.payChoice>p,.payChoice>.supplyReview{margin:0}
 .cartQuote{padding:.75rem 0;border-top:1px solid #ded8cf;text-align:start;font-size:.94rem}
 .quoteHead,.quoteHead span{display:flex;align-items:center;gap:.4rem}
 .quoteHead{justify-content:space-between}
