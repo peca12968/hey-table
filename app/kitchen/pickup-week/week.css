@@ -1,0 +1,10 @@
+.pickupWeekControls{align-items:center;gap:8px 16px}
+.pickupWeekControls p{margin:0}
+.pickupWeekList{list-style:none;padding:0;display:grid;gap:12px}
+.pickupWeekDay{display:grid;grid-template-columns:minmax(100px,.8fr) minmax(0,3fr) auto;align-items:center;gap:12px}
+.pickupWeekDate h2{font-family:inherit;font-size:1.15rem;margin:0 0 2px}
+.pickupWeekDate span,.pickupWeekMetrics dt{color:var(--muted);font-size:.85rem}
+.pickupWeekMetrics{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:8px;margin:0}
+.pickupWeekMetrics dd{font-weight:700;margin:0;font-variant-numeric:tabular-nums}
+.pickupWeekDay .actions{gap:8px}.pickupWeek .outline{min-height:42px}
+@media(max-width:850px){.pickupWeekDay{grid-template-columns:1fr}.pickupWeekMetrics{grid-template-columns:repeat(auto-fit,minmax(54px,1fr))}}

@@ -82,7 +82,10 @@ export default function PickupRoster(){
   }
 
   return <><Header/><main className="shell section pickupRoster">
-    <a className="textLink rosterControl" href="/kitchen">返回店家接單台</a>
+    <div className="actions rosterControl">
+      <a className="textLink" href="/kitchen">返回店家接單台</a>
+      <a className="textLink" href="/kitchen/pickup-week">七天自取預約總覽</a>
+    </div>
     <h1>自取預約清單</h1>
     <div className="actions rosterControl">
       <label>取餐日期<input type="date" value={date} disabled={!today||search===null} onChange={event=>choose(event.target.value,null)}/></label>

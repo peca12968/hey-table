@@ -630,6 +630,60 @@ test("mobile staff preview a slot batch, recover a conflict and preserve existin
   }
 });
 
+test("mobile staff compare seven days and follow date-scoped roster and settings links",async({page,request})=>{
+  page.setDefaultTimeout(9000);
+  const date=businessDate(Date.now()+5*86_400_000),paused=businessDate(Date.now()+6*86_400_000);
+  const start=Date.parse(date+"T14:00:00+08:00"),end=start+900_000;
+  const headers={Authorization:"Bearer local-test-kitchen"},endpoint="/api/kitchen/pickup-slots",token=randomUUID();
+  const snapshot=async day=>(await (await request.get(endpoint+"?date="+day,{headers})).json());
+  const write=(slot,capacity,revision)=>request.patch(endpoint,{headers,data:{date,start:slot,capacity,revision}});
+  const pause=(accepting,revision)=>request.patch("/api/kitchen/pickup-day",{headers,data:{date:paused,accepting,revision}});
+  const find=(report,slot)=>report.slots.find(item=>item.start===slot);
+  const before=await snapshot(date),intake=(await snapshot(paused)).intake;
+  let booked=false;
+  try{
+    expect((await write(start,1,find(before,start).revision)).ok()).toBe(true);
+    expect((await write(end,0,find(before,end).revision)).ok()).toBe(true);
+    expect((await pause(false,intake.revision)).ok()).toBe(true);
+    const response=await request.post("/api/orders",{data:{token,mode:"pickup",note:"",pickupSlot:start,items:[{id:"sencha",qty:1}]}});
+    expect(response.ok()).toBe(true);
+    booked=true;
+    await page.setViewportSize({width:360,height:780});
+    await page.addInitScript(()=>sessionStorage.setItem("he-ri-staff","local-test-kitchen"));
+    await page.route("**/api/kitchen/pickup-week",route=>route.fulfill({status:503,json:{error:"總覽暫時無法讀取。"}}),{times:1});
+    await page.goto("/kitchen");
+    await page.getByRole("link",{name:"七天自取預約總覽"}).click();
+    await expect(page.getByRole("heading",{name:"七天自取預約總覽"})).toBeVisible();
+    await expect(page.getByRole("alert")).toHaveText("總覽暫時無法讀取。");
+    await page.getByRole("button",{name:"重新擷取"}).click();
+    const rows=page.locator(".pickupWeekList > li");
+    await expect(rows).toHaveCount(7);
+    const selected=rows.filter({has:page.locator(`time[datetime="${date}"]`)});
+    const suspended=rows.filter({has:page.locator(`time[datetime="${paused}"]`)});
+    await expect(selected.locator("dl")).toHaveText("有效預約1 張已占用1 份可預約時段34滿額時段1停收時段1");
+    await expect(suspended.getByText("整日停收",{exact:true})).toBeVisible();
+    expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBe(360);
+    await selected.getByRole("link",{name:/的預約清單$/}).click();
+    await expect(page).toHaveURL(new RegExp("/kitchen/pickup-roster\\?date="+date+"$"));
+    await expect(page.getByRole("region",{name:"14:00～14:15",exact:true})).toBeVisible();
+    await page.getByRole("link",{name:"七天自取預約總覽"}).click();
+    await selected.getByRole("link",{name:/的時段設定$/}).click();
+    await expect(page).toHaveURL(new RegExp("/kitchen/pickup-slots\\?date="+date+"$"));
+    await page.reload();
+    await expect(page.getByLabel("取餐日期")).toHaveValue(date);
+    await expect(page.getByRole("article",{name:"14:00～14:15",exact:true}).getByText("已占用 1 份 · 剩餘 0 份")).toBeVisible();
+  }finally{
+    if(booked)await request.post("/api/ticket/cancel",{headers:{"X-Ticket":token},data:{}});
+    const current=await snapshot(date);
+    for(const slot of [start,end]){
+      const prior=find(before,slot),next=find(current,slot);
+      if(prior.capacity!==next.capacity)await write(slot,prior.capacity,next.revision);
+    }
+    const currentIntake=(await snapshot(paused)).intake;
+    if(currentIntake.accepting!==intake.accepting)await pause(intake.accepting,currentIntake.revision);
+  }
+});
+
 test("mobile staff copy selected limits across dates and recompare after a source change",async({page,request})=>{
   page.setDefaultTimeout(9000);
   const sourceDate=businessDate(Date.now()+4*86_400_000),date=businessDate(Date.now()+5*86_400_000);

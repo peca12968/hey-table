@@ -1311,6 +1311,63 @@ test("staff pickup roster groups one Taipei day and excludes private receipt and
   }
 });
 
+test("staff pickup week uses Taipei dates and counts available slots after expiring payment holds",async t=>{
+  const db=database();
+  t.after(()=>db.sqlite.close());
+  const date="2026-11-30",pausedDate="2026-12-01",openDate="2026-12-02";
+  const start=(day,time)=>Date.parse(day+"T"+time+":00+08:00");
+  let now=start(date,"11:15");
+  t.mock.method(Date,"now",()=>now);
+  const runtime={DB:db,STAFF_KEY:"fixture-staff"},staff={Authorization:"Bearer fixture-staff"};
+  const call=headers=>api(new Request("https://order.example/api/kitchen/pickup-week",{headers}),runtime);
+  const add=db.sqlite.prepare(`INSERT INTO orders(token,mode,pickup_slot,note,items,total,created,status,payment_method,payment_due_at)
+    VALUES (?,?,?,'private note',?,90,?,?,?,?)`);
+  const order=(slot,qty,{mode="pickup",status="pending",method="cash",due=null}={})=>
+    add.run(crypto.randomUUID(),mode,slot,JSON.stringify([{id:"sencha",qty}]),now-900_000,status,method,due).lastInsertRowid;
+  const limit=db.sqlite.prepare("INSERT INTO pickup_slot_limits VALUES (?,?,1)");
+  limit.run(start(date,"11:30"),1);
+  limit.run(start(date,"11:45"),5);
+  limit.run(start(date,"12:00"),0);
+  limit.run(start(openDate,"12:00"),4);
+  order(start(date,"11:30"),2,{status:"completed"});
+  order(start(date,"11:45"),2);
+  order(start(date,"11:45"),3,{status:"ready"});
+  order(start(date,"11:45"),8,{status:"cancelled"});
+  order(start(date,"11:45"),8,{mode:"table"});
+  order(null,8);
+  order(start("2026-11-29","13:00"),8);
+  order(start("2026-12-07","13:00"),8);
+  order(start(pausedDate,"12:00"),1);
+  const overdue=order(start(openDate,"12:00"),4,{method:"line_pay",due:now});
+  const underway=order(start(openDate,"12:00"),2,{method:"line_pay",due:now});
+  db.sqlite.prepare("INSERT INTO payment_attempts(order_id,reference,merchant,state,created) VALUES (?,'private-ref','fixture','pending',?)").run(underway,now-1000);
+  db.sqlite.prepare("INSERT INTO pickup_day_intake VALUES (?,0,1)").run(pausedDate);
+  db.sqlite.prepare("INSERT INTO order_intake VALUES ('pickup',0,1)").run();
+  assert.equal((await call()).status,403);
+  const response=await call(staff);
+  assert.equal(response.status,200);
+  assert.equal(response.headers.get("Cache-Control"),"no-store");
+  const expectedEmpty={accepting:true,ended:false,bookings:0,portions:0,available:36,full:0,closed:0};
+  assert.deepEqual(await response.json(),{capturedAt:now,onlineAccepting:false,days:[
+    {date,accepting:true,ended:false,bookings:3,portions:7,available:31,full:1,closed:1},
+    {date:pausedDate,accepting:false,ended:false,bookings:1,portions:1,available:0,full:0,closed:0},
+    {date:openDate,...expectedEmpty,bookings:1,portions:2},
+    ...["2026-12-03","2026-12-04","2026-12-05","2026-12-06"].map(day=>({date:day,...expectedEmpty})),
+  ]});
+  const status=id=>db.sqlite.prepare("SELECT status FROM orders WHERE id=?").get(id).status;
+  assert.equal(status(overdue),"cancelled");
+  assert.equal(status(underway),"pending");
+  now=start(date,"19:16");
+  assert.deepEqual((await (await call(staff)).json()).days[0],{
+    date,accepting:true,ended:true,bookings:3,portions:7,available:0,full:0,closed:0,
+  });
+  now=start(pausedDate,"00:00");
+  const moved=(await (await call(staff)).json()).days;
+  assert.equal(moved[0].date,pausedDate);
+  assert.equal(moved.at(-1).date,"2026-12-07");
+  assert.equal(moved.at(-1).bookings,1);
+});
+
 test("pickup slot batches compare every revision and cutoff before writing any limit",async t=>{
   const db=database();
   t.after(()=>db.sqlite.close());

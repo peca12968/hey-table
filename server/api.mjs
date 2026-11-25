@@ -16,6 +16,7 @@ import {canReschedulePickup,capacityAtPickupSlot,editablePickupSlots,orderPortio
   suggestPickupSlot,usedAtPickupSlot} from "./pickup-slots.mjs";
 import {pickupCalendar} from "./pickup-calendar.mjs";
 import {pickupRoster} from "./pickup-roster.mjs";
+import {pickupWeek} from "./pickup-week.mjs";
 import {cashCorrectionHistory,cashReceiptColumn,collectCash,correctCashReceipt,dailyCashReceipts} from "./cash-receipts.mjs";
 import {cashCloseVersion,cashCloseVersions,saveCashClose} from "./cash-close-versions.mjs";
 import {cashAmount} from "../lib/cash-reconciliation.mjs";
@@ -338,6 +339,9 @@ export async function api(request, env) {
     const date=url.searchParams.get("date");
     if(!businessDayRange(date))return fail("請選擇有效的取餐日期。");
     return json({date,defaultCapacity:pickupSlotCapacity,...await pickupSlotLimits(db,date,Date.now())});
+  }
+  if(path==="/api/kitchen/pickup-week"&&method==="GET"){
+    return json(await pickupWeek(db,Date.now()));
   }
   if(path==="/api/kitchen/pickup-slots/history"&&method==="GET"){
     const dates=url.searchParams.getAll("date"),cursors=url.searchParams.getAll("before"),[date]=dates,[cursor]=cursors;

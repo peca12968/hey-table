@@ -1,8 +1,8 @@
 "use client";
-import {useEffect,useState} from "react";
+import {useEffect,useState,useSyncExternalStore} from "react";
 import {Header,Footer,request} from "../../shared";
 import {businessDate} from "../../../lib/business-day.mjs";
-import {pickupRosterPath,pickupWindow} from "../../../lib/pickup-slots.mjs";
+import {pickupRosterPath,pickupSettingsPath,pickupWindow} from "../../../lib/pickup-slots.mjs";
 import BatchSlotLimits from "./batch-slot-limits";
 import CopySlotLimits from "./copy-slot-limits";
 import PickupLimitHistory from "./limit-history";
@@ -14,6 +14,17 @@ function staffHeaders(){
   return key?{Authorization:"Bearer "+key}:{};
 }
 const readSlots=(date,signal)=>request(endpoint+"?date="+encodeURIComponent(date),{headers:staffHeaders(),signal});
+const locationEvent="pickup-settings-date";
+const browserDate=()=>new URLSearchParams(window.location.search).get("date");
+const serverDate=()=>undefined;
+function subscribeDate(notify){
+  window.addEventListener(locationEvent,notify);
+  window.addEventListener("popstate",notify);
+  return ()=>{
+    window.removeEventListener(locationEvent,notify);
+    window.removeEventListener("popstate",notify);
+  };
+}
 
 function SlotLimit({slot,date,defaultCapacity,busy,onSave}){
   const windowText=pickupWindow(slot.start);
@@ -35,11 +46,12 @@ function SlotLimit({slot,date,defaultCapacity,busy,onSave}){
 }
 
 export default function PickupSlotLimits(){
-  const [date,setDate]=useState(null),[snapshot,setSnapshot]=useState(null),[revision,setRevision]=useState(0);
+  const date=useSyncExternalStore(subscribeDate,browserDate,serverDate);
+  const [snapshot,setSnapshot]=useState(null),[revision,setRevision]=useState(0);
   const [includeEnded,setIncludeEnded]=useState(false),[busy,setBusy]=useState(false);
   const [notice,setNotice]=useState(""),[loadError,setLoadError]=useState(""),[saveError,setSaveError]=useState("");
   useEffect(()=>{
-    if(date==="")return;
+    if(date===undefined||date==="")return;
     const controller=new AbortController(),target=date??businessDate(Date.now());
     readSlots(target,AbortSignal.any([controller.signal,AbortSignal.timeout(10_000)])).then(value=>{
       if(!controller.signal.aborted){setSnapshot(value);setLoadError("");setBusy(false);}
@@ -66,12 +78,17 @@ export default function PickupSlotLimits(){
     finally{setRevision(value=>value+1);}
   }
   return <><Header/><main className="shell section pickupLimits">
-    <a className="textLink" href="/kitchen">返回店家接單台</a>
+    <div className="actions">
+      <a className="textLink" href="/kitchen">返回店家接單台</a>
+      <a className="textLink" href="/kitchen/pickup-week">七天自取預約總覽</a>
+    </div>
     <h1>管理預約時段</h1>
     <p>輸入 0 暫停該時段，留空使用預設份數。已成立的預約會保留。</p>
     <div className="actions pickupLimitControls">
-      <label>取餐日期<input type="date" value={date??snapshot?.date??""} disabled={busy||(!snapshot&&!loadError&&date===null)} onChange={event=>{
-        setDate(event.target.value);setNotice("");setSaveError("");setLoadError("");
+      <label>取餐日期<input type="date" value={date??snapshot?.date??""} disabled={date===undefined||busy||(!snapshot&&!loadError&&date===null)} onChange={event=>{
+        window.history.replaceState(window.history.state,"",pickupSettingsPath(event.target.value));
+        window.dispatchEvent(new Event(locationEvent));
+        setNotice("");setSaveError("");setLoadError("");
       }}/></label>
       <button className="outline" disabled={busy||date===""} onClick={refresh}>重新載入</button>
     </div>
