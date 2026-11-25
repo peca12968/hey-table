@@ -263,6 +263,7 @@ export default function Kitchen(){
     <div className="actions"><a className="outline" href="/kitchen/create-pickup">代建自取單</a>
       <a className="outline" href="/kitchen/prep">查看備料單</a>
       <a className="outline" href="/kitchen/daily">每日訂單摘要</a>
+      <a className="outline" href="/kitchen/refunds">示範退款紀錄</a>
       <a className="outline" href="/kitchen/cash-close">現金日結</a>
       <a className="outline" href="/kitchen/station-work">分站看板</a>
       <a className="outline" href="/kitchen/pickup-display">櫃台取餐看板</a>

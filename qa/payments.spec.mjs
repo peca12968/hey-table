@@ -397,6 +397,57 @@ test("a refund reviewed before handoff cannot cancel an order completed by anoth
   expect(stored.statusHistory.filter(event=>event.status===stored.status)).toHaveLength(1);
 });
 
+test("mobile staff can print and download the same dated refund handoff after a newer refund arrives",async({page,request})=>{
+  const date=businessDate(Date.now()),endpoint="/api/kitchen/demo-refunds";
+  async function refund(paymentMethod){
+    const token=randomUUID(),ticket={"X-Ticket":token};
+    const created=await request.post("/api/orders",{data:{token,mode:"pickup",note:"交班下載不可包含這段備註",
+      paymentMethod,items:[{id:"sencha",qty:1}]}});
+    expect(created.ok()).toBe(true);
+    const {id,total}=await created.json();
+    const started=await (await request.post("/api/payments/start",{headers:ticket,data:{}})).json();
+    expect((await request.post("/api/payments/demo",{headers:ticket,data:{ref:started.attempt.ref,outcome:"paid"}})).ok()).toBe(true);
+    expect((await request.patch("/api/kitchen/demo-refund",{headers:staff,
+      data:{id,expectedStatus:"pending",expectedTotal:total}})).ok()).toBe(true);
+    return id;
+  }
+  const first=await refund("line_pay");
+  expect((await request.get(endpoint+"?date="+date)).status()).toBe(403);
+  await page.setViewportSize({width:360,height:780});
+  await page.addInitScript(()=>{
+    sessionStorage.setItem("he-ri-staff","local-test-kitchen");
+    window.print=()=>document.body.dataset.printed="yes";
+  });
+  await page.goto("/kitchen");
+  const loaded=page.waitForResponse(response=>new URL(response.url()).pathname===endpoint&&response.ok());
+  await page.getByRole("link",{name:"示範退款紀錄"}).click();
+  const snapshot=await (await loaded).json();
+  expect(snapshot.date).toBe(date);
+  const row=id=>page.getByRole("rowheader",{name:new RegExp("#"+String(id).padStart(4,"0"))});
+  await expect(row(first)).toContainText("LINE Pay");
+  await expect(page.getByText("交班下載不可包含這段備註")).toHaveCount(0);
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBe(360);
+
+  const newer=await refund("px_pay_plus");
+  await page.getByRole("button",{name:"列印退款紀錄"}).click();
+  await expect(page.locator("body")).toHaveAttribute("data-printed","yes");
+  await page.emulateMedia({media:"print"});
+  await expect(page.getByLabel("退款日期")).toBeHidden();
+  await expect(row(first)).toBeVisible();
+  await expect(row(newer)).toHaveCount(0);
+  await page.emulateMedia({media:"screen"});
+  const download=page.getByRole("button",{name:"下載退款 JSON"});
+  const [file]=await Promise.all([page.waitForEvent("download"),download.click()]);
+  expect(file.suggestedFilename()).toContain("hey-table-demo-refunds-"+date+"-");
+  expect(JSON.parse(await readFile(await file.path(),"utf8"))).toEqual(snapshot);
+
+  await page.getByRole("button",{name:"重新擷取"}).click();
+  await expect(row(newer)).toContainText("全支付");
+  await page.getByLabel("退款日期").fill("2001-01-01");
+  await expect(page.getByText("這一天沒有可查詢的示範退款。")).toBeVisible();
+  await expect(row(first)).toHaveCount(0);
+});
+
 test("table checkout simulates failure, retries and restores the paid LINE Pay receipt",async({page,request})=>{
   await page.goto("/?table=A04");
   await page.getByRole("button",{name:"加入雞肉親子丼",exact:true}).click();

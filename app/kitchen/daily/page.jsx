@@ -101,7 +101,8 @@ export default function DailyOperations() {
   }
   return <><Header/><main className="shell section dailyOperations">
     <div className="actions dailyControl"><a className="textLink" href="/kitchen">返回店家接單台</a>
-      <a className="textLink" href="/kitchen/cash-close">查看現金日結</a></div>
+      <a className="textLink" href="/kitchen/cash-close">查看現金日結</a>
+      <a className="textLink" href="/kitchen/refunds">查看示範退款</a></div>
     <h1>每日訂單摘要</h1>
     <p>按台灣日期查看當天成立的餐單。金額為已交餐單的原成交金額，包含示範單。</p>
     <form className="actions dailyDate dailyControl" onSubmit={search}>

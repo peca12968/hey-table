@@ -23,6 +23,7 @@ const fail = (message,status=400) => json({error:message},status);
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 import {latestState,payableForKitchen,paymentApi,checkKitchenPayment,refundDemoPayment} from "./payment-api.mjs";
+import {demoRefundReport} from "./demo-refund-report.mjs";
 import {settings} from "./tappay.mjs";
 import {methods} from "../lib/payments.mjs";
 import {estimate} from "@peca12968/pickup-window";
@@ -159,6 +160,12 @@ export async function api(request, env) {
   }
   if(path==="/api/kitchen/payment" && method==="PATCH")return checkKitchenPayment(env,input.id);
   if(path==="/api/kitchen/demo-refund" && method==="PATCH")return refundDemoPayment(env,input);
+  if(path==="/api/kitchen/demo-refunds"&&method==="GET"){
+    const capturedAt=Date.now(),date=url.searchParams.get("date")??businessDate(capturedAt);
+    const range=businessDayRange(date);
+    if(!range)return fail("請選擇有效的退款日期。");
+    return json(await demoRefundReport(db,date,range,capturedAt));
+  }
   if(path==="/api/kitchen/cash-receipt"&&method==="POST"){
     const {id,operationId,expectedTotal,tendered}=input;
     if(!Number.isSafeInteger(id)||id<1||typeof operationId!=="string"||!uuid.test(operationId)||

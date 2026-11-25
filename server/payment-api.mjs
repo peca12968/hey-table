@@ -37,17 +37,23 @@ export async function refundDemoPayment(env,{id,expectedTotal,expectedStatus}){
     !["pending","preparing","ready","completed","cancelled"].includes(expectedStatus))
     return fail("請重新核對餐單狀態與原付款金額。",400);
   const db=env.DB,now=Date.now();
-  const eligibleOrder="id=? AND total=? AND payment_env='demo' AND payment_method<>'cash'";
-  const [, ,current]=await db.batch([
+  const [,,,current]=await db.batch([
+    db.prepare(`INSERT INTO demo_refunds(order_id,attempt_id,amount,previous_status,refunded_at)
+      SELECT orders.id,attempt.id,orders.total,orders.status,? FROM orders JOIN payment_attempts AS attempt
+      ON attempt.id=(SELECT id FROM payment_attempts WHERE order_id=orders.id ORDER BY id DESC LIMIT 1)
+      WHERE orders.id=? AND orders.total=? AND orders.status=? AND orders.payment_env='demo'
+      AND orders.payment_method<>'cash' AND attempt.state='paid' ON CONFLICT(order_id) DO NOTHING`)
+      .bind(now,id,expectedTotal,expectedStatus),
     db.prepare(`UPDATE payment_attempts SET state='refunded',redirect_url=NULL
-      WHERE id=(SELECT id FROM payment_attempts WHERE order_id=? ORDER BY id DESC LIMIT 1)
-      AND state='paid' AND EXISTS(SELECT 1 FROM orders WHERE ${eligibleOrder} AND status=?)`)
-      .bind(id,id,expectedTotal,expectedStatus),
+      WHERE id=(SELECT attempt_id FROM demo_refunds WHERE order_id=? AND amount=? AND previous_status=?)
+      AND state='paid'`).bind(id,expectedTotal,expectedStatus),
     db.prepare(`UPDATE orders SET status='cancelled',
       status_history=json_insert(COALESCE(status_history,'[]'),'$[#]',
-        json_object('from',status,'status','cancelled','at',?,'actor','demo_refund'))
-      WHERE ${eligibleOrder} AND status=? AND status IN ('pending','preparing','ready') AND ${latestState}='refunded'`)
-      .bind(now,id,expectedTotal,expectedStatus),
+        json_object('from',status,'status','cancelled','at',
+          (SELECT refunded_at FROM demo_refunds WHERE order_id=orders.id),'actor','demo_refund'))
+      WHERE id=? AND status IN ('pending','preparing','ready')
+      AND EXISTS (SELECT 1 FROM demo_refunds WHERE order_id=orders.id AND amount=? AND previous_status=? AND previous_status=orders.status)
+      AND ${latestState}='refunded'`).bind(id,expectedTotal,expectedStatus),
     db.prepare(`SELECT id,total,status,payment_env,payment_method,${latestState} AS payment_state FROM orders WHERE id=?`).bind(id),
   ]);
   const order=current.results[0];

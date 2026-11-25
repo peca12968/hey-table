@@ -40,6 +40,17 @@ export const paymentAttempts = sqliteTable("payment_attempts", {
   kitchenPayableAt: integer("kitchen_payable_at"),
   checked: integer("checked").notNull().default(0),
 }, t => [index("attempt_order").on(t.orderId,t.id)]);
+export const demoRefunds = sqliteTable("demo_refunds", {
+  orderId: integer("order_id").primaryKey().notNull().references(()=>orders.id),
+  attemptId: integer("attempt_id").notNull().unique().references(()=>paymentAttempts.id),
+  amount: integer("amount").notNull(),
+  previousStatus: text("previous_status").notNull(),
+  refundedAt: integer("refunded_at").notNull(),
+}, t => [
+  check("demo_refunds_amount",sql`${t.amount} > 0`),
+  check("demo_refunds_status",sql`${t.previousStatus} IN ('pending','preparing','ready','completed','cancelled')`),
+  index("demo_refunds_time").on(t.refundedAt,t.orderId),
+]);
 export const cashReceipts = sqliteTable("cash_receipts", {
   orderId: integer("order_id").primaryKey().notNull().references(()=>orders.id),
   operationId: text("operation_id").notNull().unique(),

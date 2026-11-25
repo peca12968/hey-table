@@ -452,6 +452,7 @@ test("staff demo refunds commit with cancellation, release a booking, preserve c
     BEGIN SELECT RAISE(ABORT,'simulated cancellation failure'); END;`);
   await assert.rejects(refund(pending,"pending"),/simulated cancellation failure/);
   assert.equal((await receipt(pending)).paymentState,"paid");
+  assert.equal(db.sqlite.prepare("SELECT COUNT(*) AS count FROM demo_refunds").get().count,0);
   assert.equal(await remaining(),10);
   db.sqlite.exec("DROP TRIGGER reject_cancel");
   const done={id:pending.id,total:90,status:"cancelled",paymentState:"refunded"};
@@ -465,6 +466,62 @@ test("staff demo refunds commit with cancellation, release a booking, preserve c
     {id:completed.id,total:90,status:"completed",paymentState:"refunded"});
   assert.equal((await receipt(completed)).status,"completed");
   assert.equal((await receipt(live)).paymentState,"paid");
+  assert.equal(db.sqlite.prepare("SELECT COUNT(*) AS count FROM demo_refunds").get().count,2);
+});
+
+test("refund handoff uses Taiwan transaction dates, preserves the first refund time and reads timed legacy cancellations",async t=>{
+  const day="2026-11-25",boundary=Date.parse(day+"T00:00:00+08:00");
+  let now=boundary-1;
+  t.mock.method(Date,"now",()=>now);
+  let cancelledId,undatedId;
+  const db=database((tag,sqlite)=>{
+    if(tag!=="0027_demo_refunds")return;
+    const add=sqlite.prepare(`INSERT INTO orders(token,mode,note,items,total,payment_method,payment_env,status,created,status_history)
+      VALUES (?,'table','不應匯出的備註','[]',45,'line_pay','demo',?,?,?)`);
+    cancelledId=Number(add.run(crypto.randomUUID(),"cancelled",boundary-10000,
+      JSON.stringify([{from:"ready",status:"cancelled",at:boundary,actor:"demo_refund"}])).lastInsertRowid);
+    undatedId=Number(add.run(crypto.randomUUID(),"completed",boundary-20000,null).lastInsertRowid);
+    const pay=sqlite.prepare(`INSERT INTO payment_attempts(order_id,reference,merchant,state,created) VALUES (?,?,'demo','refunded',?)`);
+    for(const id of [cancelledId,undatedId])pay.run(id,"older-"+id,boundary-10000);
+  });
+  t.after(()=>db.sqlite.close());
+  const runtime={DB:db,STAFF_KEY:"fixture-staff"},staff={Authorization:"Bearer fixture-staff"};
+  const endpoint="/api/kitchen/demo-refunds";
+  const call=(path,headers=staff)=>api(new Request("https://order.example"+path,{headers}),runtime);
+  const place=db.sqlite.prepare(`INSERT INTO orders(token,mode,note,items,total,payment_method,payment_env,status,created)
+    VALUES (?,'pickup','不應匯出的備註','[]',90,'px_pay_plus','demo','completed',?)`);
+  const pay=db.sqlite.prepare(`INSERT INTO payment_attempts(order_id,reference,merchant,state,created) VALUES (?,?,'demo','paid',?)`);
+  const purchase=()=>{
+    const id=Number(place.run(crypto.randomUUID(),boundary-86_400_000).lastInsertRowid);
+    pay.run(id,"newer-"+id,boundary-10000);
+    return id;
+  };
+  const refund=id=>api(new Request("https://order.example/api/kitchen/demo-refund",{method:"PATCH",
+    headers:{...staff,"Content-Type":"application/json"},body:JSON.stringify({id,expectedTotal:90,expectedStatus:"completed"}),
+  }),runtime);
+  const yesterday=purchase(),today=purchase();
+  assert.equal((await refund(yesterday)).status,200);
+  now=boundary;
+  assert.equal((await refund(today)).status,200);
+  now+=10_000;
+  assert.equal((await refund(yesterday)).status,200);
+  assert.equal((await refund(today)).status,200);
+  assert.equal((await call(endpoint,{})).status,403);
+  assert.equal((await call(endpoint+"?date=2026-02-30")).status,400);
+  const response=await call(endpoint);
+  assert.equal(response.headers.get("Cache-Control"),"no-store");
+  const raw=await response.text();
+  assert.ok(!raw.includes("不應匯出的備註"));
+  assert.deepEqual(JSON.parse(raw),{format:"hey-table.demo-refunds.v1",date:day,timeZone:"Asia/Taipei",capturedAt:now,
+    refunds:[
+      {orderId:today,mode:"pickup",paymentMethod:"px_pay_plus",amount:90,previousStatus:"completed",refundedAt:boundary,source:"recorded"},
+      {orderId:cancelledId,mode:"table",paymentMethod:"line_pay",amount:45,previousStatus:"ready",refundedAt:boundary,source:"cancellation_history"},
+    ],totals:{count:2,amount:135,completed:1}});
+  const previous=await (await call(endpoint+"?date=2026-11-24")).json();
+  assert.deepEqual(previous.refunds,[
+    {orderId:yesterday,mode:"pickup",paymentMethod:"px_pay_plus",amount:90,previousStatus:"completed",refundedAt:boundary-1,source:"recorded"},
+  ]);
+  assert.deepEqual((await (await call(endpoint+"?date=2026-11-26")).json()).refunds,[]);
 });
 
 test("pickup display omits refunded orders even if their kitchen status is still ready",async t=>{
