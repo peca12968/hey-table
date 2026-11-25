@@ -22,6 +22,80 @@ def dispatch(api, key, boxes):
     return api.post("/dispatch-batches", headers={"Idempotency-Key":key}, json={"boxes":boxes})
 
 
+def preview(api, boxes):
+    return api.post("/dispatch-batches/preview", json={"boxes": boxes})
+
+
+def test_preview_explains_each_box_without_dispatching(tmp_path):
+    database = tmp_path / "preview.db"
+    with TestClient(create_app(database, clock=lambda: 100)) as api:
+        reserve(api, "A", 5)
+        reserve(api, "B", 2)
+        assert api.post("/reservations/A/fulfillments", headers={"Idempotency-Key": "sent"},
+                        json={"quantity": 1}).status_code == 201
+        boxes = [box("missing", "1", 1), box("A", "sent", 1), box("B", "1", 2),
+                 box("A", "2", 3), box("A", "1", 2)]
+        before = api.get("/inventory").json()
+        result = preview(api, boxes)
+        assert result.status_code == 200
+        assert result.headers["cache-control"] == "no-store"
+        data = result.json()
+        assert data == preview(api, boxes[::-1]).json()
+        assert data["captured_at_ms"] == 100_000
+        assert not data["can_dispatch"]
+        assert data["boxes"] == [
+            {**item, "sku": sku, "reservation_state": state, "status": status,
+             "held_before": held_before, "held_after": held_after, "shortfall": shortfall}
+            for item, sku, state, status, held_before, held_after, shortfall in [
+                (boxes[4], "KIT-01", "held", "ready", 4, 2, None),
+                (boxes[3], "KIT-01", "held", "insufficient_held", 2, None, 1),
+                (boxes[1], "KIT-01", "held", "already_shipped", 2, None, None),
+                (boxes[2], "KIT-01", "held", "ready", 2, 0, None),
+                (boxes[0], None, None, "unknown_reservation", None, None, None),
+            ]
+        ]
+        assert api.get("/inventory").json() == before
+        assert api.get("/reservations/A/fulfillments/1").status_code == 404
+        assert api.get("/reservations/B/fulfillments/1").status_code == 404
+        corrected = [boxes[2], {**boxes[3], "quantity": 2}, boxes[4]]
+        checked = preview(api, corrected).json()
+        assert checked["can_dispatch"]
+        accepted = dispatch(api, "van", corrected)
+        assert accepted.status_code == 201
+        fields = ("reservation_id", "shipment_id", "quantity", "held_after")
+        assert accepted.json()["boxes"] == [{key: line[key] for key in fields} for line in checked["boxes"]]
+        assert not preview(api, corrected).json()["can_dispatch"]
+        replay = dispatch(api, "van", corrected[::-1])
+        assert (replay.status_code, replay.json()) == (200, accepted.json())
+
+
+def test_competing_box_and_expiry_are_rechecked_in_the_dispatch_transaction(tmp_path):
+    database = tmp_path / "preview-race.db"
+    now = 100
+    with TestClient(create_app(database, clock=lambda: now, ttl_seconds=3)) as loading, \
+            TestClient(create_app(database, clock=lambda: now, ttl_seconds=3)) as other:
+        reserve(loading, "Z", 2)
+        now = 101
+        reserve(loading, "A", 3)
+        boxes = [box("Z", "new", 2), box("A", "first", 3)]
+        assert preview(loading, boxes).json()["can_dispatch"]
+        alternative = [box("Z", "other", 1)]
+        assert dispatch(other, "another-truck", alternative).status_code == 201
+        rejected = dispatch(loading, "my-truck", boxes)
+        assert rejected.status_code == 409
+        assert loading.get("/dispatch-batches/my-truck").status_code == 404
+        assert loading.get("/reservations/A/fulfillments/first").status_code == 404
+        assert loading.get("/reservations/A").json()["held"] == 3
+        shortage = preview(loading, boxes).json()["boxes"][1]
+        assert (shortage["held_before"], shortage["shortfall"], shortage["reservation_state"]) == (1, 1, "held")
+        now = 103
+        expired = preview(loading, boxes).json()["boxes"][1]
+        assert (expired["held_before"], expired["shortfall"], expired["reservation_state"]) == (0, 2, "expired")
+        with closing(sqlite3.connect(database)) as conn:
+            assert conn.execute("SELECT timed_out FROM reservations WHERE id='Z'").fetchone() == (1,)
+        assert loading.get("/inventory").json() == [{"sku": "KIT-01", "capacity": 19, "available": 16}]
+
+
 def test_box_receipts_survive_restart_expiry_and_returns(tmp_path):
     database = tmp_path / "ship.db"
     items = [box("south","A",2), box("north","B",1), box("north","A",2)]
@@ -83,6 +157,8 @@ def test_legacy_shipments_cannot_be_claimed_by_new_batches(tmp_path):
     with closing(sqlite3.connect(database)) as db:
         db.execute("DROP TABLE dispatch_batch_boxes")  # Schema before batch membership existed.
     with TestClient(create_app(database)) as api:
+        checked = preview(api, [box("order", "A", 1), box("order", "Z", 2)]).json()
+        assert [item["status"] for item in checked["boxes"]] == ["ready", "already_shipped"]
         assert dispatch(api,"truck",[box("order","A",1), box("order","Z",2)]).status_code == 409
         assert api.get("/dispatch-batches/truck").status_code == 404
         assert api.get("/reservations/order/fulfillments/A").status_code == 404
@@ -123,6 +199,7 @@ def test_invalid_or_repeated_boxes_never_create_a_batch(tmp_path):
         for entries in [[], [one,one], [one,{**one,"quantity":2}], [{**one,"quantity":True}],
                         [{**one,"shipment_id":"bad/id"}], [box("order",str(i),1) for i in range(101)]]:
             assert dispatch(api, "invalid", entries).status_code == 422
+            assert preview(api, entries).status_code == 422
         assert api.get("/dispatch-batches/invalid").status_code == 404
 
 

@@ -102,7 +102,8 @@ def capture(db):
         release_batch["history"] = capture_release_history(api, focus_key)
 
     return {"stages": stages, "renewal_batch": renewal_batch, "release_batch": release_batch,
-            "replacement": capture_replacement(db), "batch_replacement": capture_batch_replacement(db)}
+            "replacement": capture_replacement(db), "batch_replacement": capture_batch_replacement(db),
+            "dispatch_preview": capture_dispatch_preview(db)}
 
 
 def capture_release_batch(api):
@@ -251,6 +252,31 @@ def capture_batch_replacement(db):
             "expires_at_ms": receipt["expires_at_ms"], "items": items,
             "preview": {"blocked": blocked, "ready": ready},
         }
+
+
+def capture_dispatch_preview(db):
+    now = 600
+    with TestClient(create_app(db, clock=lambda: now)) as api:
+        for key, sku, quantity in (("north-load", "KIT-01", 4), ("south-load", "WRAP-01", 2)):
+            api.post("/reservations", headers={"Idempotency-Key": key},
+                     json={"sku": sku, "quantity": quantity}).raise_for_status()
+
+        def preview(boxes):
+            return api.post("/dispatch-batches/preview", json={"boxes": boxes}).raise_for_status().json()
+
+        first_box = {"reservation_id": "north-load", "shipment_id": "A", "quantity": 2}
+        second_box = {"reservation_id": "north-load", "shipment_id": "B", "quantity": 1}
+        last_box = {"reservation_id": "south-load", "shipment_id": "A", "quantity": 2}
+        blocked = preview([first_box, {**second_box, "quantity": 3}, last_box])
+        boxes = [first_box, second_box, last_box]
+        ready = preview(boxes)
+        now = 601
+        api.post("/reservations/south-load/fulfillments", headers={"Idempotency-Key": "another-van"},
+                 json={"quantity": 1}).raise_for_status()
+        submit = api.post("/dispatch-batches", headers={"Idempotency-Key": "dispatch-demo"}, json={"boxes": boxes})
+        after_conflict = preview(boxes)
+        return {"blocked": blocked, "ready": ready, "after_conflict": after_conflict,
+                "submit_status": submit.status_code}
 
 
 if __name__ == "__main__":

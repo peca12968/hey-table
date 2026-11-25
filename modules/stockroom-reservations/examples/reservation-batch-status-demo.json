@@ -412,5 +412,125 @@
         ]
       }
     }
+  },
+  "dispatch_preview": {
+    "blocked": {
+      "captured_at_ms": 600000,
+      "can_dispatch": false,
+      "boxes": [
+        {
+          "reservation_id": "north-load",
+          "shipment_id": "A",
+          "quantity": 2,
+          "sku": "KIT-01",
+          "reservation_state": "held",
+          "held_before": 4,
+          "held_after": 2,
+          "shortfall": null,
+          "status": "ready"
+        },
+        {
+          "reservation_id": "north-load",
+          "shipment_id": "B",
+          "quantity": 3,
+          "sku": "KIT-01",
+          "reservation_state": "held",
+          "held_before": 2,
+          "held_after": null,
+          "shortfall": 1,
+          "status": "insufficient_held"
+        },
+        {
+          "reservation_id": "south-load",
+          "shipment_id": "A",
+          "quantity": 2,
+          "sku": "WRAP-01",
+          "reservation_state": "held",
+          "held_before": 2,
+          "held_after": 0,
+          "shortfall": null,
+          "status": "ready"
+        }
+      ]
+    },
+    "ready": {
+      "captured_at_ms": 600000,
+      "can_dispatch": true,
+      "boxes": [
+        {
+          "reservation_id": "north-load",
+          "shipment_id": "A",
+          "quantity": 2,
+          "sku": "KIT-01",
+          "reservation_state": "held",
+          "held_before": 4,
+          "held_after": 2,
+          "shortfall": null,
+          "status": "ready"
+        },
+        {
+          "reservation_id": "north-load",
+          "shipment_id": "B",
+          "quantity": 1,
+          "sku": "KIT-01",
+          "reservation_state": "held",
+          "held_before": 2,
+          "held_after": 1,
+          "shortfall": null,
+          "status": "ready"
+        },
+        {
+          "reservation_id": "south-load",
+          "shipment_id": "A",
+          "quantity": 2,
+          "sku": "WRAP-01",
+          "reservation_state": "held",
+          "held_before": 2,
+          "held_after": 0,
+          "shortfall": null,
+          "status": "ready"
+        }
+      ]
+    },
+    "after_conflict": {
+      "captured_at_ms": 601000,
+      "can_dispatch": false,
+      "boxes": [
+        {
+          "reservation_id": "north-load",
+          "shipment_id": "A",
+          "quantity": 2,
+          "sku": "KIT-01",
+          "reservation_state": "held",
+          "held_before": 4,
+          "held_after": 2,
+          "shortfall": null,
+          "status": "ready"
+        },
+        {
+          "reservation_id": "north-load",
+          "shipment_id": "B",
+          "quantity": 1,
+          "sku": "KIT-01",
+          "reservation_state": "held",
+          "held_before": 2,
+          "held_after": 1,
+          "shortfall": null,
+          "status": "ready"
+        },
+        {
+          "reservation_id": "south-load",
+          "shipment_id": "A",
+          "quantity": 2,
+          "sku": "WRAP-01",
+          "reservation_state": "held",
+          "held_before": 1,
+          "held_after": null,
+          "shortfall": 1,
+          "status": "insufficient_held"
+        }
+      ]
+    },
+    "submit_status": 409
   }
 }

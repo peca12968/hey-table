@@ -1,5 +1,6 @@
 """Transactional stock reservations. One short-lived connection per operation."""
 from contextlib import closing, contextmanager
+from itertools import groupby
 from pathlib import Path
 import re
 import sqlite3
@@ -746,10 +747,14 @@ class Store:
         with self.current_inventory() as (conn, _):
             return self.record_shipment(conn, key, shipment_id, quantity)
 
+    @staticmethod
+    def shipment_receipt(conn, key, shipment_id):
+        return conn.execute("""SELECT * FROM fulfillments
+                                  WHERE reservation_id=? AND shipment_id=?""", (key, shipment_id)).fetchone()
+
     def record_shipment(self, conn, key, shipment_id, quantity):
         row = self.find_reservation(conn, key)
-        receipt = conn.execute("""SELECT * FROM fulfillments
-                                  WHERE reservation_id=? AND shipment_id=?""", (key, shipment_id)).fetchone()
+        receipt = self.shipment_receipt(conn, key, shipment_id)
         if receipt:
             if receipt["quantity"] != quantity:
                 raise Conflict("Shipment key already used with different quantity")
@@ -772,6 +777,34 @@ class Store:
                                USING (reservation_id, shipment_id) WHERE b.batch_id=?
                                ORDER BY b.reservation_id, b.shipment_id""", (batch_id,))
         return [dict(row) for row in rows]
+
+    def dispatch_preview(self, boxes):
+        with self.current_inventory() as (conn, now):
+            results = []
+            for key, entries in groupby(sorted(boxes), key=lambda box: box[0]):
+                row = conn.execute("SELECT * FROM reservations WHERE id=?", (key,)).fetchone()
+                held = self.held_units(row) if row is not None else None
+                sku = row["sku"] if row is not None else None
+                state = self.reservation(row)["state"] if row is not None else None
+                for _, shipment_id, quantity in entries:
+                    before = held
+                    after = shortfall = None
+                    if before is None:
+                        status = "unknown_reservation"
+                    elif self.shipment_receipt(conn, key, shipment_id) is not None:
+                        status = "already_shipped"
+                    elif quantity > before:
+                        status, shortfall = "insufficient_held", quantity - before
+                    else:
+                        status = "ready"
+                        held = after = before - quantity
+                    results.append({
+                        "reservation_id": key, "shipment_id": shipment_id, "quantity": quantity,
+                        "sku": sku, "reservation_state": state, "held_before": before,
+                        "held_after": after, "shortfall": shortfall, "status": status,
+                    })
+            return {"captured_at_ms": now, "can_dispatch": all(x["status"] == "ready" for x in results),
+                    "boxes": results}
 
     def dispatch_batch(self, batch_id, boxes):
         ordered = sorted(boxes)

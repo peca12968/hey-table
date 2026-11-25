@@ -177,6 +177,27 @@ class DispatchBatch(BaseModel):
             raise ValueError("Repeat shipment within a reservation")
         return boxes
 
+    def shipment_requests(self):
+        return [(box.reservation_id, box.shipment_id, box.quantity) for box in self.boxes]
+
+
+class DispatchPreviewBox(BaseModel):
+    reservation_id: str
+    shipment_id: str
+    quantity: int
+    sku: str | None
+    reservation_state: Literal["held", "released", "expired", "fulfilled"] | None
+    held_before: int | None
+    held_after: int | None
+    shortfall: int | None
+    status: Literal["ready", "unknown_reservation", "already_shipped", "insufficient_held"]
+
+
+class DispatchPreview(BaseModel):
+    captured_at_ms: int
+    can_dispatch: bool
+    boxes: list[DispatchPreviewBox]
+
 
 class BatchReceipt(BaseModel):
     batch_id: str
@@ -402,11 +423,15 @@ def create_app(path: Path, *, ttl_seconds=900, clock=time.time):
         response.headers["Cache-Control"] = "no-store"
         return result
 
+    @app.post("/dispatch-batches/preview", response_model=DispatchPreview)
+    def dispatch_preview(batch: DispatchBatch, response: Response):
+        response.headers["Cache-Control"] = "no-store"
+        return store.dispatch_preview(batch.shipment_requests())
+
     @app.post("/dispatch-batches", response_model=BatchReceipt, status_code=201,
               responses={200: {"model": BatchReceipt, "description": "Original dispatch batch receipt"}})
     def dispatch_batch(batch: DispatchBatch, response: Response, idempotency_key: RequestKey):
-        boxes = [(box.reservation_id, box.shipment_id, box.quantity) for box in batch.boxes]
-        receipt, created = store.dispatch_batch(idempotency_key, boxes)
+        receipt, created = store.dispatch_batch(idempotency_key, batch.shipment_requests())
         if not created:
             response.status_code = 200
         return receipt
