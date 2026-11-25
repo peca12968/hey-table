@@ -3,7 +3,7 @@ import {useCallback,useEffect,useRef,useState} from "react";
 import {Plus,Minus,ShoppingBag,X,Utensils,Check} from "lucide-react";
 import {dishes,itemNoteLimit,tables,withItemNotes} from "../lib/menu.mjs";
 import {Header,Footer,Mode,request} from "./shared";
-import {cartKey,claimCart,dispatchCart,openReceipt,persistCart,read,settleCart} from "../lib/order-storage.mjs";
+import {cartKey,claimCart,dispatchCart,openReceipt,persistCart,read,readCart,settleCart} from "../lib/order-storage.mjs";
 import {comboVersion,priceCombos} from "../lib/combo-pricing.mjs";
 import {intakeNotice} from "../lib/order-intake.mjs";
 import CartAddOn from "./cart-add-on";
@@ -102,7 +102,7 @@ export default function Menu(){
     setPickupDate(!param&&validDay?old.pickupDate??"":"");
   },[]);
   useEffect(()=>{
-    const param=new URLSearchParams(location.search).get("table"),key=cartKey(param),old=read(key,{});
+    const param=new URLSearchParams(location.search).get("table"),key=cartKey(param),old=readCart(key);
     setTable(param);setScope(key);loadCart(old,param);
     const token=new URLSearchParams(location.hash.slice(1)).get("reorder")??"";
     setRepeat(token);
