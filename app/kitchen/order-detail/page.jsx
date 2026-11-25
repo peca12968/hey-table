@@ -11,6 +11,7 @@ import {pickupChangeWindows} from "../../../lib/pickup-slots.mjs";
 import {stationLabels} from "../../../lib/kitchen-timing.mjs";
 import PaymentAttentionNotes from "../payment-attention-notes";
 import PaymentAttemptHistory from "../payment-attempt-history";
+import PickupDelayHistory from "../pickup-delay-history";
 import "../daily/daily.css";
 
 const pagePath="/kitchen/order-detail";
@@ -80,6 +81,8 @@ function OrderDetails({order,query}){
     </>}
     <OrderProgress history={order.statusHistory}/>
     <OperationalHistory order={order}/>
+    {order.mode==="pickup"&&<PickupDelayHistory key={order.id+":"+query.get("delayBefore")} id={order.id}
+      query={query.toString()} autoOpen={query.get("delays")==="1"||query.has("delayBefore")}/>}
   </article>;
 }
 
@@ -91,6 +94,7 @@ export default function KitchenOrderDetail(){
   const from=query.get("from");
   const historyReturn=from?.startsWith("/kitchen/station-history?")?from:null;
   const paymentReturn=from==="/kitchen/payment-attention"||from?.startsWith("/kitchen/payment-attention?")?from:null;
+  const delayReturn=from==="/kitchen?view=pickup-delay"?from:null;
   const current=view?.number===number&&view.revision===revision?view:null;
   useEffect(()=>{
     if(!number)return;
@@ -112,11 +116,12 @@ export default function KitchenOrderDetail(){
       <a className="textLink" href="/kitchen">返回店家接單台</a>
       {historyReturn&&<a className="textLink" href={historyReturn}>返回分站批次紀錄</a>}
       {paymentReturn&&<a className="textLink" href={paymentReturn}>返回待核對付款</a>}
+      {delayReturn&&<a className="textLink" href={delayReturn}>返回待確認延誤</a>}
     </div>
     <h1>查詢餐單紀錄</h1>
     <form className="actions dailyDate" action={pagePath} key={number}>
       <label>餐號<input name="id" type="text" required inputMode="numeric" pattern="[0-9]+" maxLength={16} defaultValue={number}/></label>
-      {(historyReturn||paymentReturn)&&<input type="hidden" name="from" value={historyReturn||paymentReturn}/>}
+      {(historyReturn||paymentReturn||delayReturn)&&<input type="hidden" name="from" value={historyReturn||paymentReturn||delayReturn}/>}
       <button className="primary">查詢餐單</button>
     </form>
     {number&&!current&&<p role="status">正在查詢餐單…</p>}

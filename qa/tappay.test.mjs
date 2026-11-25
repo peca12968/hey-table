@@ -3079,6 +3079,11 @@ test("staff pickup delay changes are versioned, retain their estimate on replay 
   assert.equal((await acknowledge(3)).status,409);
   assert.equal(db.sqlite.prepare("SELECT count(*) AS total FROM pickup_delay_updates WHERE order_id=?").get(id).total,3);
   assert.equal(db.sqlite.prepare("SELECT count(*) AS total FROM pickup_delay_acknowledgements WHERE order_id=?").get(id).total,1);
+  assert.equal((await call("/kitchen/pickup-delay-history?id="+id,{headers:{"X-Ticket":customer}})).status,403);
+  const history=await (await call("/kitchen/pickup-delay-history?id="+id,{headers:staff})).json();
+  assert.deepEqual(history.updates.map(({revision,readyAt,acknowledgedAt,latest})=>[revision,readyAt,acknowledgedAt,latest]),[
+    [3,now+180000,null,true],[2,null,null,false],[1,saved.readyAt,acknowledged.acknowledgedAt,false],
+  ]);
   const prior=await (await ticket(legacy)).json();
   assert.deepEqual(prior.pickupDelay,{revision:1,readyAt:150000,recordedAt:50000,acknowledgedAt:null,passed:true});
   const [replacement,oldReply]=await Promise.all([update(make(5,1,prior.id)),acknowledge(1,legacy)]);
@@ -3087,6 +3092,41 @@ test("staff pickup delay changes are versioned, retain their estimate on replay 
   const then=await (await ticket(legacy)).json();
   assert.equal(then.pickupDelay.revision,2);
   assert.equal(then.pickupDelay.acknowledgedAt,null);
+});
+
+test("pickup delay history pages stable revisions and only exposes the requested pickup order to staff",async t=>{
+  const db=database();
+  t.after(()=>db.sqlite.close());
+  const create=db.sqlite.prepare("INSERT INTO orders(token,mode,status,items,note,total,created,payment_method) VALUES (?,?,?,'[]','',45,0,'cash')");
+  const order=Number(create.run(crypto.randomUUID(),"pickup","completed").lastInsertRowid);
+  const another=Number(create.run(crypto.randomUUID(),"pickup","completed").lastInsertRowid);
+  const table=Number(create.run(crypto.randomUUID(),"table","completed").lastInsertRowid);
+  const delay=db.sqlite.prepare("INSERT INTO pickup_delay_updates(order_id,revision,operation_id,ready_at,recorded_at) VALUES (?,?,?,?,?)");
+  const append=revision=>delay.run(order,revision,crypto.randomUUID(),revision===4?null:revision*1000+60000,revision*1000);
+  for(let revision=1;revision<=12;revision++)append(revision);
+  db.sqlite.prepare("INSERT INTO pickup_delay_acknowledgements VALUES (?,?,?)").run(order,1,1150);
+  const read=(query,authorized=true)=>api(new Request("https://order.example/api/kitchen/pickup-delay-history?"+query,{
+    headers:authorized?{Authorization:"Bearer fixture-staff"}:{},
+  }),{DB:db,STAFF_KEY:"fixture-staff"});
+  assert.equal((await read("id="+order,false)).status,403);
+  assert.equal((await read("id="+table)).status,404);
+  assert.equal((await read("id=99999")).status,404);
+  assert.deepEqual(await (await read("id="+another)).json(),{id:another,updates:[],nextBefore:null});
+  for(const query of ["before=0","before=2&before=3","before=9007199254740992","id="+another])
+    assert.equal((await read("id="+order+"&"+query)).status,400);
+  const reply=await read("id="+order);
+  assert.equal(reply.headers.get("Cache-Control"),"no-store");
+  const latest=await reply.json();
+  assert.deepEqual(latest.updates.map(update=>update.revision),[12,11,10,9,8,7,6,5,4,3]);
+  assert.deepEqual(latest.updates.filter(update=>update.latest).map(update=>update.revision),[12]);
+  assert.deepEqual(latest.updates.find(update=>update.revision===4),
+    {revision:4,readyAt:null,recordedAt:4000,acknowledgedAt:null,latest:false});
+  assert.equal(latest.nextBefore,3);
+  append(13);
+  const older=await (await read("id="+order+"&before="+latest.nextBefore)).json();
+  assert.deepEqual(older.updates.map(update=>update.revision),[2,1]);
+  assert.equal(older.updates[1].acknowledgedAt,1150);
+  assert.equal(older.nextBefore,null);
 });
 
 test("a pickup delegate and receipt owner share the first arrival with staff",async t=>{

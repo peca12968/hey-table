@@ -25,6 +25,23 @@ export async function acknowledgePickupDelay(db,token,revision,now){
   return acknowledgedAt==null?false:{revision,acknowledgedAt};
 }
 
+export async function readPickupDelayHistory(db,id,before){
+  const size=10,bounded=before!==undefined;
+  const [order,page]=await db.batch([
+    db.prepare(`SELECT (SELECT MAX(revision) FROM pickup_delay_updates WHERE order_id=orders.id) AS latest
+      FROM orders WHERE id=? AND mode='pickup'`).bind(id),
+    db.prepare(`SELECT delay.revision,delay.ready_at AS readyAt,delay.recorded_at AS recordedAt,
+      ack.acknowledged_at AS acknowledgedAt
+      FROM pickup_delay_updates AS delay LEFT JOIN pickup_delay_acknowledgements AS ack
+      ON ack.order_id=delay.order_id AND ack.revision=delay.revision
+      WHERE delay.order_id=?${bounded?" AND delay.revision<?":""}
+      ORDER BY delay.revision DESC LIMIT ?`).bind(id,...(bounded?[before]:[]),size+1),
+  ]);
+  if(!order.results.length)return null;
+  const updates=page.results.slice(0,size).map(update=>({...update,latest:update.revision===order.results[0].latest}));
+  return {id,updates,nextBefore:page.results.length>size?updates.at(-1).revision:null};
+}
+
 export async function updatePickupDelay(db,{id,revision,operationId,minutes},now){
   const readyAt=minutes===null?null:now+minutes*60_000;
   const [,saved,order]=await db.batch([

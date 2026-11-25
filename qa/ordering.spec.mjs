@@ -700,6 +700,60 @@ test("a phone downloads private order details and retries a lost download",async
   }finally{await advance("ready","completed");}
 });
 
+test("staff can page through pickup delay history from the queue and reopen it after handoff",async({page,request})=>{
+  const headers={Authorization:"Bearer local-test-kitchen"},token=randomUUID();
+  const placed=await request.post("/api/orders",{data:{token,mode:"pickup",note:"",items:[{id:"sencha",qty:1}]}});
+  expect(placed.ok()).toBe(true);
+  const {id}=await placed.json(),number=String(id).padStart(4,"0");
+  const advance=(from,to)=>request.patch("/api/kitchen/status",{headers,data:{id,from,to}});
+  let acknowledgedAt;
+  try{
+    expect((await advance("pending","preparing")).ok()).toBe(true);
+    for(let revision=1;revision<=12;revision++){
+      const event=await request.patch("/api/kitchen/pickup-delay",{headers,
+        data:{id,revision:revision-1,operationId:randomUUID(),minutes:revision===11?null:20-revision}});
+      expect(event.ok()).toBe(true);
+      if(revision===1){
+        const received=await request.post("/api/ticket/pickup-delay/acknowledge",{headers:{"X-Ticket":token},data:{revision}});
+        expect(received.ok()).toBe(true);
+        ({acknowledgedAt}=await received.json());
+      }
+    }
+    await page.setViewportSize({width:360,height:780});
+    await page.addInitScript(()=>sessionStorage.setItem("he-ri-staff","local-test-kitchen"));
+    await page.goto("/kitchen?view=pickup-delay");
+    const card=page.locator(".kGrid .kitchenTicket").filter({has:page.getByRole("heading",{name:"#"+number,exact:true})});
+    await card.getByRole("link",{name:"查看延誤紀錄"}).click();
+    const history=page.getByRole("list",{name:"延誤通知歷程"});
+    await expect(history.getByRole("listitem")).toHaveCount(10);
+    await expect(history.getByRole("listitem").first()).toContainText("第 12 版 · 發布通知");
+    await expect(history.getByRole("listitem").first()).toContainText("未確認收到");
+    await expect(history.getByText("第 11 版 · 撤回通知",{exact:true})).toBeVisible();
+    await page.getByRole("link",{name:"查看更早的通知"}).click();
+    await expect(history.getByRole("listitem")).toHaveCount(2);
+    const original=history.getByRole("listitem").last();
+    await expect(original).toContainText("第 1 版 · 發布通知");
+    await expect(original.getByText("顧客確認",{exact:false}).locator("time"))
+      .toHaveAttribute("datetime",new Date(acknowledgedAt).toISOString());
+    await page.getByRole("link",{name:"返回最新通知"}).click();
+    await expect(history.getByRole("listitem")).toHaveCount(10);
+    await page.getByRole("link",{name:"返回待確認延誤"}).click();
+    await expect(page).toHaveURL(/\/kitchen\?view=pickup-delay$/);
+    expect((await advance("preparing","ready")).ok()).toBe(true);
+    expect((await advance("ready","completed")).ok()).toBe(true);
+    await page.getByRole("link",{name:"查詢餐單紀錄",exact:true}).click();
+    await page.getByLabel("餐號",{exact:true}).fill(number);
+    await page.getByRole("button",{name:"查詢餐單"}).click();
+    await expect(page.getByRole("heading",{name:"餐單 #"+number,exact:true})).toBeVisible();
+    await page.getByText("自取延誤通知紀錄",{exact:true}).click();
+    await expect(history.getByText("第 12 版 · 發布通知",{exact:true})).toBeVisible();
+    expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBe(360);
+  }finally{
+    await advance("preparing","ready");
+    await advance("ready","completed");
+  }
+});
+
 test("the pickup delay queue prioritizes the earliest estimates and follows confirmations and withdrawals",async({page,browser,request})=>{
   const headers={Authorization:"Bearer local-test-kitchen"},orders=[];
   const advance=(id,from,to)=>request.patch("/api/kitchen/status",{headers,data:{id,from,to}});

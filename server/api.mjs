@@ -18,7 +18,7 @@ import {canReschedulePickup,capacityAtPickupSlot,editablePickupSlots,orderPortio
 import {pickupCalendar} from "./pickup-calendar.mjs";
 import {orderDetailsText,ticketTextAttachment} from "./ticket-document.mjs";
 import {issuePickupPass,ownerPickupPass,readPickupPass,reportPickupPassArrival,revokePickupPass} from "./pickup-pass.mjs";
-import {acknowledgePickupDelay,pickupDelayColumn,updatePickupDelay} from "./pickup-delay.mjs";
+import {acknowledgePickupDelay,pickupDelayColumn,readPickupDelayHistory,updatePickupDelay} from "./pickup-delay.mjs";
 import {pickupRoster} from "./pickup-roster.mjs";
 import {pickupWeek} from "./pickup-week.mjs";
 import {cashCorrectionHistory,cashReceiptColumn,collectCash,correctCashReceipt,dailyCashReceipts} from "./cash-receipts.mjs";
@@ -69,7 +69,7 @@ function collectionId(url) {
   const id = Number(number);
   return /^[0-9]+$/.test(number ?? "") && Number.isSafeInteger(id) && id > 0 ? id : null;
 }
-function paymentHistoryId(url,name){
+function positiveQueryId(url,name){
   const values=url.searchParams.getAll(name),[value]=values;
   if(!values.length)return undefined;
   const id=Number(value);
@@ -189,7 +189,7 @@ export async function api(request, env) {
     return query?json(await paymentAttention(env,query,Date.now())):fail("請選擇有效的付款篩選條件或翻頁連結。");
   }
   if(["/api/kitchen/payment-attempt-history","/api/kitchen/payment-attention-notes"].includes(path)&&method==="GET"){
-    const id=collectionId(url),before=paymentHistoryId(url,"before"),attempt=paymentHistoryId(url,"attempt");
+    const id=collectionId(url),before=positiveQueryId(url,"before"),attempt=positiveQueryId(url,"attempt");
     const history=path==="/api/kitchen/payment-attempt-history";
     if(id===null||url.searchParams.getAll("id").length!==1||before===null||attempt===null||(history&&attempt!==undefined))
       return fail("請輸入有效的餐號或翻頁連結。");
@@ -959,6 +959,13 @@ export async function api(request, env) {
       pricing:combo?{subtotal:combo.quote.subtotal,discount:combo.quote.discount}:undefined,
       statusHistory:statusHistory(row),stations:recordedStationProgress(row),
       tableMoves:JSON.parse(row.table_moves??"[]"),pickupChanges:pickupChanges(row)});
+  }
+  if(path==="/api/kitchen/pickup-delay-history"&&method==="GET"){
+    const id=collectionId(url),before=positiveQueryId(url,"before");
+    if(id===null||url.searchParams.getAll("id").length!==1||before===null)
+      return fail("請輸入有效的餐號或延誤紀錄頁碼。");
+    const history=await readPickupDelayHistory(db,id,before);
+    return history?json(history):fail("找不到這張自取餐單。",404);
   }
   if (path === "/api/kitchen/payment-review" && method === "GET") {
     const id=collectionId(url),dates=url.searchParams.getAll("date");

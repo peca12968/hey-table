@@ -141,6 +141,9 @@ function KitchenTicket({order,busy,update,movePickup,recordCash,refresh,today,st
         showEstimate={!showDelayEstimate}/>}
     <div className="actions">
       {["ready","completed"].includes(status)&&<a className="outline" href={"/kitchen/handoff?id="+numberOf(id)}>交餐小票</a>}
+      {showDelayEstimate&&<a className="outline" href={"/kitchen/order-detail?"+new URLSearchParams({
+        id:numberOf(id),delays:"1",from:"/kitchen?view=pickup-delay",
+      })+"#pickup-delay-history"}>查看延誤紀錄</a>}
       {workingByStation&&<a className="primary" href="/kitchen/station-work">查看分站進度</a>}
       {canCheckPayment&&<button className="outline" disabled={busy} onClick={()=>update("payment",{id})}>
         {paymentCheck?.checking?"正在查詢金流…":"查詢金流"}</button>}
