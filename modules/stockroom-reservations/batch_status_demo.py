@@ -24,6 +24,12 @@ def capture(db):
             result = api.get(f"{batch_path}/status").raise_for_status().json()
             for item in result["items"]:
                 del item["id"]
+            queue = api.get("/expiring-reservations", params={"within_seconds": 4}).raise_for_status().json()
+            expiring = [{key: row[key] for key in ("sku", "expires_at_ms", "held")} for row in queue["reservations"]]
+            result["expiry_queue"] = {
+                "through_ms": queue["through_ms"],
+                "reservations": sorted(expiring, key=lambda row: (row["expires_at_ms"], row["sku"])),
+            }
             stages.append({"stage": stage, **result})
 
         receipt = api.post("/reservation-batches", headers={"Idempotency-Key": "order-24"},

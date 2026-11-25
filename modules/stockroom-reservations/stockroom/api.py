@@ -6,7 +6,7 @@ import os
 import time
 from typing import Annotated
 
-from fastapi import FastAPI, Header, Response
+from fastapi import FastAPI, Header, HTTPException, Query, Response
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from prometheus_client import CollectorRegistry, Counter, generate_latest, CONTENT_TYPE_LATEST
@@ -73,6 +73,28 @@ class Product(BaseModel):
 class InventorySnapshot(BaseModel):
     captured_at_ms: int
     products: list[Product]
+
+
+class ExpiringReservation(BaseModel):
+    reservation_id: str
+    sku: str
+    expires_at_ms: int
+    shipped: int
+    held: int
+    batch_id: str | None
+
+
+class ExpiryCursor(BaseModel):
+    through_ms: int
+    after_expires_at_ms: int
+    after_id: str
+
+
+class ExpiryQueue(BaseModel):
+    captured_at_ms: int
+    through_ms: int
+    reservations: list[ExpiringReservation]
+    next: ExpiryCursor | None
 
 
 class Progress(Reservation):
@@ -225,6 +247,26 @@ def create_app(path: Path, *, ttl_seconds=900, clock=time.time):
     def inventory_snapshot(response: Response):
         response.headers["Cache-Control"] = "no-store"
         return store.inventory_snapshot()
+
+    @app.get("/expiring-reservations", response_model=ExpiryQueue)
+    def expiring_reservations(
+        response: Response,
+        within_seconds: Annotated[int, Query(ge=1, le=86_400)] = 900,
+        limit: Annotated[int, Query(ge=1, le=100)] = 50,
+        sku: Annotated[str | None, Query(min_length=1, max_length=80)] = None,
+        through_ms: Annotated[int | None, Query(ge=0, le=2**63 - 1)] = None,
+        after_expires_at_ms: Annotated[int | None, Query(ge=0, le=2**63 - 1)] = None,
+        after_id: Annotated[str | None, Query(min_length=1, max_length=80)] = None,
+    ):
+        if after_expires_at_ms is not None or after_id is not None:
+            if through_ms is None or after_id is None or after_expires_at_ms is None or after_expires_at_ms > through_ms:
+                raise HTTPException(422, "Supply a complete deadline cursor")
+        try:
+            result = store.expiring_reservations(within_seconds, limit, sku, through_ms, (after_expires_at_ms, after_id))
+        except ValueError as error:
+            raise HTTPException(422, str(error)) from error
+        response.headers["Cache-Control"] = "no-store"
+        return result
 
     @app.post("/dispatch-batches", response_model=BatchReceipt, status_code=201,
               responses={200: {"model": BatchReceipt, "description": "Original dispatch batch receipt"}})

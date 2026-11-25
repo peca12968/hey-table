@@ -180,6 +180,29 @@ class Store:
             products = [dict(row) for row in conn.execute("SELECT * FROM products ORDER BY sku")]
             return {"captured_at_ms": now, "products": products}
 
+    def expiring_reservations(self, within_seconds, limit, sku, through_ms, after):
+        with self.current_inventory() as (conn, now):
+            if through_ms is not None and through_ms > now + 86_400_000:
+                raise ValueError("Queue horizon must be within 24 hours")
+            through = through_ms if through_ms is not None else now + within_seconds * 1000
+            rows = conn.execute("""SELECT r.id AS reservation_id, r.sku, r.expires_at_ms, r.shipped,
+                                    r.quantity - r.shipped - r.reduced AS held, b.batch_id
+                                    FROM reservations r
+                                    LEFT JOIN reservation_batch_items b ON b.reservation_id=r.id
+                                    WHERE r.state='held' AND r.expires_at_ms>? AND r.expires_at_ms<=?
+                                    AND r.quantity > r.shipped + r.reduced
+                                    AND (? IS NULL OR r.sku=?)
+                                    AND (? IS NULL OR (r.expires_at_ms, r.id) > (?,?))
+                                    ORDER BY r.expires_at_ms, r.id LIMIT ?""",
+                                (now, through, sku, sku, after[0], *after, limit + 1)).fetchall()
+            items = [dict(row) for row in rows[:limit]]
+            next_page = None
+            if len(rows) > limit:
+                last = items[-1]
+                next_page = {"through_ms": through, "after_expires_at_ms": last["expires_at_ms"],
+                             "after_id": last["reservation_id"]}
+            return {"captured_at_ms": now, "through_ms": through, "reservations": items, "next": next_page}
+
     def apply_receipts(self, records):
         applied = replayed = units = 0
         with self.current_inventory() as (conn, _):

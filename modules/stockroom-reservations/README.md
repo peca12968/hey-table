@@ -71,6 +71,12 @@ python -m uvicorn stockroom.api:app
 
 從兩台服務的並行測試可看到，同車出貨的 5 件在快照建立前仍分別保留於兩張單，提交後的新快照則同時反映兩張箱單與減少的庫存。舊版無期限的保留仍可出現在同一快照。執行 `python demo.py --batch` 可透過本機 HTTP 看到跨訂單快照。[跨訂單並行測試](tests/test_packing_snapshots.py)
 
+### 先列出即將到期的保留
+
+`GET /expiring-reservations?within_seconds=900&limit=50&sku=KIT-01` 先結算已到期保留，再以同一交易列出仍有保留量、在指定時間內到期的單品。結果依截止毫秒與保留編號排序，包含批號、已出貨與剩餘保留件數。省略 `sku` 可查全庫。查詢時間最長 24 小時，每頁最多 100 筆。
+
+若回應含 `next`，沿用其中三個參數及原 SKU 查下一頁。截止範圍固定，各頁會按當下庫存重新結算。舊版無到期時間的單仍可由原查單 API 查閱。執行 `python batch_status_demo.py` 可看到包材續期後離開短期清單、套件到期後釋回庫存。[到期邊界、續頁與並行出貨測試](tests/test_expiry_queue.py)
+
 ## 同車退回的多箱商品一起驗收
 
 倉庫同時收到東區和西區兩張訂單的退貨。在各箱驗收後，將可重新入庫的數量送到 `POST /return-batches`，以 `Idempotency-Key` 傳入此次驗收批號。以下範例假設兩張訂單各已有一箱出貨，箱號都叫 `box`。

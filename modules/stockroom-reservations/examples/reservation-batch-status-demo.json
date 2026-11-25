@@ -37,7 +37,22 @@
           "held": 2,
           "returned": 0
         }
-      ]
+      ],
+      "expiry_queue": {
+        "through_ms": 104000,
+        "reservations": [
+          {
+            "sku": "KIT-01",
+            "expires_at_ms": 103000,
+            "held": 4
+          },
+          {
+            "sku": "WRAP-01",
+            "expires_at_ms": 103000,
+            "held": 2
+          }
+        ]
+      }
     },
     {
       "stage": "adjusted",
@@ -76,7 +91,17 @@
           "held": 2,
           "returned": 0
         }
-      ]
+      ],
+      "expiry_queue": {
+        "through_ms": 105000,
+        "reservations": [
+          {
+            "sku": "KIT-01",
+            "expires_at_ms": 103000,
+            "held": 3
+          }
+        ]
+      }
     },
     {
       "stage": "expired",
@@ -115,7 +140,11 @@
           "held": 2,
           "returned": 0
         }
-      ]
+      ],
+      "expiry_queue": {
+        "through_ms": 107000,
+        "reservations": []
+      }
     },
     {
       "stage": "cancelled",
@@ -154,7 +183,11 @@
           "held": 0,
           "returned": 2
         }
-      ]
+      ],
+      "expiry_queue": {
+        "through_ms": 108000,
+        "reservations": []
+      }
     }
   ]
 }
