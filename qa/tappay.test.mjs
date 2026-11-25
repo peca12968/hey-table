@@ -14,6 +14,7 @@ import {applyDemoMigrations} from "../scripts/apply-demo-migrations.mjs";
 import {bookablePickupSlots} from "../lib/pickup-slots.mjs";
 import {stationReview,stationReviewDigest} from "../lib/kitchen-timing.mjs";
 import {cartShareLink,readCartShare,readCartShareAddress} from "../lib/cart-share.mjs";
+import {quoteReturn,returnLots} from "../modules/receipt-returns/quote.mjs";
 
 const env={TAPPAY_MODE:"sandbox",TAPPAY_APP_ID:"123",TAPPAY_APP_KEY:"test-public",TAPPAY_PARTNER_KEY:"test-only",
   TAPPAY_SITE_ORIGIN:"https://order.example",TAPPAY_NOTIFY_URL:"https://notify.example/api/payments/notify"};
@@ -42,6 +43,36 @@ test("pasted cart links must use the menu origin and return only reviewed items"
     "http://order.example/"+fragment,origin+":444/"+fragment,"/"+fragment,
     origin+"/#reorder=example",origin+"/"+fragment+"&cart=1.sencha%3A1",
     origin+"/?extra="+"x".repeat(4100)+fragment])assert.equal(readCartShareAddress(invalid,origin),null);
+});
+test("partial-return quotes recover frozen price lots and reject inconsistent receipts",()=>{
+  const ticket=JSON.parse(readFileSync(new URL("../modules/receipt-returns/examples/ticket.json",import.meta.url),"utf8"));
+  const pricing=returnLots(ticket);
+  const returns=(...entries)=>quoteReturn(pricing,new Map(entries));
+  assert.deepEqual(returns(["gyoza",1]),{lines:[{dish:"gyoza",bundle:null,qty:1,unit:85,amount:85}],amount:85,remainingValue:260});
+  assert.deepEqual(returns(["gyoza",2]),{lines:[
+    {dish:"gyoza",bundle:null,qty:1,unit:85,amount:85},
+    {dish:"gyoza",bundle:"chicken-gyoza",qty:1,unit:72,amount:72},
+  ],amount:157,remainingValue:188});
+  assert.equal(returns(["sencha",1],["gyoza",2],["oyakodon",1]).remainingValue,0);
+  assert.throws(()=>returns(["gyoza",3]),/超出原單/);
+  assert.throws(()=>returns(["wrong-dish",1]),/超出原單/);
+  assert.throws(()=>returns(["gyoza",0]),/正整數/);
+  assert.throws(()=>returns(),/至少/);
+  const plain=returnLots({items:[{id:"legacy_free",price:0,qty:2},{id:"legacy_tea",price:38,qty:1}],total:38});
+  assert.equal(quoteReturn(plain,new Map([["legacy_free",1]])).amount,0);
+  assert.equal(quoteReturn(plain,new Map([["legacy_tea",1]])).amount,38);
+  for(const alter of [
+    value=>value.total++,
+    value=>value.items.push(value.items[0]),
+    value=>value.combo.version="future",
+    value=>value.combo.quote.bundles[0].qty++,
+    value=>{value.combo.quote.bundles[0].mainUnitDiscount++;value.combo.quote.bundles[0].sideUnitDiscount--;},
+    value=>value.combo.quote.lines[0].discount++,
+  ]){
+    const damaged=structuredClone(ticket);
+    alter(damaged);
+    assert.throws(()=>returnLots(damaged),/計價資料不完整/);
+  }
 });
 test("enable only configured methods and expose only SDK keys",()=>{
   assert.deepEqual(settings({...env,TAPPAY_MERCHANT_PX_PAY_PLUS:"test"}),{mode:"sandbox",methods:["cash","px_pay_plus"],appId:123,appKey:"test-public"});

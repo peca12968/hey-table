@@ -4,6 +4,7 @@ import {readFile} from "node:fs/promises";
 import {execFileSync} from "node:child_process";
 import {join} from "node:path";
 import {fileURLToPath} from "node:url";
+import {quoteReturn,returnLots} from "../modules/receipt-returns/quote.mjs";
 
 const endpoint="/api/kitchen/return-receipt";
 const staff={Authorization:"Bearer local-test-kitchen"};
@@ -71,6 +72,25 @@ test("staff finds an archived combo receipt on mobile and imports its download i
   await expect(detail.getByRole("listitem").filter({hasText:"海苔柴魚煎餃"})).toContainText("NT$ 157");
   await expect(detail).toContainText("餐點原價 NT$ 385 · 套餐折抵 NT$ 40");
   await expect(detail.locator(".total")).toContainText("NT$ 345");
+  const preview=detail.getByRole("region",{name:"部分退餐試算"});
+  const qty=preview.getByRole("textbox",{name:/海苔柴魚煎餃退餐份數/});
+  const calculate=preview.getByRole("button",{name:"試算退餐金額"});
+  const quote=preview.getByRole("region",{name:"本次退餐試算"});
+  await qty.fill("1");
+  await calculate.click();
+  await expect(quote).toContainText("單點 · 1 份 × NT$ 85");
+  await expect(quote).toContainText("NT$ 260");
+  await qty.fill("2");
+  await expect(quote).toHaveCount(0);
+  await calculate.click();
+  await expect(quote).toContainText("套餐分攤 · 1 份 × NT$ 72");
+  await expect(quote).toContainText("NT$ 157");
+  await expect(quote).toContainText("NT$ 188");
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBe(390);
+  await qty.fill("3");
+  await calculate.click();
+  await expect(preview.getByRole("alert")).toHaveText("海苔柴魚煎餃最多可試算 2 份。");
+  await expect(quote).toHaveCount(0);
   const event=page.waitForEvent("download");
   await save.click();
   const file=await event;
@@ -82,6 +102,15 @@ test("staff finds an archived combo receipt on mobile and imports its download i
     [join(project,"returns.py"),test.info().outputPath("returns.db"),...args],{encoding:"utf8"}));
   const id=String(ticket.id);
   expect(cli("import",path)).toEqual({receipt:ticket.id,total:345});
+  const pricing=returnLots(receipt);
+  for(let main=0;main<=1;main++)for(let dumplings=0;dumplings<=2;dumplings++)for(let tea=0;tea<=1;tea++){
+    const selection=[["oyakodon",main],["gyoza",dumplings],["sencha",tea]].filter(([,qty])=>qty>0);
+    if(!selection.length)continue;
+    const expected=cli("preview",id,...selection.map(([dish,qty])=>dish+"="+qty));
+    expect(quoteReturn(pricing,new Map(selection))).toEqual({
+      lines:expected.lines,amount:expected.amount,remainingValue:expected.remainingValue,
+    });
+  }
   const first=cli("record",id,"gyoza=1","--request","one","--expected","85");
   expect(first.remainingValue).toBe(260);
   expect(cli("import",path)).toEqual({receipt:ticket.id,total:345});

@@ -64,7 +64,7 @@ function optimize(graph, sink) {
   }
 }
 
-function splitSaving(mainPrice, sidePrice, saving) {
+export function splitSaving(mainPrice, sidePrice, saving) {
   // Round the main's proportional share to the nearest dollar; exact ties go to the main.
   const original = BigInt(mainPrice) + BigInt(sidePrice);
   const main = (2n * saving * BigInt(mainPrice) + original) / (2n * original);
