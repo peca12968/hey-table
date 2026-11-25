@@ -1,0 +1,187 @@
+{
+  "format": "hey-table.payment-attention-demo.v1",
+  "orderId": 895,
+  "scenes": [
+    {
+      "stage": "waiting",
+      "queue": {
+        "format": "hey-table.payment-attention.v1",
+        "capturedAt": 1795536240000,
+        "orders": [
+          {
+            "id": 895,
+            "status": "pending",
+            "method": "line_pay",
+            "environment": "demo",
+            "total": 45,
+            "paymentDueAt": 1795535520000,
+            "state": "pending",
+            "startedAt": 1795534620000,
+            "checkedAt": null,
+            "canCheck": false
+          },
+          {
+            "id": 896,
+            "status": "completed",
+            "method": "px_pay_plus",
+            "environment": "sandbox",
+            "total": 85,
+            "paymentDueAt": 1795537020000,
+            "state": "authorized",
+            "startedAt": 1795536120000,
+            "checkedAt": null,
+            "canCheck": false
+          }
+        ],
+        "nextAfter": null
+      },
+      "history": {
+        "target": {
+          "state": "pending",
+          "startedAt": 1795534620000
+        },
+        "notes": []
+      }
+    },
+    {
+      "stage": "saved",
+      "queue": {
+        "format": "hey-table.payment-attention.v1",
+        "capturedAt": 1795536330000,
+        "orders": [
+          {
+            "id": 895,
+            "status": "pending",
+            "method": "line_pay",
+            "environment": "demo",
+            "total": 45,
+            "paymentDueAt": 1795535520000,
+            "state": "pending",
+            "startedAt": 1795534620000,
+            "checkedAt": null,
+            "latestNote": {
+              "note": "已告知顧客稍候，下一班先核對這筆 LINE Pay。",
+              "recordedAt": 1795536300000
+            },
+            "canCheck": false
+          },
+          {
+            "id": 896,
+            "status": "completed",
+            "method": "px_pay_plus",
+            "environment": "sandbox",
+            "total": 85,
+            "paymentDueAt": 1795537020000,
+            "state": "authorized",
+            "startedAt": 1795536120000,
+            "checkedAt": null,
+            "canCheck": false
+          }
+        ],
+        "nextAfter": null
+      },
+      "history": {
+        "target": {
+          "state": "pending",
+          "startedAt": 1795534620000
+        },
+        "notes": [
+          {
+            "id": 1,
+            "state": "pending",
+            "note": "已告知顧客稍候，下一班先核對這筆 LINE Pay。",
+            "recordedAt": 1795536300000,
+            "startedAt": 1795534620000
+          }
+        ]
+      }
+    },
+    {
+      "stage": "retried",
+      "queue": {
+        "format": "hey-table.payment-attention.v1",
+        "capturedAt": 1795536390000,
+        "orders": [
+          {
+            "id": 895,
+            "status": "pending",
+            "method": "line_pay",
+            "environment": "demo",
+            "total": 45,
+            "paymentDueAt": 1795535520000,
+            "state": "pending",
+            "startedAt": 1795534620000,
+            "checkedAt": null,
+            "latestNote": {
+              "note": "已告知顧客稍候，下一班先核對這筆 LINE Pay。",
+              "recordedAt": 1795536300000
+            },
+            "canCheck": false
+          },
+          {
+            "id": 896,
+            "status": "completed",
+            "method": "px_pay_plus",
+            "environment": "sandbox",
+            "total": 85,
+            "paymentDueAt": 1795537020000,
+            "state": "authorized",
+            "startedAt": 1795536120000,
+            "checkedAt": null,
+            "canCheck": false
+          }
+        ],
+        "nextAfter": null
+      },
+      "history": {
+        "target": {
+          "state": "pending",
+          "startedAt": 1795534620000
+        },
+        "notes": [
+          {
+            "id": 1,
+            "state": "pending",
+            "note": "已告知顧客稍候，下一班先核對這筆 LINE Pay。",
+            "recordedAt": 1795536300000,
+            "startedAt": 1795534620000
+          }
+        ]
+      }
+    },
+    {
+      "stage": "settled",
+      "queue": {
+        "format": "hey-table.payment-attention.v1",
+        "capturedAt": 1795536480000,
+        "orders": [
+          {
+            "id": 896,
+            "status": "completed",
+            "method": "px_pay_plus",
+            "environment": "sandbox",
+            "total": 85,
+            "paymentDueAt": 1795537020000,
+            "state": "authorized",
+            "startedAt": 1795536120000,
+            "checkedAt": null,
+            "canCheck": false
+          }
+        ],
+        "nextAfter": null
+      },
+      "history": {
+        "target": null,
+        "notes": [
+          {
+            "id": 1,
+            "state": "pending",
+            "note": "已告知顧客稍候，下一班先核對這筆 LINE Pay。",
+            "recordedAt": 1795536300000,
+            "startedAt": 1795534620000
+          }
+        ]
+      }
+    }
+  ]
+}

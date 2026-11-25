@@ -12,6 +12,7 @@ import {paymentPrime,openPaymentUrl} from "../lib/tappay-client.mjs";
 import {sqliteD1} from "../scripts/sqlite-d1.mjs";
 import {applyDemoMigrations} from "../scripts/apply-demo-migrations.mjs";
 import {buildReturnLedgerDemo} from "../scripts/return-ledger-demo.mjs";
+import {buildPaymentAttentionDemo} from "../scripts/payment-attention-demo.mjs";
 import {bookablePickupSlots} from "../lib/pickup-slots.mjs";
 import {stationReview,stationReviewDigest} from "../lib/kitchen-timing.mjs";
 import {cartShareLink,readCartShare,readCartShareAddress} from "../lib/cart-share.mjs";
@@ -451,6 +452,22 @@ test("staff payment notes follow one attempt, are retry-safe after settlement, a
   assert.equal((await submit({...base,state:"pending",operationId:crypto.randomUUID()})).status,409);
   assert.deepEqual((await (await read()).json()).target,{attemptId:102,state:"pending",startedAt:now});
   assert.deepEqual((await (await read("?id=1&before="+page.nextBefore)).json()).notes,[saved]);
+});
+
+test("the payment handoff fixture comes from the queue, idempotent notes and simulated settlement",async()=>{
+  const saved=JSON.parse(readFileSync(new URL("../examples/payment-attention-demo.json",import.meta.url),"utf8"));
+  const demo=await buildPaymentAttentionDemo();
+  assert.deepEqual(demo,saved);
+  const [waiting,written,retried,settled]=demo.scenes;
+  assert.deepEqual(demo.scenes.map(({stage})=>stage),["waiting","saved","retried","settled"]);
+  assert.deepEqual(waiting.queue.orders.map(({method,state})=>[method,state]),[["line_pay","pending"],["px_pay_plus","authorized"]]);
+  assert.equal(waiting.history.notes.length,0);
+  assert.deepEqual(written.history.notes,retried.history.notes);
+  assert.equal(retried.history.notes.length,1);
+  assert.deepEqual(settled.history.notes,written.history.notes);
+  assert.equal(settled.history.target,null);
+  assert.deepEqual(settled.queue.orders.map(({method})=>method),["px_pay_plus"]);
+  assert.doesNotMatch(JSON.stringify(demo),/"(?:token|reference|tradeId|merchant|attemptId|operationId)"/);
 });
 
 test("a delayed payment lookup cannot overwrite a newer verification for the same recorded state",async t=>{
