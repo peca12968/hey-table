@@ -95,7 +95,49 @@ def capture(db):
             "renewals": history["renewals"],
         }
 
-    return {"stages": stages, "renewal_batch": renewal_batch}
+        now = 300
+        release_batch = capture_release_batch(api)
+
+    return {"stages": stages, "renewal_batch": renewal_batch, "release_batch": release_batch}
+
+
+def capture_release_batch(api):
+    orders = [("order-east", "KIT-01", 4, 2), ("order-west", "WRAP-01", 2, 2)]
+    scope = {"reservation_ids": [key for key, _, _, _ in orders]}
+    for key, sku, held, _ in orders:
+        api.post("/reservations", headers={"Idempotency-Key": key},
+                 json={"sku": sku, "quantity": held}).raise_for_status()
+
+    def snapshot():
+        view = api.post("/packing-snapshots", json=scope).raise_for_status().json()
+        return (view["captured_at_ms"],
+                {row["reservation"]["id"]: row["reservation"]["held"] for row in view["holds"]},
+                {row["sku"]: row for row in view["products"]})
+
+    captured_at, held_before, stock_before = snapshot()
+    items = [{"reservation_id": key, "expected_held": held_before[key], "quantity": quantity}
+             for key, _, _, quantity in orders]
+    endpoint, headers = "/release-batches", {"Idempotency-Key": "remove-backorders"}
+    stale = [items[0], {**items[1], "expected_held": items[1]["expected_held"] + 1}]
+    conflict = api.post(endpoint, headers=headers, json={"items": stale})
+    _, held_after_conflict, stock_after_conflict = snapshot()
+    accepted = api.post(endpoint, headers=headers, json={"items": items})
+    receipt = accepted.raise_for_status().json()
+    recovered = api.get(f"{endpoint}/{receipt['batch_id']}").raise_for_status().json()
+    replay = api.post(endpoint, headers=headers, json={"items": items[::-1]})
+    _, held_after, stock_after = snapshot()
+    return {
+        "batch_id": receipt["batch_id"], "captured_at_ms": captured_at, "released_at_ms": receipt["released_at_ms"],
+        "stale_status": conflict.status_code, "accepted_status": accepted.status_code, "replay_status": replay.status_code,
+        "same_receipt": recovered == receipt == replay.json(),
+        "items": [{**line, "sku": sku, "held_after_conflict": held_after_conflict[key],
+                   "held_after_snapshot": held_after[key],
+                   "available_before": stock_before[sku]["available"],
+                   "available_after_conflict": stock_after_conflict[sku]["available"],
+                   "available_after": stock_after[sku]["available"],
+                   "capacity_before": stock_before[sku]["capacity"], "capacity_after": stock_after[sku]["capacity"]}
+                  for line, (key, sku, _, _) in zip(receipt["items"], orders, strict=True)],
+    }
 
 
 if __name__ == "__main__":

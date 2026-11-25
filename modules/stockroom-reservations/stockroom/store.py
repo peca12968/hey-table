@@ -66,6 +66,15 @@ CREATE TABLE IF NOT EXISTS reservation_releases (
     held_after INTEGER NOT NULL CHECK (held_after >= 0),
     PRIMARY KEY (reservation_id, release_id)
 );
+CREATE TABLE IF NOT EXISTS reservation_release_batches (
+    batch_id TEXT NOT NULL,
+    reservation_id TEXT NOT NULL,
+    release_id TEXT NOT NULL,
+    released_at_ms INTEGER NOT NULL,
+    PRIMARY KEY (batch_id, reservation_id),
+    UNIQUE (reservation_id, release_id),
+    FOREIGN KEY (reservation_id, release_id) REFERENCES reservation_releases(reservation_id, release_id)
+);
 CREATE TABLE IF NOT EXISTS reservation_renewals (
     reservation_id TEXT NOT NULL REFERENCES reservations(id),
     renewal_id TEXT NOT NULL,
@@ -462,14 +471,63 @@ class Store:
                 if receipt["quantity"] != quantity:
                     raise Conflict("Release key already used with different quantity")
                 return dict(receipt), False
-            held_after = self.held_units(row) - quantity
-            if held_after < 0:
-                raise Conflict("Release exceeds the remaining hold")
-            conn.execute("UPDATE products SET available=available+? WHERE sku=?", (quantity, row["sku"]))
-            conn.execute("UPDATE reservations SET reduced=reduced+?, state=? WHERE id=?",
-                         (quantity, "held" if held_after else "released", key))
-            conn.execute("INSERT INTO reservation_releases VALUES (?,?,?,?)", (key, release_id, quantity, held_after))
-            return {"reservation_id": key, "release_id": release_id, "quantity": quantity, "held_after": held_after}, True
+            return self.record_release(conn, row, release_id, quantity), True
+
+    def record_release(self, conn, row, release_id, quantity):
+        key = row["id"]
+        held_after = self.held_units(row) - quantity
+        if held_after < 0:
+            raise Conflict("Release exceeds the remaining hold")
+        conn.execute("UPDATE products SET available=available+? WHERE sku=?", (quantity, row["sku"]))
+        conn.execute("UPDATE reservations SET reduced=reduced+?, state=? WHERE id=?",
+                     (quantity, "held" if held_after else "released", key))
+        conn.execute("INSERT INTO reservation_releases VALUES (?,?,?,?)", (key, release_id, quantity, held_after))
+        return {"reservation_id": key, "release_id": release_id, "quantity": quantity, "held_after": held_after}
+
+    @staticmethod
+    def recorded_release_batch(conn, batch_id):
+        rows = [dict(row) for row in conn.execute("""
+            SELECT r.reservation_id,b.released_at_ms,r.quantity+r.held_after AS held_before,r.quantity,r.held_after
+            FROM reservation_release_batches b JOIN reservation_releases r USING (reservation_id, release_id)
+            WHERE b.batch_id=? ORDER BY r.reservation_id
+        """, (batch_id,))]
+        if not rows:
+            return None
+        released_at = rows[0]["released_at_ms"]
+        for row in rows:
+            del row["released_at_ms"]
+        return {"batch_id": batch_id, "released_at_ms": released_at, "items": rows}
+
+    def release_batch(self, batch_id, items):
+        requested = sorted(items)
+        # Batch receipts share the per-reservation release ledger used by inventory reconciliation.
+        # Single-release request keys cannot contain a colon.
+        release_id = f"batch:{batch_id}"
+        with self.current_inventory() as (conn, now):
+            receipt = self.recorded_release_batch(conn, batch_id)
+            if receipt:
+                saved = [(item["reservation_id"], item["held_before"], item["quantity"]) for item in receipt["items"]]
+                if saved != requested:
+                    raise Conflict("Release batch key already used with different input")
+                return receipt, False
+            for key, expected, quantity in requested:
+                try:
+                    row = self.find_reservation(conn, key)
+                    if self.held_units(row) != expected:
+                        raise Conflict("Remaining hold changed")
+                    self.record_release(conn, row, release_id, quantity)
+                except (Missing, Conflict) as error:
+                    raise type(error)(f"{key}: {error}") from error
+                conn.execute("INSERT INTO reservation_release_batches VALUES (?,?,?,?)",
+                             (batch_id, key, release_id, now))
+            return self.recorded_release_batch(conn, batch_id), True
+
+    def release_batch_receipt(self, batch_id):
+        with closing(self.connect()) as conn:
+            receipt = self.recorded_release_batch(conn, batch_id)
+            if receipt is None:
+                raise Missing("Unknown release batch")
+            return receipt
 
     def progress_row(self, row):
         outstanding = row["quantity"] - row["shipped"]

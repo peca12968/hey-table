@@ -24,6 +24,8 @@ python -m uvicorn stockroom.api:app
 | DELETE /reservation-batches/{batch_id} | 一次放回該批所有尚在保留的數量 |
 | GET /reservation-batches/{batch_id}/cancellation | 依批號查回取消時間與各品項放回數量 |
 | DELETE /reservations/{key} | 釋放保留。重複取消只會歸還一次 |
+| POST /release-batches | 以 Idempotency-Key 批次釋回多張保留單的未出貨數量 |
+| GET /release-batches/{batch_id} | 查回首次批次減量時間、放回量與前後保留件數 |
 | POST /reservations/{key}/renewals | 依目前期限延長仍有效的保留，以 Idempotency-Key 識別這次續期 |
 | POST /reservations/{key}/releases | 以 Idempotency-Key 指定本次減量單號，將指定的 quantity 件釋放給其他訂單 |
 | POST /reservations/{key}/fulfillments | 傳入本箱的 quantity 與 Idempotency-Key，登記實際出貨。不同保留可使用相同箱號 |
@@ -193,6 +195,21 @@ SQLite 適合本機或單節點展示。此版本的使用情境是可信任的�
 部分取消未出貨數量時，可以保留其餘訂單。從有 20 件庫存的獨立示範資料庫執行 `python demo.py --reduce`，保留 8 件、寄出 3 件，再釋放 2 件。此時實體庫存 17 件，可用 14 件，原訂單仍保留 3 件。再取消訂單僅歸還最後 3 件。重送減量單仍取得當時記錄的 `held_after: 3`，查詢訂單可見最新的已出貨 3 件、保留 0 件及累計歸還 5 件。
 
 同一減量單號改數量、超過剩餘保留量、或訂單關閉後送入新的減量單都會回傳 409。部分釋放沿用原期限。若一部分已釋放、其餘都出貨，訂單狀態為 `released`，可從 `shipped` 和 `returned` 區分兩種去向。升級前的訂單預設部分釋放量為 0。測試亦驗證兩個 API 實例爭用最後 6 件，以及收據寫入失敗時可安全重試。[交易測試](tests/test_api.py)
+
+#### 一次核對並釋回多張保留單
+
+先從裝箱快照讀取各單的 `held`，再將保留編號及預期剩餘量送到 `POST /release-batches`。以下假設兩張訂單分別保留 4 件與 2 件，各要釋回 2 件。以 `Idempotency-Key: remove-backorders` 辨識這次操作。
+
+```json
+{
+  "items": [
+    {"reservation_id": "order-east", "expected_held": 4, "quantity": 2},
+    {"reservation_id": "order-west", "expected_held": 2, "quantity": 2}
+  ]
+}
+```
+
+服務在同一筆 SQLite 寫入交易結算到期、核對剩餘量、更新可用量並寫入減量收據。成功後東區仍保留 2 件，西區保留歸零，實體庫存與已出貨件數沿用原值。任一張的期望值過期或釋回量超過保留時整批回 409，查無保留則回 404。換序重送可取得相同的原始收據，也能按批號查回。新舊資料庫都沿用原減量帳供對帳。[重啟、並行與回滾測試](tests/test_release_batches.py) · [Demo 收據](examples/reservation-batch-status-demo.json)
 
 ### 已寄出商品的退貨入庫
 

@@ -231,5 +231,44 @@
         }
       ]
     }
+  },
+  "release_batch": {
+    "batch_id": "remove-backorders",
+    "captured_at_ms": 300000,
+    "released_at_ms": 300000,
+    "stale_status": 409,
+    "accepted_status": 201,
+    "replay_status": 200,
+    "same_receipt": true,
+    "items": [
+      {
+        "reservation_id": "order-east",
+        "held_before": 4,
+        "quantity": 2,
+        "held_after": 2,
+        "sku": "KIT-01",
+        "held_after_conflict": 4,
+        "held_after_snapshot": 2,
+        "available_before": 15,
+        "available_after_conflict": 15,
+        "available_after": 17,
+        "capacity_before": 19,
+        "capacity_after": 19
+      },
+      {
+        "reservation_id": "order-west",
+        "held_before": 2,
+        "quantity": 2,
+        "held_after": 0,
+        "sku": "WRAP-01",
+        "held_after_conflict": 2,
+        "held_after_snapshot": 0,
+        "available_before": 0,
+        "available_after_conflict": 0,
+        "available_after": 2,
+        "capacity_before": 2,
+        "capacity_after": 2
+      }
+    ]
   }
 }

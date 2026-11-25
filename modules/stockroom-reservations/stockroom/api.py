@@ -196,6 +196,36 @@ class ReleaseReceipt(BaseModel):
     held_after: int
 
 
+class ReleaseBatchItem(Quantity):
+    reservation_id: BoxKey
+    expected_held: int = Field(strict=True, ge=1, le=2**63 - 1)
+
+
+class ReleaseBatch(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    items: list[ReleaseBatchItem] = Field(min_length=1, max_length=100)
+
+    @field_validator("items")
+    @classmethod
+    def distinct_reservations(cls, items):
+        if len({item.reservation_id for item in items}) != len(items):
+            raise ValueError("Repeat reservation in release batch")
+        return items
+
+
+class ReleasedBatchItem(BaseModel):
+    reservation_id: str
+    held_before: int
+    quantity: int
+    held_after: int
+
+
+class ReleaseBatchReceipt(BaseModel):
+    batch_id: str
+    released_at_ms: int
+    items: list[ReleasedBatchItem]
+
+
 ExpectedDeadline = Annotated[int, Field(strict=True, ge=0, le=2**63 - 1)]
 ExtensionSeconds = Annotated[int, Field(strict=True, ge=1, le=86_400)]
 
@@ -342,6 +372,21 @@ def create_app(path: Path, *, ttl_seconds=900, clock=time.time):
     def renewal_batch_receipt(batch_id: BoxKey, response: Response):
         response.headers["Cache-Control"] = "no-store"
         return store.renewal_batch_receipt(batch_id)
+
+    @app.post("/release-batches", response_model=ReleaseBatchReceipt, status_code=201,
+              responses={200: {"model": ReleaseBatchReceipt, "description": "Original release batch receipt"}})
+    def release_batch(batch: ReleaseBatch, response: Response, idempotency_key: RequestKey):
+        items = [(item.reservation_id, item.expected_held, item.quantity) for item in batch.items]
+        receipt, created = store.release_batch(idempotency_key, items)
+        response.headers["Cache-Control"] = "no-store"
+        if not created:
+            response.status_code = 200
+        return receipt
+
+    @app.get("/release-batches/{batch_id}", response_model=ReleaseBatchReceipt)
+    def release_batch_receipt(batch_id: BoxKey, response: Response):
+        response.headers["Cache-Control"] = "no-store"
+        return store.release_batch_receipt(batch_id)
 
     @app.post("/return-batches", response_model=ReturnBatchReceipt, status_code=201,
               responses={200: {"model": ReturnBatchReceipt, "description": "Original return batch receipt"}})
