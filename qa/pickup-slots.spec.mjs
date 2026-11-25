@@ -417,6 +417,59 @@ test("mobile staff refresh a stale slot limit, close it and restore the default"
   expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBe(360);
 });
 
+test("mobile staff preview a slot batch, recover a conflict and preserve existing bookings",async({page,request})=>{
+  const headers={Authorization:"Bearer local-test-kitchen"},endpoint="/api/kitchen/pickup-slots";
+  const date=businessDate(Date.now()+86_400_000),first=Date.parse(date+"T17:00:00+08:00"),second=first+900_000,third=second+900_000;
+  const order={token:randomUUID(),mode:"pickup",table:null,note:"",pickupSlot:first,items:[{id:"sencha",qty:1}]};
+  const settings=async()=>new Map((await (await request.get(endpoint+"?date="+date,{headers})).json()).slots.map(slot=>[slot.start,slot]));
+  const change=(start,capacity,revision)=>request.patch(endpoint,{headers,data:{date,start,capacity,revision}});
+  const before=await settings();
+  let booked=false;
+  try{
+    expect((await request.post("/api/orders",{data:order})).ok()).toBe(true);
+    booked=true;
+    await page.setViewportSize({width:360,height:780});
+    await page.addInitScript(()=>sessionStorage.setItem("he-ri-staff","local-test-kitchen"));
+    await page.goto("/kitchen/pickup-slots");
+    await page.getByLabel("取餐日期").fill(date);
+    const panel=page.locator(".batchSlotLimits");
+    await panel.getByText("批次調整時段上限",{exact:true}).click();
+    const firstChoice=panel.getByRole("checkbox",{name:"17:00～17:15"});
+    const secondChoice=panel.getByRole("checkbox",{name:"17:15～17:30"});
+    await firstChoice.check();
+    await secondChoice.check();
+    const input=panel.getByLabel("新的份數上限"),preview=panel.getByRole("button",{name:"預覽調整"});
+    await input.fill("0");
+    await preview.click();
+    await expect(panel.getByRole("heading",{name:"確認調整 2 個時段"})).toBeVisible();
+    await expect(panel.getByText(/17:00～17:15 · 已占用 1 份/)).toBeVisible();
+    expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBe(360);
+    expect((await change(second,7,before.get(second).revision)).ok()).toBe(true);
+    const confirm=panel.getByRole("button",{name:"確認批次儲存"});
+    await confirm.click();
+    await expect(page.getByRole("alert")).toHaveText("部分時段已截止或上限已變更，整批未儲存。請重新核對。");
+    expect((await settings()).get(first)).toMatchObject({capacity:before.get(first).capacity,revision:before.get(first).revision,used:1});
+    await expect(firstChoice).toBeChecked();
+    await expect(secondChoice).toBeChecked();
+    await preview.click();
+    await expect(panel.getByText(/17:15～17:30 · 已占用 0 份 · 原上限 7 份/)).toBeVisible();
+    await confirm.click();
+    await expect(page.getByText("已批次儲存 2 個時段。",{exact:true})).toBeVisible();
+    const after=await settings();
+    expect(after.get(first)).toMatchObject({capacity:0,remaining:0,used:1});
+    expect(after.get(second)).toMatchObject({capacity:0,remaining:0,used:0});
+    expect(after.get(third)).toEqual(before.get(third));
+    const receipt=await (await request.get("/api/ticket",{headers:{"X-Ticket":order.token}})).json();
+    expect(receipt).toMatchObject({pickupSlot:first,status:"pending"});
+  }finally{
+    if(booked)await request.post("/api/ticket/cancel",{headers:{"X-Ticket":order.token},data:{}});
+    const current=await settings();
+    for(const slot of [first,second]){
+      if(current.get(slot).capacity!==before.get(slot).capacity)await change(slot,before.get(slot).capacity,current.get(slot).revision);
+    }
+  }
+});
+
 test("mobile staff pause and reopen a date without displacing orders or erasing a slot limit",async({page,request})=>{
   page.setDefaultTimeout(9000);
   const day=businessDate(Date.now()+3*86_400_000),start=Date.parse(day+"T12:00:00+08:00");

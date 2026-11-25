@@ -47,3 +47,19 @@ export async function pickupSlotLimits(db,date,now){
   const editable=new Set(editablePickupSlots(date,now));
   return {intake:{accepting,revision,editable:editable.size>0},slots:slots.map(slot=>({...slot,editable:editable.has(slot.start)}))};
 }
+
+export async function savePickupSlotLimits(db,capacity,slots){
+  const {results}=await db.prepare(`WITH plan AS MATERIALIZED (
+    SELECT json_extract(chosen.value,'$.start') AS start,
+      json_extract(chosen.value,'$.revision') AS expectedRevision,
+      COALESCE(limits.revision,0) AS actualRevision
+    FROM json_each(?) AS chosen
+    LEFT JOIN pickup_slot_limits AS limits ON limits.start=json_extract(chosen.value,'$.start')
+  )
+  INSERT INTO pickup_slot_limits(start,capacity,revision)
+    SELECT start,?,actualRevision+1 FROM plan
+    WHERE NOT EXISTS (SELECT 1 FROM plan WHERE actualRevision<>expectedRevision)
+  ON CONFLICT(start) DO UPDATE SET capacity=excluded.capacity,revision=excluded.revision
+  RETURNING start,capacity,revision`).bind(JSON.stringify(slots.map(({start,revision})=>({start,revision}))),capacity).all();
+  return results.sort((a,b)=>a.start-b.start);
+}

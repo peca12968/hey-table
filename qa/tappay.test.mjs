@@ -1270,6 +1270,39 @@ test("staff pickup roster groups one Taipei day and excludes private receipt and
   }
 });
 
+test("pickup slot batches compare every revision and cutoff before writing any limit",async t=>{
+  const db=database();
+  t.after(()=>db.sqlite.close());
+  const date="2026-11-25",first=Date.parse(date+"T12:00:00+08:00"),second=first+900_000,third=second+900_000;
+  let now=first-75*60_000;
+  t.mock.method(Date,"now",()=>now);
+  const runtime={DB:db,STAFF_KEY:"fixture-staff"},staff={Authorization:"Bearer fixture-staff"};
+  const patch=(path,input,headers=staff)=>api(new Request("https://order.example/api/kitchen/"+path,{
+    method:"PATCH",headers:{...headers,"Content-Type":"application/json"},body:JSON.stringify(input),
+  }),runtime);
+  const single=(start,capacity,revision)=>patch("pickup-slots",{date,start,capacity,revision});
+  const batch=(slots,capacity=0,headers=staff)=>patch("pickup-slot-batch",{date,capacity,slots},headers);
+  const selected=[{start:second,revision:0},{start:first,revision:0}];
+  assert.equal((await batch(selected,0,{})).status,403);
+  for(const malformed of [[],[null],[selected[0],selected[0]],[{start:first+1,revision:0}],[{start:first,revision:-1}]]){
+    assert.equal((await batch(malformed)).status,400);
+  }
+  assert.equal((await batch(selected,1.2)).status,400);
+  assert.equal((await single(first,8,0)).status,200);
+  assert.equal((await batch(selected)).status,409);
+  const stored=()=>db.sqlite.prepare("SELECT start,capacity,revision FROM pickup_slot_limits ORDER BY start").all().map(row=>({...row}));
+  assert.deepEqual(stored(),[{start:first,capacity:8,revision:1}]);
+  const changed=await batch([{start:second,revision:0},{start:first,revision:1}]);
+  assert.deepEqual(await changed.json(),{date,slots:[{start:first,capacity:0,revision:2},{start:second,capacity:0,revision:1}]});
+  const [a,b]=await Promise.all([batch([{start:first,revision:2},{start:second,revision:1}],4),
+    batch([{start:second,revision:1},{start:third,revision:0}],null)]);
+  assert.deepEqual([a.status,b.status].sort(),[200,409]);
+  const before=stored();
+  now=first-29*60_000;
+  assert.equal((await batch([{start:first,revision:before[0].revision},{start:second,revision:before[1].revision}],null)).status,409);
+  assert.deepEqual(stored(),before);
+});
+
 test("authorized staff can close, raise and reset an individual slot without displacing bookings",async t=>{
   const db=database();
   t.after(()=>db.sqlite.close());

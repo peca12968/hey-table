@@ -11,7 +11,7 @@ import {dailyTiming,dailyTimingRows} from "./daily-timing.mjs";
 import {kitchenOverdue} from "./kitchen-overdue.mjs";
 import {bookedPickupDate,pickupBookingDays,pickupCalendarStatus,pickupPrepLead,pickupSlotCapacity,pickupSlotsForDay} from "../lib/pickup-slots.mjs";
 import {canReschedulePickup,capacityAtPickupSlot,editablePickupSlots,orderPortions,pickupChanges,pickupSlotLimits,
-  pickupDayPaused,pickupDaySettings,pickupSlotUsage,pickupSlots,usedAtPickupSlot} from "./pickup-slots.mjs";
+  pickupDayPaused,pickupDaySettings,pickupSlotUsage,pickupSlots,savePickupSlotLimits,usedAtPickupSlot} from "./pickup-slots.mjs";
 import {pickupCalendar} from "./pickup-calendar.mjs";
 import {pickupRoster} from "./pickup-roster.mjs";
 import {cashCorrectionHistory,cashReceiptColumn,collectCash,correctCashReceipt,dailyCashReceipts} from "./cash-receipts.mjs";
@@ -349,17 +349,20 @@ export async function api(request, env) {
     return meta.changes?json({date,accepting,revision:revision+1}):
       fail("整日預約狀態已由其他店員更新，請重新載入。",409);
   }
-  if(path==="/api/kitchen/pickup-slots"&&method==="PATCH"){
-    const {date,start,capacity,revision}=input;
-    if(!pickupSlotsForDay(date).includes(start)||(capacity!==null&&(!Number.isSafeInteger(capacity)||capacity<0))||
-        !Number.isSafeInteger(revision)||revision<0||revision>=Number.MAX_SAFE_INTEGER)
+  if(["/api/kitchen/pickup-slots","/api/kitchen/pickup-slot-batch"].includes(path)&&method==="PATCH"){
+    const {date,start,capacity,revision}=input,batch=path==="/api/kitchen/pickup-slot-batch";
+    const slots=batch?input.slots:[{start,revision}],allowed=new Set(pickupSlotsForDay(date));
+    if((capacity!==null&&(!Number.isSafeInteger(capacity)||capacity<0))||!Array.isArray(slots)||
+      !slots.length||slots.length>allowed.size||slots.some(slot=>!slot||!allowed.has(slot.start)||
+        !Number.isSafeInteger(slot.revision)||slot.revision<0||slot.revision>=Number.MAX_SAFE_INTEGER)||
+      new Set(slots.map(slot=>slot.start)).size!==slots.length)
       return fail("取餐時段、份數或版本無效。");
-    if(!editablePickupSlots(date,Date.now()).includes(start))return fail("此時段已停止預約，無法調整上限。",409);
-    const {meta}=await db.prepare(`INSERT INTO pickup_slot_limits(start,capacity,revision)
-      SELECT ?,?,? WHERE COALESCE((SELECT revision FROM pickup_slot_limits WHERE start=?),0)=?
-      ON CONFLICT(start) DO UPDATE SET capacity=excluded.capacity,revision=excluded.revision`)
-      .bind(start,capacity,revision+1,start,revision).run();
-    return meta.changes?json({date,start,capacity,revision:revision+1}):fail("上限已由其他店員更新，請重新載入。",409);
+    const editable=new Set(editablePickupSlots(date,Date.now()));
+    const conflict="部分時段已截止或上限已變更，整批未儲存。請重新核對。";
+    if(slots.some(slot=>!editable.has(slot.start)))return fail(batch?conflict:"此時段已停止預約，無法調整上限。",409);
+    const saved=await savePickupSlotLimits(db,capacity,slots);
+    if(!saved.length)return fail(batch?conflict:"上限已由其他店員更新，請重新載入。",409);
+    return batch?json({date,slots:saved}):json({date,...saved[0]});
   }
   const staffPickup=path === "/api/kitchen/create-pickup";
   if(path === "/api/pickup-slots" && method === "GET") {

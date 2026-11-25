@@ -3,6 +3,7 @@ import {useEffect,useState} from "react";
 import {Header,Footer,request} from "../../shared";
 import {businessDate} from "../../../lib/business-day.mjs";
 import {pickupRosterPath,pickupWindow} from "../../../lib/pickup-slots.mjs";
+import BatchSlotLimits from "./batch-slot-limits";
 import "./slots.css";
 
 const endpoint="/api/kitchen/pickup-slots";
@@ -37,10 +38,11 @@ export default function PickupSlotLimits(){
   useEffect(()=>{
     if(date==="")return;
     const controller=new AbortController(),target=date??businessDate(Date.now());
-    request(endpoint+"?date="+encodeURIComponent(target),{headers:staffHeaders(),signal:controller.signal}).then(value=>{
+    request(endpoint+"?date="+encodeURIComponent(target),{headers:staffHeaders(),
+      signal:AbortSignal.any([controller.signal,AbortSignal.timeout(10_000)])}).then(value=>{
       if(!controller.signal.aborted){setSnapshot(value);setLoadError("");setBusy(false);}
     }).catch(error=>{
-      if(!controller.signal.aborted){setSnapshot(null);setLoadError(error.message);setBusy(false);}
+      if(!controller.signal.aborted){setSnapshot(null);setLoadError(error.name==="TimeoutError"?"讀取時段逾時，請重新載入。":error.message);setBusy(false);}
     });
     return ()=>controller.abort();
   },[date,revision]);
@@ -51,13 +53,14 @@ export default function PickupSlotLimits(){
     setNotice("");setSaveError("");setLoadError("");setRevision(value=>value+1);
   }
   async function save(path,input,message){
-    if(busy)return;
+    if(busy)return false;
     setBusy(true);setNotice("");setSaveError("");
     try{
       await request(path,{method:"PATCH",headers:{"Content-Type":"application/json",...staffHeaders()},
-        body:JSON.stringify(input)});
+        body:JSON.stringify(input),signal:AbortSignal.timeout(15_000)});
       setNotice(message);
-    }catch(error){setSaveError(error.message);}
+      return true;
+    }catch(error){setSaveError(error.status?error.message:"尚未收到儲存結果，請核對最新時段。");return false;}
     finally{setRevision(value=>value+1);}
   }
   return <><Header/><main className="shell section pickupLimits">
@@ -88,6 +91,7 @@ export default function PickupSlotLimits(){
         }}>{current.intake.accepting?"暫停整日預約":"恢復整日預約"}</button>}
       </div>
     </section>}
+    {current&&<BatchSlotLimits key={current.date} snapshot={current} busy={busy} save={save}/>}
     {current&&rows.length===0&&<p role="status">這天目前沒有可調整的時段。</p>}
     {current&&rows.length>0&&<div className="pickupLimitGrid">
       {rows.map(slot=><SlotLimit key={slot.start+":"+slot.revision} slot={slot} date={current.date} defaultCapacity={current.defaultCapacity} busy={busy}

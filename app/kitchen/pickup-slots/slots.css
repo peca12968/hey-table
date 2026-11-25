@@ -10,3 +10,11 @@
 .pickupDayIntake{display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px;margin:0 0 14px}
 .pickupDayIntake h2,.pickupDayIntake p{margin:0}.pickupDayIntake h2{font-family:inherit;font-size:1.2rem;margin-bottom:4px}
 .pickupDayIntake .actions{gap:8px}.pickupDayIntake .outline{min-height:42px}
+.batchSlotLimits{margin-bottom:14px}
+.batchSlotLimits summary{font-weight:700;cursor:pointer}
+.batchSlotLimits fieldset{margin:12px 0;padding:0;border:0}
+.batchSlotLimits legend{margin-bottom:6px;font-weight:650}
+.batchSlotOptions{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(120px,100%),1fr));gap:4px 8px}
+.batchSlotOptions label{display:flex;align-items:center;gap:6px;min-height:40px;font-size:.875rem;white-space:nowrap}
+.batchSlotOptions input{width:1rem;height:1rem;accent-color:var(--green)}
+.batchSlotControls{align-items:end;gap:8px 12px}.batchSlotControls input{width:8rem}
