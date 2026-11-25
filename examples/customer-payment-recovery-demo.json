@@ -1,0 +1,81 @@
+{
+  "format": "hey-table.customer-payment-recovery-demo.v1",
+  "scenarios": [
+    {
+      "kind": "reached",
+      "orderId": 1,
+      "total": 45,
+      "method": "line_pay",
+      "scenes": [
+        {
+          "stage": "ready",
+          "paymentState": "unpaid",
+          "clientStarts": 0,
+          "storedAttempts": 0
+        },
+        {
+          "stage": "interrupted",
+          "paymentState": null,
+          "clientStarts": 1,
+          "storedAttempts": null
+        },
+        {
+          "stage": "checked",
+          "paymentState": "pending",
+          "clientStarts": 1,
+          "storedAttempts": 1
+        },
+        {
+          "stage": "continued",
+          "paymentState": "pending",
+          "clientStarts": 1,
+          "storedAttempts": 1
+        },
+        {
+          "stage": "paid",
+          "paymentState": "paid",
+          "clientStarts": 1,
+          "storedAttempts": 1
+        }
+      ]
+    },
+    {
+      "kind": "notReached",
+      "orderId": 2,
+      "total": 45,
+      "method": "px_pay_plus",
+      "scenes": [
+        {
+          "stage": "ready",
+          "paymentState": "unpaid",
+          "clientStarts": 0,
+          "storedAttempts": 0
+        },
+        {
+          "stage": "interrupted",
+          "paymentState": null,
+          "clientStarts": 1,
+          "storedAttempts": null
+        },
+        {
+          "stage": "checked",
+          "paymentState": "unpaid",
+          "clientStarts": 1,
+          "storedAttempts": 0
+        },
+        {
+          "stage": "continued",
+          "paymentState": "pending",
+          "clientStarts": 2,
+          "storedAttempts": 1
+        },
+        {
+          "stage": "paid",
+          "paymentState": "paid",
+          "clientStarts": 2,
+          "storedAttempts": 1
+        }
+      ]
+    }
+  ]
+}

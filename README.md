@@ -180,6 +180,8 @@ Demo 總站可試玩跨午夜待核對、留下備註、原操作重送與付款
 
 送出付款後如果收據沒收到回覆，會先用原餐單查回付款紀錄。查回待確認的交易後，可繼續該次付款。若明確查到沒有付款紀錄，會重新開放付款按鈕。查詢仍中斷時，可按「向金流查詢狀態」再查。手動查詢會顯示本次核對結果及目前付款狀態。[手機斷線復原測試](qa/payments.spec.mjs)
 
+Demo 總站的「付款斷線復原」可切換請求已送達或未送達兩種情境，核對同一餐單的送出次數與已建立的付款筆數。使用 `node scripts/customer-payment-recovery-demo.mjs` 可透過點餐、查詢及示範付款 API 重建資料。[付款復原試玩（私人預覽）](https://peca-github-demo.peca12968.chatgpt.site/?demo=customerPaymentRecovery#demos) · [範例資料](examples/customer-payment-recovery-demo.json)
+
 可用手機點一份滑蛋豬排丼和一杯煎茶，勾選套餐優惠後合計 NT$200。選悠遊付、Pi 拍錢包或全盈+PAY 送單，在收據先試「模擬取消」，再重新付款。重新整理仍可看到同一筆訂單的已付款狀態。[手機付款測試](qa/payments.spec.mjs)
 
 私人預覽預設使用本機示範資料，不連線到金流商、不收款、不收集卡號。串接程式分成 SDK 取得一次性 prime、伺服器用訂單金額發起付款、Record API 查證交易三步。卡號、安全碼與到期日輸入在 TapPay 的託管欄位。付款人的聯絡資料只在該次請求送至金流商，應用程式不寫入資料庫。

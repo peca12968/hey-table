@@ -14,6 +14,7 @@ import {sqliteD1} from "../scripts/sqlite-d1.mjs";
 import {applyDemoMigrations} from "../scripts/apply-demo-migrations.mjs";
 import {buildReturnLedgerDemo} from "../scripts/return-ledger-demo.mjs";
 import {buildPaymentAttentionDemo} from "../scripts/payment-attention-demo.mjs";
+import {buildCustomerPaymentRecoveryDemo} from "../scripts/customer-payment-recovery-demo.mjs";
 import {bookablePickupSlots} from "../lib/pickup-slots.mjs";
 import {stationReview,stationReviewDigest} from "../lib/kitchen-timing.mjs";
 import {cartShareLink,readCartShare,readCartShareAddress} from "../lib/cart-share.mjs";
@@ -591,6 +592,20 @@ test("staff payment attempt history paginates stable ordinals and isolates notes
   assert.equal((await (await get(path)).json()).attempts[0].number,13);
   assert.deepEqual((await (await get(filter+"12")).json()).notes.map(row=>row.note),["最新嘗試的備註"]);
   assert.equal((await (await get(filter+"12")).json()).target,null);
+});
+
+test("the receipt recovery fixture is generated from actual order, check and payment APIs",async()=>{
+  const saved=JSON.parse(readFileSync(new URL("../examples/customer-payment-recovery-demo.json",import.meta.url),"utf8"));
+  const demo=await buildCustomerPaymentRecoveryDemo();
+  assert.deepEqual(demo,saved);
+  const [reached,notReached]=demo.scenarios;
+  assert.notEqual(reached.orderId,notReached.orderId);
+  assert.deepEqual(reached.scenes.map(scene=>[scene.clientStarts,scene.storedAttempts]),
+    [[0,0],[1,null],[1,1],[1,1],[1,1]]);
+  assert.deepEqual(notReached.scenes.map(scene=>[scene.clientStarts,scene.storedAttempts]),
+    [[0,0],[1,null],[1,0],[2,1],[2,1]]);
+  assert.ok(demo.scenarios.every(scenario=>scenario.scenes.at(-1).paymentState==="paid"));
+  assert.doesNotMatch(JSON.stringify(demo),/"(?:token|ref|reference|redirect|tradeId|merchant)"/);
 });
 
 test("the payment handoff fixture comes from the queue, idempotent notes and simulated settlement",async()=>{
