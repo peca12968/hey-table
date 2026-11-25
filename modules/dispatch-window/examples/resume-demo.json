@@ -1,0 +1,174 @@
+{
+  "format": "dispatch-window.resume-demo.v1",
+  "baseline": {
+    "start_ms": 100000,
+    "cutoff_ms": 107500,
+    "ship_units": 4,
+    "scheduled": [
+      {
+        "reservation_id": "B",
+        "pack_start_ms": 100000,
+        "dispatch_ms": 104000,
+        "deadline_ms": 107500,
+        "units": 4,
+        "dispatch": {
+          "boxes": [
+            {
+              "reservation_id": "B",
+              "shipment_id": "B1",
+              "quantity": 4
+            }
+          ]
+        }
+      }
+    ],
+    "omitted": [
+      {
+        "reservation_id": "A",
+        "reason": "shipment_id_already_used"
+      },
+      {
+        "reservation_id": "C",
+        "reason": "hold_closed"
+      }
+    ]
+  },
+  "resumed": {
+    "start_ms": 100000,
+    "cutoff_ms": 107500,
+    "ship_units": 6,
+    "scheduled": [
+      {
+        "reservation_id": "A",
+        "pack_start_ms": 100000,
+        "dispatch_ms": 103000,
+        "deadline_ms": 107500,
+        "units": 2,
+        "dispatch": {
+          "boxes": [
+            {
+              "reservation_id": "A",
+              "shipment_id": "A2",
+              "quantity": 2
+            }
+          ]
+        }
+      },
+      {
+        "reservation_id": "B",
+        "pack_start_ms": 103000,
+        "dispatch_ms": 107000,
+        "deadline_ms": 107500,
+        "units": 4,
+        "dispatch": {
+          "boxes": [
+            {
+              "reservation_id": "B",
+              "shipment_id": "B1",
+              "quantity": 4
+            }
+          ]
+        }
+      }
+    ],
+    "omitted": [
+      {
+        "reservation_id": "C",
+        "reason": "hold_closed"
+      }
+    ],
+    "already_dispatched": [
+      {
+        "reservation_id": "A",
+        "shipment_id": "A1",
+        "quantity": 3
+      }
+    ],
+    "shipment_conflicts": []
+  },
+  "conflict": {
+    "start_ms": 100000,
+    "cutoff_ms": 107500,
+    "ship_units": 4,
+    "scheduled": [
+      {
+        "reservation_id": "B",
+        "pack_start_ms": 100000,
+        "dispatch_ms": 104000,
+        "deadline_ms": 107500,
+        "units": 4,
+        "dispatch": {
+          "boxes": [
+            {
+              "reservation_id": "B",
+              "shipment_id": "B1",
+              "quantity": 4
+            }
+          ]
+        }
+      }
+    ],
+    "omitted": [
+      {
+        "reservation_id": "A",
+        "reason": "shipment_quantity_conflict"
+      },
+      {
+        "reservation_id": "C",
+        "reason": "hold_closed"
+      }
+    ],
+    "already_dispatched": [],
+    "shipment_conflicts": [
+      {
+        "reservation_id": "A",
+        "shipment_id": "A1",
+        "planned_quantity": 4,
+        "recorded_quantity": 3
+      }
+    ]
+  },
+  "finished": {
+    "start_ms": 107000,
+    "cutoff_ms": 107500,
+    "ship_units": 0,
+    "scheduled": [],
+    "omitted": [
+      {
+        "reservation_id": "A",
+        "reason": "already_dispatched"
+      },
+      {
+        "reservation_id": "B",
+        "reason": "already_dispatched"
+      },
+      {
+        "reservation_id": "C",
+        "reason": "hold_closed"
+      }
+    ],
+    "already_dispatched": [
+      {
+        "reservation_id": "A",
+        "shipment_id": "A1",
+        "quantity": 3
+      },
+      {
+        "reservation_id": "A",
+        "shipment_id": "A2",
+        "quantity": 2
+      },
+      {
+        "reservation_id": "B",
+        "shipment_id": "B1",
+        "quantity": 4
+      }
+    ],
+    "shipment_conflicts": []
+  },
+  "inventory_after": {
+    "sku": "KIT-01",
+    "capacity": 11,
+    "available": 11
+  }
+}

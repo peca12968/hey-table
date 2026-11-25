@@ -47,7 +47,34 @@ def indexed(rows, field):
     return result
 
 
-def collect(document, start, cutoff):
+def reconcile_boxes(boxes, shipped, order_id, duration):
+    recorded = []
+    remaining = []
+    conflicts = []
+    timings = {}
+    if any("pack_ms" in box for box in boxes.values()):
+        timings = {
+            box_id: integer(box.get("pack_ms"), f"{order_id}/{box_id}.pack_ms", 1)
+            for box_id, box in boxes.items()
+        }
+        if sum(timings.values()) > duration:
+            raise ValueError(f"{order_id}: box packing times exceed order.pack_ms")
+    for box_id, box in sorted(boxes.items()):
+        qty = integer(box["quantity"], "quantity", 1, 1_000_000)
+        if box_id not in shipped:
+            remaining.append((box_id, qty))
+            continue
+        actual = integer(shipped[box_id].get("dispatched"), f"{order_id}/{box_id}.dispatched", 1, 1_000_000)
+        if actual != qty:
+            conflicts.append({"reservation_id": order_id, "shipment_id": box_id,
+                              "planned_quantity": qty, "recorded_quantity": actual})
+            continue
+        recorded.append({"reservation_id": order_id, "shipment_id": box_id, "quantity": actual})
+        duration -= timings.get(box_id, 0)
+    return tuple(remaining), recorded, conflicts, duration
+
+
+def collect(document, start, cutoff, resume):
     orders = indexed(document["work"], "reservation_id")
     if not isinstance(document["holds"], list):
         raise ValueError("expected a list of Stockroom packing statements")
@@ -61,6 +88,8 @@ def collect(document, start, cutoff):
         )
     jobs = []
     omitted = {}
+    already_dispatched = []
+    shipment_conflicts = []
     for order_id, order in sorted(orders.items()):
         statement = holds[order_id]["snapshot"]
         available = statement["reservation"]
@@ -77,15 +106,23 @@ def collect(document, start, cutoff):
         boxes = indexed(order["boxes"], "shipment_id")
         if not 1 <= len(boxes) <= 100:
             raise ValueError(f"{order_id}: expected 1 to 100 boxes")
-        rows = tuple(
-            (box_id, integer(box["quantity"], "quantity", 1, 1_000_000))
-            for box_id, box in sorted(boxes.items())
-        )
+        if resume:
+            rows, confirmed, conflicts, duration = reconcile_boxes(boxes, shipped, order_id, duration)
+            already_dispatched.extend(confirmed)
+            shipment_conflicts.extend(conflicts)
+            if conflicts or not rows:
+                omitted[order_id] = "shipment_quantity_conflict" if conflicts else "already_dispatched"
+                continue
+        else:
+            rows = tuple(
+                (box_id, integer(box["quantity"], "quantity", 1, 1_000_000))
+                for box_id, box in sorted(boxes.items())
+            )
         units = sum(quantity for _, quantity in rows)
         deadline = cutoff if expires is None else min(expires, cutoff)
         if state != "held" or (expires is not None and expires <= start):
             omitted[order_id] = "hold_closed"
-        elif boxes.keys() & shipped.keys():
+        elif not resume and boxes.keys() & shipped.keys():
             omitted[order_id] = "shipment_id_already_used"
         elif held < units:
             omitted[order_id] = "insufficient_hold"
@@ -93,7 +130,7 @@ def collect(document, start, cutoff):
             omitted[order_id] = "cannot_finish_before_deadline"
         else:
             jobs.append(Job(order_id, ready, duration, deadline, units, rows))
-    return jobs, omitted
+    return jobs, omitted, already_dispatched, shipment_conflicts
 
 
 def optimize(jobs, start):
@@ -134,14 +171,16 @@ def optimize(jobs, start):
     return route[::-1]
 
 
-def plan(document):
+def plan(document, *, resume=False):
     start = integer(document["start_ms"], "start_ms")
+    if resume and "captured_at_ms" not in document:
+        raise ValueError("--resume requires the captured_at_ms from a Stockroom packing snapshot")
     if "captured_at_ms" in document:
         captured = integer(document["captured_at_ms"], "captured_at_ms")
         if start < captured:
             raise ValueError("start_ms predates the packing snapshot")
     cutoff = integer(document["cutoff_ms"], "cutoff_ms", start + 1)
-    jobs, omitted = collect(document, start, cutoff)
+    jobs, omitted, confirmed, conflicts = collect(document, start, cutoff, resume)
     selected = optimize(jobs, start)
     scheduled = []
     at = start
@@ -172,7 +211,7 @@ def plan(document):
     for job in jobs:
         if job.reservation not in chosen:
             omitted[job.reservation] = "not_selected"
-    return {
+    report = {
         "start_ms": start,
         "cutoff_ms": cutoff,
         "ship_units": sum(item["units"] for item in scheduled),
@@ -182,14 +221,19 @@ def plan(document):
             for order, reason in sorted(omitted.items())
         ],
     }
+    if resume:
+        report["already_dispatched"] = confirmed
+        report["shipment_conflicts"] = conflicts
+    return report
 
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("input", type=Path)
+    parser.add_argument("--resume", action="store_true", help="Replan boxes that have not been dispatched")
     args = parser.parse_args(argv)
     try:
-        report = plan(json.loads(args.input.read_text(encoding="utf-8-sig")))
+        report = plan(json.loads(args.input.read_text(encoding="utf-8-sig")), resume=args.resume)
     except (OSError, TypeError, ValueError, KeyError) as error:
         parser.exit(2, f"{error}\n")
     print(json.dumps(report, indent=2))

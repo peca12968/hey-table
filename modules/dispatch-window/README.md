@@ -38,3 +38,11 @@ python demo.py ../stockroom-reservations
 最多安排 17 張單，優先最大化出貨件數，再最大化完成訂單數，最後比較工作完成時間。每張單只能由同一個工作站連續包裝。完成時間須早於保留期限與裝車截止時間，符合 Stockroom 到期時刻即釋回的行為。工時可包含預留的裝車和服務提交時間。
 
 動態規劃對每組已完成訂單只保留最早的完成時間，因為越早做完，就越有機會接下後續工作。N 張單最多有 2^N 個子集合，每個集合最多試 N 個下一張訂單。測試用獨立窮舉器比較 300 組小案例的所有順序與跳過方式。[排程實作](dispatch.py) · [獨立窮舉測試](test_dispatch.py) · [跨專案演練](demo.py)
+
+## 部分出貨後重排
+
+重新抓取 `POST /packing-snapshots` 的回應，將完整箱單和新的開工時間帶入 `python dispatch.py snapshot.json --resume`。已登記且件數相同的箱子列入 `already_dispatched`。重排只估算未出貨箱，並再次核對剩餘保留量、期限及裝車時間。已全部出貨的訂單會標記為 `already_dispatched`。若箱號相同但件數不符，該單暫緩，`shipment_conflicts` 會列出規劃和已登記的件數。
+
+若同一張單的每箱都提供 `pack_ms`，排程可扣除已出貨箱的工時。原訂單總工時扣掉各箱工時的差額仍計入每次進場需要的準備時間。只提供訂單總工時時，剩餘箱沿用該工時。重排結果的 `dispatch` 可用新批號送到 Stockroom，`ship_units` 只計算新安排出貨的件數。
+
+`python resume_demo.py ../stockroom-reservations` 會用實際 Stockroom API 建立並出貨 A1，讀取快照後比較原排程、部分出貨後重排及件數衝突。重排多安排 A2 的兩件商品，並以兩筆實際交運驗證。再次擷取後，報表可核對原箱號都已登記。[重排測試](test_dispatch.py) · [重排試玩（私人預覽）](https://peca-github-demo.peca12968.chatgpt.site/?demo=dispatchResume#demos)

@@ -116,3 +116,50 @@ class DispatchTests(unittest.TestCase):
         for captured in (self.sample["start_ms"] - 1, self.sample["start_ms"]):
             document = dict(self.sample, captured_at_ms=captured)
             self.assertEqual(plan(document), plan(self.sample))
+
+    def test_resume_keeps_only_unshipped_boxes_and_subtracts_measured_packing_time(self):
+        self.sample["captured_at_ms"] = self.sample["start_ms"]
+        self.sample["holds"][1]["boxes"] = [{"shipment_id": "B1", "dispatched": 2, "restocked": 1}]
+        self.sample["holds"][1]["reservation"]["held"] = 2
+        self.sample["work"][1]["boxes"][0]["pack_ms"] = 2500
+        self.sample["work"][1]["boxes"][1]["pack_ms"] = 1500
+        self.sample["work"][1]["pack_ms"] = 7000
+        result = plan(self.sample, resume=True)
+        b = next(row for row in result["scheduled"] if row["reservation_id"] == "B")
+        self.assertEqual(b["dispatch_ms"], 106500)
+        self.assertEqual(b["dispatch"]["boxes"], [{"reservation_id": "B", "shipment_id": "B2", "quantity": 2}])
+        self.assertEqual(result["already_dispatched"], [{"reservation_id": "B", "shipment_id": "B1", "quantity": 2}])
+        self.assertEqual(result["shipment_conflicts"], [])
+        self.assertEqual(result["ship_units"], 7)
+        self.assertNotIn("already_dispatched", plan(self.sample))
+        for box in self.sample["work"][1]["boxes"]:
+            box.pop("pack_ms")
+        omitted = {row["reservation_id"]: row["reason"] for row in plan(self.sample, resume=True)["omitted"]}
+        self.assertEqual(omitted["B"], "cannot_finish_before_deadline")
+
+    def test_resume_distinguishes_a_closed_fulfilled_order_and_conflicting_shipment_quantity(self):
+        self.sample["captured_at_ms"] = self.sample["start_ms"]
+        for index in (0, 3):
+            box = self.sample["work"][index]["boxes"][0]
+            self.sample["holds"][index]["reservation"].update(state="fulfilled", held=0)
+            self.sample["holds"][index]["boxes"] = [
+                {"shipment_id": box["shipment_id"], "dispatched": 1},
+            ]
+        result = plan(self.sample, resume=True)
+        self.assertEqual(result["already_dispatched"], [{"reservation_id": "A", "shipment_id": "A1", "quantity": 1}])
+        self.assertEqual(result["shipment_conflicts"], [
+            {"reservation_id": "D", "shipment_id": "D1", "planned_quantity": 2, "recorded_quantity": 1},
+        ])
+        omitted = {row["reservation_id"]: row["reason"] for row in result["omitted"]}
+        self.assertEqual(omitted, {"A": "already_dispatched", "D": "shipment_quantity_conflict"})
+
+    def test_resume_rejects_missing_snapshot_or_inconsistent_box_packing_times(self):
+        with self.assertRaisesRegex(ValueError, "captured_at_ms"):
+            plan(self.sample, resume=True)
+        self.sample["captured_at_ms"] = self.sample["start_ms"]
+        self.sample["work"][1]["boxes"][0]["pack_ms"] = 2500
+        with self.assertRaisesRegex(ValueError, "B/B2.pack_ms"):
+            plan(self.sample, resume=True)
+        self.sample["work"][1]["boxes"][1]["pack_ms"] = 5000
+        with self.assertRaisesRegex(ValueError, "exceed"):
+            plan(self.sample, resume=True)

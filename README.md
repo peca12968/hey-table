@@ -8,6 +8,8 @@ Stockroom 支援在一筆交易內保留多個 SKU。若其中一項缺貨，該
 
 出貨前也可按 SKU 對照實體、可用及保留件數。查詢會先結算到期，從同一筆交易讀取匯總與各保留單，並將舊版無期限的保留分開計入。[SKU 保留來源核對](modules/stockroom-reservations/README.md#依-sku-核對目前保留來源)
 
+部分出貨後可用新擷取的 Stockroom 快照重排剩餘箱子。排程會核對原箱號的件數、保留截止和裝車時間，並能扣除已出貨箱的已知工時。[部分出貨重排](modules/dispatch-window/README.md#部分出貨後重排)
+
 交班可按 SKU 查已到期的保留單，核對部分出貨或減量後的釋回件數，以及實際回收時間。[到期回收紀錄](modules/stockroom-reservations/README.md#查閱已到期的庫存回收)
 
 倉庫可按實點結果調整庫存，保留已占用件數與調整前後紀錄。盤點期間若出貨或入庫改變庫存版次，須重新核對。[實點調整與稽核](modules/stockroom-reservations/README.md#核對實點後調整庫存)

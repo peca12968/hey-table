@@ -60,6 +60,7 @@ def kitchen_and_fulfillment():
         ("batch-clock", "pickup_demo.py", ["pickup-window"]),
         ("batch-waste", "demo.py", ["prep-sheet"]),
         ("dispatch-window", "demo.py", ["stockroom-reservations"]),
+        ("dispatch-window", "resume_demo.py", ["stockroom-reservations"]),
         ("pantry-freight", "prep_demo.py", ["prep-sheet"]),
         ("plate-cost", "demo.py", ["prep-sheet", "receipt-returns"]),
         ("prep-sheet", "receiving_demo.py", ["pantry-freight"]),
