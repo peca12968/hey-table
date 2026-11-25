@@ -312,5 +312,89 @@
         }
       ]
     ]
+  },
+  "restricted": {
+    "start_ms": 100000,
+    "cutoff_ms": 111000,
+    "ship_units": 7,
+    "scheduled": [
+      {
+        "reservation_id": "A",
+        "pack_start_ms": 100000,
+        "dispatch_ms": 104000,
+        "deadline_ms": 105000,
+        "units": 1,
+        "dispatch": {
+          "boxes": [
+            {
+              "reservation_id": "A",
+              "shipment_id": "A1",
+              "quantity": 1
+            }
+          ]
+        },
+        "station": 1
+      },
+      {
+        "reservation_id": "B",
+        "pack_start_ms": 102000,
+        "dispatch_ms": 107000,
+        "deadline_ms": 108000,
+        "units": 4,
+        "dispatch": {
+          "boxes": [
+            {
+              "reservation_id": "B",
+              "shipment_id": "B1",
+              "quantity": 2
+            },
+            {
+              "reservation_id": "B",
+              "shipment_id": "B2",
+              "quantity": 2
+            }
+          ]
+        },
+        "station": 2
+      },
+      {
+        "reservation_id": "D",
+        "pack_start_ms": 109000,
+        "dispatch_ms": 110000,
+        "deadline_ms": 111000,
+        "units": 2,
+        "dispatch": {
+          "boxes": [
+            {
+              "reservation_id": "D",
+              "shipment_id": "D1",
+              "quantity": 2
+            }
+          ]
+        },
+        "station": 2
+      }
+    ],
+    "omitted": [
+      {
+        "reservation_id": "C",
+        "reason": "cannot_finish_before_deadline"
+      }
+    ],
+    "stations": 2,
+    "station_pauses": [
+      [],
+      [
+        {
+          "start_ms": 108000,
+          "end_ms": 109000
+        }
+      ]
+    ],
+    "allowed_stations": {
+      "C": [
+        2
+      ]
+    }
   }
 }

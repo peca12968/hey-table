@@ -1,4 +1,5 @@
 from copy import deepcopy
+from dataclasses import replace
 from itertools import permutations
 import json
 from pathlib import Path
@@ -141,12 +142,14 @@ class DispatchTests(unittest.TestCase):
         single = plan(dict(self.sample, station_ready_ms=[111000]))
         self.assertEqual(single["ship_units"], 0)
 
-    def test_station_pauses_match_independent_exhaustive_start_search(self):
+    def test_pauses_and_order_eligibility_match_independent_exhaustive_start_search(self):
         rng = random.Random(61103)
-        for _ in range(150):
+        for case in range(300):
             jobs = [Job(str(i), rng.randrange(10), rng.randrange(1, 5),
                         rng.randrange(3, 17), rng.randrange(1, 10), ())
                     for i in range(rng.randrange(6))]
+            if case >= 150:
+                jobs = [replace(job, allowed_stations=rng.choice(((1,), (2,), (1, 2)))) for job in jobs]
             starts = [rng.randrange(5), rng.randrange(5)]
             pauses = []
             for _station in starts:
@@ -157,6 +160,8 @@ class DispatchTests(unittest.TestCase):
                 at, units = starts[station], 0
                 for index in sequence:
                     job = jobs[index]
+                    if station + 1 not in job.allowed_stations:
+                        return None
                     for begin in range(max(at, job.ready), job.deadline - job.duration):
                         end = begin + job.duration
                         if all(end <= pause_start or begin >= pause_end for pause_start, pause_end in pauses[station]):
@@ -224,6 +229,39 @@ class DispatchTests(unittest.TestCase):
         for wrong in (0, 3, True, 1.0):
             with self.assertRaises(ValueError):
                 plan(self.sample, stations=wrong)
+
+    def test_required_station_is_respected_even_with_identical_station_calendars(self):
+        self.sample["work"][0]["allowed_stations"] = [2]
+        report = plan(self.sample, stations=2)
+        self.assertEqual(report["ship_units"], 10)
+        self.assertEqual(report["allowed_stations"], {"A": [2]})
+        self.assertEqual(next(row for row in report["scheduled"] if row["reservation_id"] == "A")["station"], 2)
+        self.assertEqual(plan(self.sample)["omitted"], [{"reservation_id": "A", "reason": "no_eligible_station"}])
+        self.sample["work"][0]["allowed_stations"] = [2, 1]
+        self.assertEqual(plan(self.sample, stations=2)["allowed_stations"], {"A": [1, 2]})
+        for value in (None, [], [1, 1], [0], [3], [True], ["2"]):
+            self.sample["work"][0]["allowed_stations"] = value
+            with self.subTest(value=value), self.assertRaisesRegex(ValueError, "A.allowed_stations"):
+                plan(self.sample, stations=2)
+
+    def test_restricted_fixture_and_partial_shipment_keep_required_station(self):
+        self.sample["work"][2]["allowed_stations"] = [2]
+        self.sample["station_pauses"] = [[], [{"start_ms": 108000, "end_ms": 109000}]]
+        report = plan(self.sample, stations=2)
+        fixture = json.loads(Path(__file__).with_name("examples").joinpath("parallel-demo.json").read_bytes())
+        self.assertEqual(fixture["restricted"], report)
+        self.assertEqual(report["ship_units"], 7)
+        self.assertEqual(report["omitted"], [{"reservation_id": "C", "reason": "cannot_finish_before_deadline"}])
+        self.sample["captured_at_ms"] = 100000
+        self.sample["work"][1]["allowed_stations"] = [2]
+        self.sample["holds"][1]["boxes"] = [{"shipment_id": "B1", "dispatched": 2}]
+        self.sample["holds"][1]["reservation"]["held"] = 2
+        resumed = plan(self.sample, stations=2, resume=True)
+        self.assertEqual(resumed["ship_units"], 5)
+        job = next(row for row in resumed["scheduled"] if row["reservation_id"] == "B")
+        self.assertEqual(job["station"], 2)
+        self.assertEqual(job["dispatch"]["boxes"], [{"reservation_id": "B", "shipment_id": "B2", "quantity": 2}])
+        self.assertEqual(resumed["already_dispatched"], [{"reservation_id": "B", "shipment_id": "B1", "quantity": 2}])
 
     def test_example_prefers_waiting_for_more_units_and_has_stable_order(self):
         result = plan(self.sample)

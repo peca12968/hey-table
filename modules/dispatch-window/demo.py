@@ -15,7 +15,7 @@ from fastapi.testclient import TestClient
 ROOT = Path(__file__).resolve().parent
 
 
-def demo(stockroom, stations=1, delayed=False, *, paused=False):
+def demo(stockroom, stations=1, delayed=False, *, paused=False, restricted=False):
     sys.path.insert(0, str(stockroom.resolve()))
     from stockroom.api import create_app
 
@@ -63,6 +63,8 @@ def demo(stockroom, stations=1, delayed=False, *, paused=False):
             if paused:
                 start = document["start_ms"]
                 document["station_pauses"] = [[], [{"start_ms": start + 8000, "end_ms": start + 9000}]]
+            if restricted:
+                next(order for order in document["work"] if order["reservation_id"] == "C")["allowed_stations"] = [2]
             input_file = path / "service-snapshot.json"
             input_file.write_text(json.dumps(document), encoding="utf8")
             output = subprocess.check_output([
@@ -70,11 +72,14 @@ def demo(stockroom, stations=1, delayed=False, *, paused=False):
             ])
             chosen = json.loads(output)
             skips_a = stations == 1 or delayed
-            assert chosen["ship_units"] == (9 if skips_a else 10)
+            assert chosen["ship_units"] == 10 - int(skips_a) - (3 if restricted else 0)
             assert [row["reservation_id"] for row in chosen["scheduled"]] == [
-                *([] if skips_a else ["A"]), "B", "C", "D",
+                *([] if skips_a else ["A"]), "B", *([] if restricted else ["C"]), "D",
             ]
-            if paused and not delayed:
+            if restricted:
+                assert chosen["omitted"] == [{"reservation_id": "C", "reason": "cannot_finish_before_deadline"}]
+                assert chosen["allowed_stations"] == {"C": [2]}
+            elif paused and not delayed:
                 assert next(row for row in chosen["scheduled"] if row["reservation_id"] == "C")["station"] == 1
             if skips_a:
                 clock[0] = 105.0
@@ -97,6 +102,7 @@ def demo(stockroom, stations=1, delayed=False, *, paused=False):
                     == job["units"]
                 )
             assert client.get("/reservations/A").json()["state"] == ("expired" if skips_a else "fulfilled")
+            assert client.get("/reservations/C").json()["state"] == ("expired" if restricted else "fulfilled")
             assert client.get("/inventory").json() == [
                 {"sku": "KIT-01", "capacity": 20 - chosen["ship_units"], "available": 20 - chosen["ship_units"]}
             ]
@@ -113,5 +119,6 @@ if __name__ == "__main__":
         result = {"format": "dispatch-window.parallel-demo.v1", "single": result,
                   "parallel": demo(args.stockroom, stations=2),
                   "delayed": demo(args.stockroom, stations=2, delayed=True),
-                  "paused": demo(args.stockroom, stations=2, paused=True)}
+                  "paused": demo(args.stockroom, stations=2, paused=True),
+                  "restricted": demo(args.stockroom, stations=2, paused=True, restricted=True)}
     print(json.dumps(result, indent=2))
