@@ -15,17 +15,9 @@ import PaymentSnapshot from "./payment-snapshot";
 import Intake from "./intake";
 import CashCollection from "./cash-collection";
 import PickupDelayEditor from "./pickup-delay-editor";
-import {methods,paymentStates,environmentLabel,canPrepare,canCancel} from "../../lib/payments.mjs";
+import {methods,paymentStates,environmentLabel,canPrepare,canCancel,paymentCheckMessage} from "../../lib/payments.mjs";
 const action={preparing:"接單製作",ready:"完成製作",completed:"完成交餐",cancelled:"取消訂單"};
 const overdueStage={pending:"待接單",preparing:"製作中",ready:"待交餐"};
-const paymentCheckMessages={
-  noAttempt:"這張餐單還沒有付款嘗試。",
-  unavailable:"目前環境無法查詢這筆付款，請用對應的金流後台核對。",
-  notQueryable:"這筆付款的狀態目前無法重新查詢，畫面保留最後一次紀錄。",
-  recent:"剛發出過金流查詢，請稍候再試。",
-  unconfirmed:"本次未取得可核對的金流紀錄，畫面保留最後一次紀錄。",
-  changed:"查詢期間付款紀錄有更新，請核對重新載入的狀態。",
-};
 const browserSearch=()=>window.location.search;
 const serverSearch=()=>null;
 const browserStaffKey=()=>sessionStorage.getItem("he-ri-staff")||"";
@@ -221,10 +213,7 @@ export default function Kitchen(){
       const result=await request("/api/kitchen/"+endpoint,{method:"PATCH",headers:{"Content-Type":"application/json",...(key?{Authorization:"Bearer "+key}:{})},
         body:JSON.stringify(body),...(checkingPayment?{signal:AbortSignal.timeout(30000)}:{})});
       if(checkingPayment){
-        const label=Object.hasOwn(paymentStates,result.paymentState)?paymentStates[result.paymentState]:"付款狀態未記錄";
-        const message=result.outcome==="matched"?"本次金流查詢結果為「"+label+"」。":
-          paymentCheckMessages[result.outcome]??"未收到金流查詢結果，請稍後再試。";
-        setPaymentCheck({id:body.id,message});
+        setPaymentCheck({id:body.id,message:paymentCheckMessage(result)});
       }
       if(focused&&endpoint==="status"){
         setRows(null);
@@ -315,6 +304,7 @@ export default function Kitchen(){
       <a className="outline" href="/kitchen/prep">查看備料單</a>
       <a className="outline" href="/kitchen/daily">每日訂單摘要</a>
       <a className="outline" href="/kitchen/refunds">示範退款紀錄</a>
+      <a className="outline" href="/kitchen/payment-attention">線上付款待核對</a>
       <a className="outline" href="/kitchen/return-ledger">退餐試算交班</a>
       <a className="outline" href="/kitchen/cash-close">現金日結</a>
       <a className="outline" href="/kitchen/station-work">分站看板</a>

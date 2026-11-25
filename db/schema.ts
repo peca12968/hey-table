@@ -42,7 +42,10 @@ export const paymentAttempts = sqliteTable("payment_attempts", {
   created: integer("created").notNull(),
   kitchenPayableAt: integer("kitchen_payable_at"),
   checked: integer("checked").notNull().default(0),
-}, t => [index("attempt_order").on(t.orderId,t.id)]);
+}, t => [
+  index("attempt_order").on(t.orderId,t.id),
+  index("payment_attempts_attention_age").on(t.created,t.orderId).where(sql`${t.state} IN ('pending','authorized')`),
+]);
 export const pickupPasses = sqliteTable("pickup_passes", {
   orderId: integer("order_id").primaryKey().references(()=>orders.id),
   tokenHash: text("token_hash").unique(),

@@ -33,6 +33,7 @@ const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{1
 const returnReviewFingerprint = /^[a-f0-9]{64}$/;
 
 import {latestState,payableForKitchen,paymentApi,checkKitchenPayment,refundDemoPayment} from "./payment-api.mjs";
+import {paymentAttention,paymentAttentionQuery} from "./payment-attention.mjs";
 import {demoRefundDetail,demoRefundReport,demoRefundReceiptColumn,demoRefundReceiptText} from "./demo-refund-report.mjs";
 import {settings} from "./tappay.mjs";
 import {canPrepare,methods} from "../lib/payments.mjs";
@@ -174,6 +175,10 @@ export async function api(request, env) {
     if (!input || typeof input !== "object") return fail("資料格式錯誤");
   }
   if(path==="/api/kitchen/payment" && method==="PATCH")return checkKitchenPayment(env,input.id);
+  if(path==="/api/kitchen/payment-attention"&&method==="GET"){
+    const query=paymentAttentionQuery(url.searchParams);
+    return query?json(await paymentAttention(env,query,Date.now())):fail("請選擇有效的付款篩選條件或翻頁連結。");
+  }
   if(path==="/api/kitchen/demo-refund" && method==="PATCH")return refundDemoPayment(env,input);
   if(path==="/api/kitchen/demo-refunds"&&method==="GET"){
     const capturedAt=Date.now(),date=url.searchParams.get("date")??businessDate(capturedAt);

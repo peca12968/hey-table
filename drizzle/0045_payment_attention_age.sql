@@ -1,0 +1,1 @@
+CREATE INDEX `payment_attempts_attention_age` ON `payment_attempts` (`created`,`order_id`) WHERE "payment_attempts"."state" IN ('pending','authorized');

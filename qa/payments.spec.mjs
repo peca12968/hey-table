@@ -188,6 +188,82 @@ test("mobile payment review distinguishes an unconfirmed, unavailable and verifi
   expect(calls).toBe(3);
 });
 
+test("mobile staff filter actual pending wallet attempts and return from the order with the same filters",async({page,request})=>{
+  async function pending(paymentMethod){
+    const token=randomUUID(),headers={"X-Ticket":token};
+    const order=await request.post("/api/orders",{data:{token,mode:"pickup",note:"測試餐單",
+      items:[{id:"sencha",qty:1}],paymentMethod,paymentEnv:"demo"}});
+    expect(order.status()).toBe(200);
+    const {id}=await order.json();
+    const start=await request.post("/api/payments/start",{headers,data:{}});
+    expect(start.status()).toBe(200);
+    const {attempt}=await start.json();
+    return {id,headers,attempt,number:String(id).padStart(4,"0")};
+  }
+  const line=await pending("line_pay"),px=await pending("px_pay_plus");
+  await page.setViewportSize({width:360,height:780});
+  await page.addInitScript(()=>sessionStorage.setItem("he-ri-staff","local-test-kitchen"));
+  await page.goto("/kitchen");
+  await page.getByRole("link",{name:"線上付款待核對"}).click();
+  const queue=page.getByRole("region",{name:"待核對付款清單"});
+  const lineLink=queue.getByRole("link",{name:"餐單 #"+line.number,exact:true});
+  const pxLink=queue.getByRole("link",{name:"餐單 #"+px.number,exact:true});
+  await expect(lineLink).toBeVisible();
+  await expect(pxLink).toBeVisible();
+  await page.getByLabel("付款狀態").selectOption("pending");
+  await page.getByLabel("付款工具").selectOption("line_pay");
+  await page.getByLabel("金流環境").selectOption("demo");
+  await page.getByRole("button",{name:"套用篩選"}).click();
+  await expect(lineLink).toBeVisible();
+  await expect(pxLink).toHaveCount(0);
+  const filterUrl=page.url();
+  await lineLink.click();
+  await expect(page.getByRole("heading",{name:"餐單 #"+line.number})).toBeVisible();
+  await page.getByRole("link",{name:"返回待核對付款"}).click();
+  await expect(page).toHaveURL(filterUrl);
+  await expect(lineLink).toBeVisible();
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBe(360);
+  expect((await request.post("/api/payments/demo",{headers:line.headers,data:{ref:line.attempt.ref,outcome:"paid"}})).status()).toBe(200);
+  await page.getByRole("button",{name:"重新擷取"}).click();
+  await expect(queue).toBeVisible();
+  await expect(lineLink).toHaveCount(0);
+  expect((await request.post("/api/payments/demo",{headers:px.headers,data:{ref:px.attempt.ref,outcome:"cancelled"}})).status()).toBe(200);
+});
+
+test("mobile payment queue preserves unmatched payments and refreshes after a verified lookup",async({page})=>{
+  const id=91,number="0091",startedAt=Date.parse("2026-11-24T23:30:00+08:00");
+  const capture=startedAt+60*60_000;
+  const row={id,method:"px_pay_plus",environment:"sandbox",total:45,status:"pending",state:"pending",startedAt,
+    paymentDueAt:startedAt+15*60_000,checkedAt:null,canCheck:true};
+  let calls=0,paid=false;
+  await page.setViewportSize({width:360,height:780});
+  await page.addInitScript(()=>sessionStorage.setItem("he-ri-staff","local-test-kitchen"));
+  await page.route(url=>url.pathname==="/api/kitchen/payment-attention",route=>route.fulfill({json:{
+    format:"hey-table.payment-attention.v1",capturedAt:capture,orders:paid?[]:[row],nextAfter:null,
+  }}));
+  await page.route("**/api/kitchen/payment",route=>{
+    const req=route.request();
+    expect(req.method()).toBe("PATCH");
+    expect(req.headers().authorization).toBe(staff.Authorization);
+    expect(req.postDataJSON()).toEqual({id});
+    calls++;
+    if(calls===1)return route.fulfill({json:{ok:true,id,outcome:"unconfirmed",paymentState:"pending"}});
+    paid=true;
+    return route.fulfill({json:{ok:true,id,outcome:"matched",paymentState:"paid"}});
+  });
+  await page.goto("/kitchen/payment-attention");
+  const check=page.getByRole("button",{name:"查詢餐單 "+number+" 的金流"});
+  await expect(page.getByText("已到保留時間，付款仍待確認。")).toBeVisible();
+  await expect(page.getByText(/已等 60 分鐘/)).toBeVisible();
+  await check.click();
+  await expect(page.getByText(/本次未取得可核對的金流紀錄/)).toBeVisible();
+  await expect(check).toBeEnabled();
+  await check.click();
+  await expect(page.getByText("餐單 #0091 · 本次金流查詢結果為「已付款」。")).toBeVisible();
+  await expect(page.getByText("目前沒有符合條件的待核對付款。")).toBeVisible();
+  expect(calls).toBe(2);
+});
+
 test("mobile cash collection previews change and resumes the same operation after a lost request",async({page,request})=>{
   page.setDefaultTimeout(9000);
   const token=randomUUID(),ticket={"X-Ticket":token},endpoint="/api/kitchen/cash-receipt";

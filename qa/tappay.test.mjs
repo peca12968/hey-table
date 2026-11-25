@@ -329,6 +329,67 @@ test("staff payment lookup distinguishes verified records, missing attempts, mod
   await expectOutcome(online,"matched","paid");
   assert.equal(times,4);
 });
+test("payment attention pages unresolved latest attempts across dates without changing orders or exposing credentials",async t=>{
+  const db=database();
+  t.after(()=>db.sqlite.close());
+  const now=Date.parse("2026-11-26T00:15:00+08:00"),old=now-3_600_000;
+  t.mock.method(Date,"now",()=>now);
+  const runtime={DB:db,STAFF_KEY:"staff",TAPPAY_MODE:"sandbox",TAPPAY_PARTNER_KEY:"fixture-key"};
+  const endpoint="https://order.example/api/kitchen/payment-attention";
+  const read=(query="",headers={Authorization:"Bearer staff"})=>api(new Request(endpoint+query,{headers}),runtime);
+  const order=db.sqlite.prepare(`INSERT INTO orders(id,token,mode,note,items,total,created,status,payment_method,payment_env,payment_due_at)
+    VALUES (?,?,'pickup','不在報表內','[]',45,?,?,?, ?,?)`);
+  const attempt=db.sqlite.prepare(`INSERT INTO payment_attempts(order_id,reference,merchant,trade_id,redirect_url,state,created,checked)
+    VALUES (?,?,'private-merchant',?,'https://example.com/private-payment-link',?,?,?)`);
+  function seed(id,method,environment,status,state,at,checked=0){
+    order.run(id,crypto.randomUUID(),at-60_000,status,method,environment,old+900_000);
+    append(id,state,at,checked);
+  }
+  function append(id,state,at,checked=0){
+    attempt.run(id,crypto.randomUUID(),crypto.randomUUID(),state,at,checked);
+  }
+  seed(1,"line_pay","sandbox","pending","pending",old);
+  seed(2,"px_pay_plus","production","completed","authorized",old,now-5_000);
+  seed(3,"line_pay","sandbox","ready","pending",old-1);
+  append(3,"paid",old+1);
+  seed(4,"cash","cash","pending","pending",old-2);
+  seed(5,"jko_pay","demo","cancelled","pending",old+1);
+  seed(6,"card","sandbox","pending","pending",now+1);
+  for(let id=7;id<=33;id++)seed(id,"line_pay","sandbox","pending","authorized",old+id);
+
+  assert.equal((await read("",{})).status,403);
+  for(const filter of ["?state=paid","?state=pending&state=authorized","?method=cash","?environment=live",
+    "?after=","?after=5:0","?after=1:9007199254740992","?after=9:3&after=10:3"])
+    assert.equal((await read(filter)).status,400);
+  const first=await read();
+  assert.equal(first.headers.get("Cache-Control"),"no-store");
+  const page=await first.json();
+  assert.equal(page.format,"hey-table.payment-attention.v1");
+  assert.equal(page.capturedAt,now);
+  assert.deepEqual(page.orders.slice(0,3).map(row=>row.id),[1,2,5]);
+  assert.equal(page.orders.length,25);
+  assert.equal(page.nextAfter,(old+28)+":28");
+  assert.deepEqual(page.orders[0],{id:1,status:"pending",method:"line_pay",environment:"sandbox",total:45,
+    paymentDueAt:old+900_000,state:"pending",startedAt:old,checkedAt:null,canCheck:true});
+  assert.equal(page.orders[1].checkedAt,now-5_000);
+  assert.equal(page.orders[1].canCheck,false);
+  assert.equal(page.orders[2].canCheck,false);
+  assert.equal(db.sqlite.prepare("SELECT status FROM orders WHERE id=1").get().status,"pending");
+
+  const pending=await (await read("?state=pending&method=line_pay&environment=sandbox")).json();
+  assert.deepEqual(pending.orders.map(row=>row.id),[1]);
+  append(29,"paid",now);
+  const second=await (await read("?after="+encodeURIComponent(page.nextAfter))).json();
+  assert.deepEqual(second.orders.map(row=>row.id),[30,31,32,33]);
+  assert.equal(second.nextAfter,null);
+
+  const plan=db.sqlite.prepare(`EXPLAIN QUERY PLAN SELECT created,order_id FROM payment_attempts
+    WHERE state IN ('pending','authorized') AND created<=? AND (created,order_id)>(?,?)
+    ORDER BY created,order_id LIMIT 26`).all(now,old,2);
+  assert.ok(plan.some(row=>row.detail.includes("payment_attempts_attention_age")));
+  assert.ok(plan.every(row=>!row.detail.includes("TEMP B-TREE")));
+});
+
 test("a delayed payment lookup cannot overwrite a newer verification for the same recorded state",async t=>{
   const db=database();
   t.after(()=>db.sqlite.close());

@@ -1,0 +1,10 @@
+.paymentAttention .dailyDate { max-width: none; }
+.paymentAttention .dailyDate label { flex: 1 1 150px; }
+.paymentAttention .dailyDate select { width: 100%; }
+.paymentAttentionList { display: grid; gap: .8rem; padding: 0; list-style: none; }
+.paymentAttentionRow { overflow-wrap: anywhere; }
+.paymentAttentionRow h2 { margin: 0 0 .35rem; }
+.paymentAttentionRow p { margin: .4rem 0; }
+.paymentAttentionRow h2 a { color: var(--green); }
+.paymentAttentionRow button { margin-top: .5rem; }
+.paymentAttentionPages { margin-top: 1rem; }

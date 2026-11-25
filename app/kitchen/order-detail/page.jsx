@@ -77,6 +77,7 @@ export default function KitchenOrderDetail(){
   const number=query.get("id")??"";
   const from=query.get("from");
   const historyReturn=from?.startsWith("/kitchen/station-history?")?from:null;
+  const paymentReturn=from==="/kitchen/payment-attention"||from?.startsWith("/kitchen/payment-attention?")?from:null;
   const current=view?.number===number&&view.revision===revision?view:null;
   useEffect(()=>{
     if(!number)return;
@@ -97,11 +98,12 @@ export default function KitchenOrderDetail(){
     <div className="actions">
       <a className="textLink" href="/kitchen">返回店家接單台</a>
       {historyReturn&&<a className="textLink" href={historyReturn}>返回分站批次紀錄</a>}
+      {paymentReturn&&<a className="textLink" href={paymentReturn}>返回待核對付款</a>}
     </div>
     <h1>查詢餐單紀錄</h1>
     <form className="actions dailyDate" action={pagePath} key={number}>
       <label>餐號<input name="id" type="text" required inputMode="numeric" pattern="[0-9]+" maxLength={16} defaultValue={number}/></label>
-      {historyReturn&&<input type="hidden" name="from" value={historyReturn}/>}
+      {(historyReturn||paymentReturn)&&<input type="hidden" name="from" value={historyReturn||paymentReturn}/>}
       <button className="primary">查詢餐單</button>
     </form>
     {number&&!current&&<p role="status">正在查詢餐單…</p>}
