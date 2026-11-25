@@ -34,8 +34,8 @@ import {demoRefundDetail,demoRefundReport,demoRefundReceiptColumn,demoRefundRece
 import {settings} from "./tappay.mjs";
 import {canPrepare,methods} from "../lib/payments.mjs";
 import {estimate} from "@peca12968/pickup-window";
-import {activeKitchen,demoKitchen,importTiming,stationLabels,timingChanges} from "../lib/kitchen-timing.mjs";
-import {finishStation,preparationByStation,remainingStationItems,stationQueue} from "./station-work.mjs";
+import {activeKitchen,demoKitchen,importTiming,stationBatchLimit,stationLabels,timingChanges} from "../lib/kitchen-timing.mjs";
+import {finishStation,finishStationBatch,preparationByStation,remainingStationItems,stationQueue} from "./station-work.mjs";
 const timingRows = "SELECT revision,config FROM kitchen_timing ORDER BY revision DESC";
 const fromTimingRow = row => ({revision:row?.revision??0, kitchen:activeKitchen(row ? JSON.parse(row.config) : null)});
 const orderColumns = `SELECT orders.*, ${latestState} AS payment_state, ${cashReceiptColumn} AS cash_receipt`;
@@ -793,6 +793,17 @@ export async function api(request, env) {
     const result=await finishStation(db,id,station);
     if(!result)return fail("找不到餐單",404);
     return result.doneAt!==null ? json(result) : fail("目前無法回報這張分站餐單，請更新看板。",409);
+  }
+  if(path==="/api/kitchen/station-work/batch"&&method==="PATCH"){
+    const {station,orders}=input;
+    if(typeof station!=="string"||!Object.hasOwn(stationLabels,station)||!Array.isArray(orders)||
+      orders.length<2||orders.length>stationBatchLimit||
+      orders.some(order=>!order||!Number.isSafeInteger(order.id)||order.id<1||
+        typeof order.review!=="string"||!order.review||order.review.length>16384)||
+      new Set(orders.map(order=>order.id)).size!==orders.length)
+      return fail("請選擇 2 至 "+stationBatchLimit+" 張不同餐單並核對本站品項。");
+    const completed=await finishStationBatch(db,station,orders);
+    return completed?json({station,completed}):fail("所選餐單已有更新。請回到看板重新核對。",409);
   }
   if (path === "/api/kitchen/daily" && method === "GET") {
     const dates = url.searchParams.getAll("date");

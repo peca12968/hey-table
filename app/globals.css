@@ -92,6 +92,11 @@
 .tableHandoffOrders>li{padding:8px 0;border-top:1px solid var(--line)}
 .tableHandoffOrders .orderLines{margin:4px 0 0}
 .tableHandoff button{min-height:40px}
+.stationBatchBar{margin:12px 0 16px}
+.stationBatchBar button{min-height:40px}
+.stationBatchBar [aria-disabled=true]{opacity:.55;cursor:default}
+.stationBatchChoice{display:inline-flex;align-items:center;gap:8px;min-height:44px;cursor:pointer}
+.stationBatchChoice input{width:18px;height:18px;accent-color:var(--green)}
 .kitchenOverdue{width:fit-content;margin:8px 0;padding:4px 8px;border-radius:6px;background:#fff0e6;color:#932e21;font-weight:700}
 .itemNotes{margin:12px 0}.itemNotes summary{color:var(--green);font-weight:700;cursor:pointer}
 .itemNotes p{margin:6px 0}.itemNotes label{display:block;margin:8px 0;font-weight:600}

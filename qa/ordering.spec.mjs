@@ -8,6 +8,7 @@ import jsQR from "jsqr";
 import {PNG} from "pngjs";
 import {businessDate} from "../lib/business-day.mjs";
 import {pickupPunctuality} from "../server/daily-timing.mjs";
+import {stationReview} from "../lib/kitchen-timing.mjs";
 
 test("mobile kitchen sorts overdue tickets and suppresses stale reminders until the next snapshot",async({page})=>{
   await page.setViewportSize({width:360,height:780});
@@ -1533,6 +1534,84 @@ test("printable kitchen snapshot exports the displayed orders to Prep Sheet",asy
   }
   await page.getByRole("button",{name:"重新擷取"}).click();
   await expect(row.getByRole("cell")).toHaveText(["0","2"]);
+});
+
+test("mobile station batch can recheck a stale selection and only finish reviewed orders",async({page,request})=>{
+  const headers={Authorization:"Bearer local-test-kitchen"};
+  const stationPath="/api/kitchen/station-work";
+  async function order(items){
+    const token=randomUUID();
+    const result=await request.post("/api/orders",{data:{mode:"pickup",token,note:"",items}});
+    expect(result.ok(),await result.text()).toBe(true);
+    const {id}=await result.json();
+    expect((await request.patch("/api/kitchen/status",{headers,data:{id,from:"pending",to:"preparing"}})).ok()).toBe(true);
+    return {id,token,number:String(id).padStart(4,"0")};
+  }
+  const hot={id:"katsudon",qty:1,note:"醬汁另外放"};
+  const [earlier,onlyHot,multiStation,unselected]=await Promise.all([
+    order([hot]),order([hot]),order([hot,{id:"sencha",qty:2}]),order([hot]),
+  ]);
+  const ticket=async token=>(await request.get("/api/ticket?progress=1",{headers:{"X-Ticket":token}})).json();
+  await page.setViewportSize({width:360,height:780});
+  await page.addInitScript(()=>sessionStorage.setItem("he-ri-staff","local-test-kitchen"));
+  await page.goto("/kitchen/station-work");
+  const select=entry=>page.getByRole("checkbox",{name:"選取餐單 "+entry.number});
+  const begin=page.getByRole("button",{name:/核對批次備妥/});
+  const review=page.getByRole("region",{name:"核對熱台餐單"});
+  const confirm=review.getByRole("button",{name:"確認 2 張本站已備妥"});
+  await select(earlier).check();
+  await expect(begin).toBeDisabled();
+  await select(onlyHot).check();
+  await begin.click();
+  await expect(review.getByRole("heading")).toBeFocused();
+  await expect(review.getByText("醬汁另外放").first()).toBeVisible();
+  await expect(review.getByText("#"+unselected.number,{exact:true})).toHaveCount(0);
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBe(360);
+  await page.route("**"+stationPath+"/batch",async route=>{
+    expect((await request.patch(stationPath,{headers,data:{id:earlier.id,station:"hot"}})).ok()).toBe(true);
+    await route.continue();
+  },{times:1});
+  const failed=page.waitForResponse(response=>new URL(response.url()).pathname===stationPath+"/batch");
+  await confirm.click();
+  expect((await failed).status()).toBe(409);
+  await expect(page.getByRole("status")).toHaveText("所選餐單已有更新。請回到看板重新核對。");
+  await expect(confirm).toBeDisabled();
+  expect((await ticket(onlyHot.token)).status).toBe("preparing");
+  await review.getByRole("button",{name:"返回勾選"}).click();
+  await expect(select(onlyHot)).toBeChecked();
+  await select(multiStation).check();
+  await begin.click();
+  await expect(review.getByText("日式熱煎茶")).toHaveCount(0);
+  await confirm.click();
+  await expect(page.getByRole("status")).toHaveText("熱台已回報 2 張餐單備妥。");
+  await expect(review).toHaveCount(0);
+  expect((await ticket(onlyHot.token)).status).toBe("ready");
+  expect((await ticket(multiStation.token)).status).toBe("preparing");
+  expect((await ticket(unselected.token)).status).toBe("preparing");
+  expect((await request.patch(stationPath,{headers,data:{id:multiStation.id,station:"bar"}})).ok()).toBe(true);
+  expect((await ticket(multiStation.token)).status).toBe("ready");
+});
+
+test("overlapping station batches on D1 only finish one selected set",async({request})=>{
+  const headers={Authorization:"Bearer local-test-kitchen"};
+  const stationPath="/api/kitchen/station-work";
+  const ids=[];
+  for(let index=0;index<3;index++){
+    const result=await request.post("/api/orders",{data:{mode:"pickup",token:randomUUID(),note:"",
+      items:[{id:"edamame",qty:1},{id:"sencha",qty:1}]}});
+    expect(result.ok(),await result.text()).toBe(true);
+    const {id}=await result.json();
+    expect((await request.patch("/api/kitchen/status",{headers,data:{id,from:"pending",to:"preparing"}})).ok()).toBe(true);
+    ids.push(id);
+  }
+  const queue=async()=>(await (await request.get(stationPath+"?station=cold",{headers})).json()).orders;
+  const start=await queue();
+  const orders=ids.map(id=>({id,review:stationReview(start.find(order=>order.id===id))}));
+  const send=entries=>request.patch(stationPath+"/batch",{headers,data:{station:"cold",orders:entries}});
+  const results=await Promise.all([send(orders.slice(0,2)),send(orders.slice(1))]);
+  expect(results.map(response=>response.status()).sort()).toEqual([200,409]);
+  const winning=results[0].ok()?ids.slice(0,2):ids.slice(1);
+  expect((await queue()).filter(order=>ids.includes(order.id)&&order.doneAt!==null).map(order=>order.id)).toEqual(winning);
 });
 
 test("mobile prep can print and export the remaining items from one station snapshot",async({page,request})=>{

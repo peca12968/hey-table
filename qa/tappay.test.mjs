@@ -12,6 +12,7 @@ import {paymentPrime,openPaymentUrl} from "../lib/tappay-client.mjs";
 import {sqliteD1} from "../scripts/sqlite-d1.mjs";
 import {applyDemoMigrations} from "../scripts/apply-demo-migrations.mjs";
 import {bookablePickupSlots} from "../lib/pickup-slots.mjs";
+import {stationReview} from "../lib/kitchen-timing.mjs";
 
 const env={TAPPAY_MODE:"sandbox",TAPPAY_APP_ID:"123",TAPPAY_APP_KEY:"test-public",TAPPAY_PARTNER_KEY:"test-only",
   TAPPAY_SITE_ORIGIN:"https://order.example",TAPPAY_NOTIFY_URL:"https://notify.example/api/payments/notify"};
@@ -645,6 +646,42 @@ test("receipt timing and remaining prep use completed station work while legacy 
   assert.deepEqual(legacy.remainingOrders,[{id:older,created:1,status:"preparing",items:[{id:"old-tofu",qty:1}]}]);
   assert.equal((await (await cook(older,"other")).json()).status,"ready");
   assert.deepEqual((await prep("?stationProgress=1")).remainingOrders,[]);
+});
+test("station batches reject stale and unpaid orders without writes and preserve other stations",async t=>{
+  const db=database();
+  t.after(()=>db.sqlite.close());
+  const runtime={DB:db,STAFF_KEY:"staff"};
+  const headers={Authorization:"Bearer staff","Content-Type":"application/json"};
+  const call=(path,data,staff=headers)=>api(new Request("https://order.example/api/kitchen/station-work"+path,{
+    headers:staff,...(data?{method:"PATCH",body:JSON.stringify(data)}:{}),
+  }),runtime);
+  const insert=db.sqlite.prepare(`INSERT INTO orders(token,mode,table_no,note,items,total,created,status,payment_method)
+    VALUES (?,'table','A03','',?,250,?,'preparing',?)`);
+  const hot={id:"katsudon",name:"滑蛋豬排丼",qty:1,note:"不要蔥"},bar={id:"sencha",name:"日式熱煎茶",qty:2};
+  const add=(items,method="cash")=>Number(insert.run(crypto.randomUUID(),JSON.stringify(items),Date.now(),method).lastInsertRowid);
+  const one=add([hot,bar]),two=add([hot,bar]),unpaid=add([hot],"line_pay");
+  const get=async()=>(await (await call("?station=hot")).json()).orders.map(order=>({id:order.id,review:stationReview(order)}));
+  const batch=(orders,staff)=>call("/batch",{station:"hot",orders},staff);
+  const row=id=>db.sqlite.prepare("SELECT status,station_progress,status_history FROM orders WHERE id=?").get(id);
+  const orders=await get();
+  assert.deepEqual(orders.map(order=>order.id),[one,two]);
+  assert.equal((await batch(orders,{})).status,403);
+  assert.equal((await batch([orders[0],orders[0]])).status,400);
+  assert.equal((await batch([orders[0],{id:unpaid,review:orders[0].review}])).status,409);
+  assert.equal(row(one).station_progress,null);
+  db.sqlite.prepare("UPDATE orders SET table_no='A04' WHERE id=?").run(two);
+  assert.equal((await batch(orders)).status,409);
+  assert.equal(row(one).station_progress,null);
+  assert.equal((await call("",{id:two,station:"bar"})).status,200);
+  const current=await get();
+  assert.deepEqual(await (await batch(current)).json(),{station:"hot",completed:2});
+  assert.equal(row(one).status,"preparing");
+  assert.equal(row(two).status,"ready");
+  const {done}=JSON.parse(row(two).station_progress);
+  assert.equal(typeof done.bar,"number");
+  assert.equal(done.hot,JSON.parse(row(one).station_progress).done.hot);
+  assert.deepEqual(JSON.parse(row(two).status_history),[{from:"preparing",status:"ready",at:done.hot}]);
+  assert.equal((await batch(current)).status,409);
 });
 test("prep station views use saved assignments and group old stations without exposing order notes",async t=>{
   const db=database();

@@ -1,4 +1,4 @@
-import {demoKitchen,stationLabels} from "../lib/kitchen-timing.mjs";
+import {demoKitchen,stationLabels,stationReview} from "../lib/kitchen-timing.mjs";
 import {payableForKitchen} from "./payment-api.mjs";
 
 function stationProgress(row) {
@@ -70,4 +70,44 @@ export async function finishStation(db,id,station) {
     db.prepare("SELECT status,json_extract(station_progress,?) AS doneAt FROM orders WHERE id=?").bind(donePath,id),
   ]);
   return current.results[0];
+}
+
+export async function finishStationBatch(db,station,orders) {
+  const reviews=new Map(orders.map(({id,review})=>[id,review]));
+  const {results}=await db.prepare(`SELECT id,table_no,pickup_slot,note,items,station_progress
+    FROM orders WHERE id IN (SELECT value FROM json_each(?))`).bind(JSON.stringify([...reviews.keys()])).all();
+  if(results.length!==orders.length)return 0;
+  const expected=[];
+  for(const row of results){
+    const progress=stationProgress(row),items=progress.groups[station];
+    if(!items||stationReview({table:row.table_no,pickupSlot:row.pickup_slot,note:row.note,items})!==reviews.get(row.id))
+      return 0;
+    expected.push({id:row.id,table:row.table_no,slot:row.pickup_slot,note:row.note,
+      items:row.items,group:JSON.stringify(items),initial:JSON.stringify(progress)});
+  }
+  const at=Date.now(),donePath="$.done."+station,groupPath="$.groups."+station;
+  // Freeze eligibility and the next progress for the entire selection before writing any row.
+  const {meta}=await db.prepare(`WITH expected AS (
+    SELECT value AS snapshot FROM json_each(?)
+  ), revised AS MATERIALIZED (
+    SELECT orders.id,json_set(COALESCE(station_progress,json_extract(snapshot,'$.initial')),?,CAST(? AS INTEGER)) AS progress
+    FROM orders JOIN expected ON orders.id=json_extract(snapshot,'$.id')
+    WHERE status='preparing' AND ${payableForKitchen}
+      AND table_no IS json_extract(snapshot,'$.table') AND pickup_slot IS json_extract(snapshot,'$.slot')
+      AND note IS json_extract(snapshot,'$.note') AND items=json_extract(snapshot,'$.items')
+      AND json_extract(COALESCE(station_progress,json_extract(snapshot,'$.initial')),?)=json(json_extract(snapshot,'$.group'))
+      AND json_type(station_progress,?) IS NULL
+  ), outcomes AS (
+    SELECT id,progress,NOT EXISTS (
+      SELECT 1 FROM json_each(progress,'$.groups') AS assigned
+      WHERE json_type(progress,'$.done.'||assigned.key) IS NULL
+    ) AS ready FROM revised
+  )
+  UPDATE orders SET station_progress=outcomes.progress,
+    status=CASE WHEN outcomes.ready THEN 'ready' ELSE orders.status END,
+    status_history=CASE WHEN outcomes.ready THEN json_insert(COALESCE(status_history,'[]'),'$[#]',
+      json_object('from','preparing','status','ready','at',?)) ELSE status_history END
+  FROM outcomes WHERE orders.id=outcomes.id AND (SELECT COUNT(*) FROM revised)=?`)
+    .bind(JSON.stringify(expected),donePath,at,groupPath,donePath,at,orders.length).run();
+  return meta.changes;
 }
