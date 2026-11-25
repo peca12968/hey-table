@@ -845,6 +845,56 @@ test("cash close uses Taipei registration dates and returns exact totals from th
   assert.deepEqual(empty.receipts,[]);
 });
 
+test("D1 saves immutable cash close versions, rejects stale receipts and replays a committed operation",async t=>{
+  const host=await pickupWorkerOrigin(t);
+  const staff={Authorization:"Bearer fixture-staff"},date="2026-11-25";
+  const endpoint="/api/kitchen/cash-close-versions",query="?date="+date;
+  const call=(path,headers=staff)=>fetch(host+path,{headers});
+  const write=(path,body,headers=staff,method="POST")=>fetch(host+path,{method,
+    headers:{"Content-Type":"application/json",...headers},body:JSON.stringify(body)});
+  const capture=async()=>await (await call("/api/kitchen/cash-close"+query)).json();
+  const collect=async()=>{
+    const created=await write("/api/orders",{token:crypto.randomUUID(),mode:"pickup",note:"",items:[{id:"sencha",qty:1}]},{});
+    assert.equal(created.status,200);
+    const {id}=await created.json();
+    assert.equal((await write("/api/kitchen/status",{id,from:"pending",to:"preparing"},staff,"PATCH")).status,200);
+    assert.equal((await write("/api/kitchen/status",{id,from:"preparing",to:"ready"},staff,"PATCH")).status,200);
+    assert.equal((await write("/api/kitchen/cash-receipt",{id,operationId:crypto.randomUUID(),expectedTotal:45,tendered:100})).status,200);
+  };
+  const input=(report,revision,counted)=>({date,revision,operationId:crypto.randomUUID(),capturedAt:report.capturedAt,
+    receiptCount:report.totals.receipts,opening:"200",adjustments:"-20",counted});
+  const empty=await capture(),stale=input(empty,0,"180");
+  assert.equal((await call(endpoint+query,{})).status,403);
+  assert.equal((await write(endpoint,stale,{})).status,403);
+  assert.equal((await write(endpoint,{...stale,counted:"-1"})).status,400);
+  assert.equal((await write(endpoint,{...stale,date:"2026-11-26"})).status,400);
+  assert.equal((await call(endpoint+query+"&revision=0")).status,400);
+  assert.equal((await call(endpoint+query+"&revision=1")).status,404);
+  await collect();
+  assert.equal((await write(endpoint,stale)).status,409);
+  const live=await capture();
+  const attempts=[input(live,0,"221"),input(live,0,"222")];
+  const responses=await Promise.all(attempts.map(attempt=>write(endpoint,attempt)));
+  assert.deepEqual(responses.map(response=>response.status).sort(),[200,409]);
+  const winner=responses.findIndex(response=>response.ok),saved=await responses[winner].json();
+  assert.equal(saved.revision,1);
+  assert.deepEqual(saved.report.receipts,live.receipts);
+  assert.equal(saved.report.reconciliation.expected,"225");
+  assert.equal(saved.report.reconciliation.counted,attempts[winner].counted);
+  assert.ok(!JSON.stringify(saved).includes(attempts[winner].operationId));
+  await collect();
+  assert.equal((await write(endpoint,input(live,1,"270"))).status,409);
+  const correction=await (await write(endpoint,input(await capture(),1,"270"))).json();
+  assert.equal(correction.revision,2);
+  assert.equal(correction.report.reconciliation.difference,"0");
+  assert.equal(correction.report.receipts.length,2);
+  assert.deepEqual(await (await write(endpoint,attempts[winner])).json(),saved);
+  assert.equal((await write(endpoint,{...attempts[winner],counted:"225"})).status,409);
+  assert.deepEqual(await (await call(endpoint+query+"&revision=1")).json(),saved);
+  const history=await (await call(endpoint+query)).json();
+  assert.deepEqual(history.versions.map(version=>[version.revision,version.receipts]),[[2,2],[1,1]]);
+});
+
 test("staff pickup roster groups one Taipei day and excludes private receipt and payment fields",async t=>{
   const db=database();
   t.after(()=>db.sqlite.close());

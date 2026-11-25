@@ -50,6 +50,16 @@ export const cashReceipts = sqliteTable("cash_receipts", {
   check("cash_receipt_amount",sql`${t.amount} >= 0 AND ${t.tendered} >= ${t.amount}`),
   index("cash_receipts_collected_at").on(t.collectedAt,t.orderId),
 ]);
+export const cashCloseVersions = sqliteTable("cash_close_versions", {
+  date: text("date").notNull(),
+  revision: integer("revision").notNull(),
+  operationId: text("operation_id").notNull().unique(),
+  savedAt: integer("saved_at").notNull(),
+  snapshot: text("snapshot").notNull(),
+}, t => [
+  primaryKey({columns:[t.date,t.revision]}),
+  check("cash_close_revision",sql`${t.revision} > 0`),
+]);
 export const unavailable = sqliteTable("unavailable", {
   dish: text("dish").primaryKey(),
 });

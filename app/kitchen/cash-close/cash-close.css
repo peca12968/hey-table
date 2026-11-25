@@ -16,3 +16,10 @@
 .cashCloseReceipts th,.cashCloseReceipts td{padding:8px 4px;border-bottom:1px solid var(--line);text-align:right;overflow-wrap:anywhere}
 .cashCloseReceipts th:first-child{text-align:left}
 .cashCloseReceipts small{display:block;font-weight:400}
+.cashCountActions{gap:8px 12px;margin-top:6px}
+.cashCountActions button,.cashCloseVersions button{min-height:42px}
+.cashCloseVersions{margin:14px 0}
+.cashCloseVersions h2{margin-top:0}
+.cashCloseVersions ul{list-style:none;margin:0;padding:0}
+.cashCloseVersions li{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px 12px;border-top:1px solid var(--line);padding:10px 0}
+.cashCloseVersions li p{margin:3px 0;overflow-wrap:anywhere}

@@ -14,6 +14,8 @@ import {canReschedulePickup,capacityAtPickupSlot,editablePickupSlots,orderPortio
 import {pickupCalendar} from "./pickup-calendar.mjs";
 import {pickupRoster} from "./pickup-roster.mjs";
 import {cashReceiptColumn,collectCash,dailyCashReceipts} from "./cash-receipts.mjs";
+import {cashCloseVersion,cashCloseVersions,saveCashClose} from "./cash-close-versions.mjs";
+import {cashAmount} from "../lib/cash-reconciliation.mjs";
 
 const json = (value, status=200) => Response.json(value,{status,headers:{"Cache-Control":"no-store"}});
 const fail = (message,status=400) => json({error:message},status);
@@ -165,6 +167,26 @@ export async function api(request, env) {
     const range=dates.length===1?businessDayRange(date):null;
     if(!range)return fail("請選擇有效的收款登記日期。");
     return json(await dailyCashReceipts(db,date,range,Date.now()));
+  }
+  if(path==="/api/kitchen/cash-close-versions"&&method==="GET"){
+    const dates=url.searchParams.getAll("date"),[date]=dates;
+    if(dates.length!==1||!businessDayRange(date))return fail("請選擇有效的收款登記日期。");
+    const expected=url.searchParams.get("revision");
+    if(expected===null)return json({date,versions:await cashCloseVersions(db,date)});
+    const revision=Number(expected);
+    if(!/^\d+$/.test(expected)||!Number.isSafeInteger(revision)||revision<1)return fail("請選擇有效的盤點版本。");
+    const saved=await cashCloseVersion(db,date,revision);
+    return saved?json(saved):fail("找不到這一版盤點。",404);
+  }
+  if(path==="/api/kitchen/cash-close-versions"&&method==="POST"){
+    const {date,revision,operationId,capturedAt,receiptCount,opening,adjustments,counted}=input;
+    const now=Date.now(),range=businessDayRange(date);
+    const amounts=[cashAmount(opening),cashAmount(adjustments,true),cashAmount(counted)];
+    if(!range||date>businessDate(now)||!Number.isSafeInteger(revision)||revision<0||revision>=Number.MAX_SAFE_INTEGER||
+      typeof operationId!=="string"||!uuid.test(operationId)||!Number.isSafeInteger(capturedAt)||capturedAt<=0||capturedAt>now||
+      !Number.isSafeInteger(receiptCount)||receiptCount<0||amounts.includes(null))return fail("請確認日期、版本與盤點金額。");
+    const saved=await saveCashClose(db,input,range,now,amounts);
+    return saved?json(saved):fail("收款資料或盤點版本已更新，請重新擷取後再核對。",409);
   }
   if(path==="/api/kitchen/timing" && method==="GET"){
     const {results}=await db.prepare(timingRows+" LIMIT 2").all();

@@ -108,6 +108,45 @@ test("mobile cash close reconciles a count and downloads the displayed snapshot 
   await page.getByRole("button",{name:"重新擷取"}).click();
   await expect(row(second)).toBeVisible();
   await expect(page.getByText("盤點短少 NT$ 48")).toBeVisible();
+  const store=page.getByRole("button",{name:"保存盤點版本"});
+  let submitted,replayed=false;
+  await page.route("**/api/kitchen/cash-close-versions",async route=>{
+    if(replayed||route.request().method()!=="POST")return route.continue();
+    if(submitted){
+      expect(route.request().postDataJSON()).toEqual(submitted);
+      replayed=true;
+      return route.continue();
+    }
+    submitted=route.request().postDataJSON();
+    expect((await route.fetch()).ok()).toBe(true);
+    return route.abort("connectionreset");
+  });
+  await store.click();
+  await expect(page.getByRole("alert")).toHaveText("尚未收到保存結果。可用同一筆資料重試。");
+  await page.reload();
+  await expect(page.getByLabel("實點收班現金")).toHaveValue(String(counted));
+  await page.getByRole("button",{name:"重試保存盤點"}).click();
+  await expect(page.getByText("已保存第 1 版盤點。")).toBeVisible();
+  const history=page.getByRole("region",{name:"已保存的盤點版本"});
+  await expect(history.getByRole("button",{name:"下載第 1 版"})).toBeVisible();
+  const third=await collect(60);
+  await store.click();
+  await expect(page.getByRole("alert")).toHaveText("收款資料或盤點版本已更新，請重新擷取後再核對。");
+  await expect(row(third)).toBeVisible();
+  await page.getByLabel("實點收班現金").fill(String(expected+90n));
+  await expect(page.getByText("盤點相符")).toBeVisible();
+  await store.click();
+  await expect(page.getByText("已保存第 2 版盤點。")).toBeVisible();
+  await expect(history.getByRole("button",{name:"下載第 2 版"})).toBeVisible();
+  const [archive]=await Promise.all([page.waitForEvent("download"),history.getByRole("button",{name:"下載第 1 版"}).click()]);
+  expect(archive.suggestedFilename()).toContain("hey-table-cash-close-"+date+"-v1-");
+  const frozen=JSON.parse(await readFile(await archive.path(),"utf8"));
+  expect(frozen.revision).toBe(1);
+  expect(frozen.report.receipts.some(record=>record.orderId===second)).toBe(true);
+  expect(frozen.report.receipts.some(record=>record.orderId===third)).toBe(false);
+  expect(frozen.report.reconciliation.difference).toBe("-48");
+  await page.reload();
+  await expect(history.getByRole("button",{name:"下載第 1 版"})).toBeVisible();
   await page.getByLabel("收款登記日期").fill("2001-01-01");
   await expect(page.getByText("這天沒有已登記的現金收款。")).toBeVisible();
   await expect(page.getByLabel("開班現金")).toHaveValue("");
