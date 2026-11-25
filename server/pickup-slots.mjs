@@ -19,12 +19,12 @@ export const pickupDaySettings=(db,date)=>db.prepare("SELECT accepting,revision 
 export const pickupSlotUsage=(db,start,date)=>db.prepare(`SELECT ${usedAtPickupSlot} AS used,${capacityAtPickupSlot} AS capacity,
   ${pickupDayPaused} AS paused`).bind(start,start,date);
 
-async function slotAvailability(db,starts,date,now){
+async function slotAvailability(db,starts,date,now,orderLookup){
   const range=[starts[0]??null,starts.at(-1)??null];
-  const [,counts,limits,settings]=await db.batch([expirePaymentHolds(db,now),db.prepare(`SELECT pickup_slot,${portions} AS used
+  const [,counts,limits,settings,order]=await db.batch([expirePaymentHolds(db,now),db.prepare(`SELECT pickup_slot,${portions} AS used
     ${activeSlots} AND pickup_slot BETWEEN ? AND ? GROUP BY pickup_slot`).bind(...range),
     db.prepare("SELECT start,capacity,revision FROM pickup_slot_limits WHERE start BETWEEN ? AND ?").bind(...range),
-    pickupDaySettings(db,date)]);
+    pickupDaySettings(db,date),...(orderLookup?[orderLookup]:[])]);
   const used=new Map(counts.results.map(row=>[row.pickup_slot,row.used]));
   const configured=new Map(limits.results.map(row=>[row.start,row]));
   const day=settings.results[0],accepting=day?.accepting!==0;
@@ -34,12 +34,16 @@ async function slotAvailability(db,starts,date,now){
     return {start,end:start+pickupSlotDuration,used:taken,capacity,
       remaining:accepting?Math.max(0,(capacity??pickupSlotCapacity)-taken):0,revision:limit?.revision??0};
   });
-  return {accepting,revision:day?.revision??0,slots};
+  return {accepting,revision:day?.revision??0,slots,order:order?.results[0]};
+}
+
+export async function pickupSlotOptions(db,now,day,orderLookup){
+  const {slots,accepting,order}=await slotAvailability(db,bookablePickupSlots(now,day),day,now,orderLookup);
+  return {order,availability:accepting?{slots:slots.map(({start,end,remaining})=>({start,end,remaining}))}:{slots:[],paused:true}};
 }
 
 export async function pickupSlots(db,now,day){
-  const {slots,accepting}=await slotAvailability(db,bookablePickupSlots(now,day),day,now);
-  return accepting?{slots:slots.map(({start,end,remaining})=>({start,end,remaining}))}:{slots:[],paused:true};
+  return (await pickupSlotOptions(db,now,day)).availability;
 }
 
 export async function pickupSlotLimits(db,date,now){

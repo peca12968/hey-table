@@ -20,26 +20,29 @@ export function PickupDate({value,disabled,onChange,label="取餐日期",paused=
   </div>;
 }
 
-export function usePickupSlotAvailability({selected,count,active,revision,day,alwaysOpen=false}){
+export function usePickupSlotAvailability({selected,count,active,revision,day,alwaysOpen=false,requestUrl,ticket,staffKey}){
   const [expanded,setExpanded]=useState(false);
   const [view,setView]=useState(null);
   const [reload,setReload]=useState(0);
   const today=useBusinessToday();
   const opened=alwaysOpen||expanded||selected!==null||!!day;
   const checking=active&&opened&&!!today;
-  const key=[today,day,revision,reload].join(":");
+  const url=requestUrl??("/api/pickup-slots"+(day?"?date="+encodeURIComponent(day):""));
+  const key=[today,url,revision,reload].join(":");
   useEffect(()=>{
     if(!checking)return;
     const controller=new AbortController();
-    request("/api/pickup-slots"+(day?"?date="+encodeURIComponent(day):""),{
+    const headers=ticket?{"X-Ticket":ticket}:staffKey?{Authorization:"Bearer "+staffKey}:{};
+    request(url,{headers,
       signal:AbortSignal.any([controller.signal,AbortSignal.timeout(10_000)]),
-    }).then(({slots,paused})=>{
-      if(!controller.signal.aborted)setView({key,snapshot:{slots,paused:paused===true}});
-    }).catch(()=>{
-      if(!controller.signal.aborted)setView({key,error:"暫時無法讀取自取時段。"});
+    }).then(({slots,paused,shortages})=>{
+      if(!controller.signal.aborted)setView({key,ticket,staffKey,snapshot:{slots,paused:paused===true,shortages:shortages??[]}});
+    }).catch(failure=>{
+      if(!controller.signal.aborted)setView({key,ticket,staffKey,error:
+        requestUrl&&[400,409].includes(failure.status)?failure.message:"暫時無法讀取自取時段。"});
     });
     return ()=>controller.abort();
-  },[day,key,checking]);
+  },[url,key,checking,ticket,staffKey,requestUrl]);
   useEffect(()=>{
     if(!checking)return;
     const reloadSlots=()=>setReload(value=>value+1);
@@ -51,12 +54,13 @@ export function usePickupSlotAvailability({selected,count,active,revision,day,al
       document.removeEventListener("visibilitychange",onVisible);
     };
   },[checking]);
-  const current=checking&&view?.key===key?view:null;
+  const current=checking&&view?.key===key&&view.ticket===ticket&&view.staffKey===staffKey?view:null;
   const slots=current?.snapshot?.slots??[];
   const match=slots.find(slot=>slot.start===selected);
   const canFit=!!match&&match.remaining>=count;
   return {opened,expand:()=>setExpanded(true),refresh:()=>setReload(value=>value+1),slots,match,
-    snapshot:current?.snapshot,error:current?.error,selectedBlocked:selected!==null&&(!canFit||!!current?.snapshot?.paused)};
+    snapshot:current?.snapshot,error:current?.error,selectedBlocked:selected!==null&&
+      (!canFit||!!current?.snapshot?.paused||current?.snapshot?.shortages.length>0)};
 }
 
 export default function PickupSlots({selected,count,disabled,onChange,availability,day=""}){

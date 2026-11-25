@@ -11,7 +11,7 @@ import {dailyTiming,dailyTimingRows} from "./daily-timing.mjs";
 import {kitchenOverdue} from "./kitchen-overdue.mjs";
 import {bookedPickupDate,pickupBookingDays,pickupCalendarStatus,pickupPrepLead,pickupSlotCapacity,pickupSlotsForDay} from "../lib/pickup-slots.mjs";
 import {canReschedulePickup,capacityAtPickupSlot,editablePickupSlots,orderPortions,pickupChanges,pickupSlotLimits,
-  pickupDayPaused,pickupDaySettings,pickupSlotUsage,pickupSlots,savePickupSlotLimits,usedAtPickupSlot} from "./pickup-slots.mjs";
+  pickupDayPaused,pickupDaySettings,pickupSlotOptions,pickupSlotUsage,pickupSlots,savePickupSlotLimits,usedAtPickupSlot} from "./pickup-slots.mjs";
 import {pickupCalendar} from "./pickup-calendar.mjs";
 import {pickupRoster} from "./pickup-roster.mjs";
 import {cashCorrectionHistory,cashReceiptColumn,collectCash,correctCashReceipt,dailyCashReceipts} from "./cash-receipts.mjs";
@@ -543,6 +543,22 @@ export async function api(request, env) {
     return json(saved);
   }
   const staffReschedule=path==="/api/kitchen/pickup-reschedule"&&method==="PATCH";
+  if(["/api/ticket/reschedule-options","/api/kitchen/pickup-reschedule-options"].includes(path)&&method==="GET"){
+    const staff=path.startsWith("/api/kitchen/");
+    const ref=staff?collectionId(url):request.headers.get("X-Ticket");
+    if(staff?ref===null:!uuid.test(ref))return fail("找不到訂單",404);
+    const now=Date.now(),date=url.searchParams.get("date")??businessDate(now);
+    if(!pickupBookingDays(now).includes(date))return fail("請選擇七天內的取餐日期。");
+    const range=businessDayRange(date);
+    const lookup=db.prepare(`SELECT mode,status,pickup_slot,
+      CASE WHEN pickup_slot>=? AND pickup_slot<? THEN '[]'
+      ELSE (SELECT json_group_array(dish) FROM (${exceededOrderPortions})) END AS shortages
+      FROM orders WHERE ${staff?"id":"token"}=?`).bind(...range,date,...range,ref);
+    const {order,availability}=await pickupSlotOptions(db,now,date,lookup);
+    if(!order)return fail("找不到訂單",404);
+    if(!canReschedulePickup(order,now))return fail("這張餐單已進入備餐時間或已結單，無法更改時段。",409);
+    return json({...availability,shortages:JSON.parse(order.shortages)});
+  }
   if(staffReschedule||(path==="/api/ticket/reschedule"&&method==="POST")){
     const orderRef=staffReschedule?input.id:request.headers.get("X-Ticket");
     if(staffReschedule){

@@ -90,7 +90,7 @@ function TableHandoff({table,orders,busy,update}){
   </section>;
 }
 
-function KitchenTicket({order,busy,update,movePickup,recordCash,refresh,today,showOverdue=false,handoffOnly=false}){
+function KitchenTicket({order,busy,update,movePickup,recordCash,refresh,today,staffKey,showOverdue=false,handoffOnly=false}){
   const {id,status,table,created,items,note,paymentMethod,paymentEnv,paymentState,total}=order;
   const actions=handoffOnly ? transitions[status].filter(next=>next==="completed") : transitions[status];
   const workingByStation=order.stationProgress&&status==="preparing";
@@ -131,7 +131,7 @@ function KitchenTicket({order,busy,update,movePickup,recordCash,refresh,today,sh
     {table&&["pending","preparing","ready"].includes(status)&&<TableMove
       key={table+":"+tableRevision} id={id} table={table} revision={tableRevision} busy={busy} update={update}/>}
     {!handoffOnly&&order.pickupSlot!=null&&<ReschedulePickup order={order} canReschedule={Boolean(order.pickupUpcoming)} disabled={busy}
-      submit={(change,signal)=>movePickup(id,change,signal)} onChange={refresh}/>}
+      submit={(change,signal)=>movePickup(id,change,signal)} onChange={refresh} staffKey={staffKey}/>}
   </article>;
 }
 
@@ -255,7 +255,7 @@ export default function Kitchen(){
     content=!error&&<p>正在讀取{focused?"自取餐單":"接單台"}…</p>;
   }else if(focused){
     content=<KitchenTicket key={rows[0].id} order={rows[0]} busy={busy} update={update} movePickup={movePickup} recordCash={recordCash}
-      refresh={refresh} today={today} handoffOnly={handoffOnly} showOverdue={!handoffOnly}/>;
+      refresh={refresh} today={today} staffKey={key} handoffOnly={handoffOnly} showOverdue={!handoffOnly}/>;
   }else{
     const showTableHandoff=filter==="ready"&&!search.trim();
     const readyAt=table=>filtered.filter(order=>order.table===table&&order.mode==="table");
@@ -295,7 +295,7 @@ export default function Kitchen(){
     </div>}
     {showTableHandoff&&tables.includes(scope)&&<TableHandoff key={scope} table={scope} orders={readyAt(scope)} busy={busy} update={update}/>}
     <div className="kGrid">{filtered.map(order=><KitchenTicket key={order.id} order={order} busy={busy} update={update} today={today}
-      movePickup={movePickup} recordCash={recordCash} refresh={refresh} showOverdue={queueAvailable}/>)}</div>
+      movePickup={movePickup} recordCash={recordCash} refresh={refresh} staffKey={key} showOverdue={queueAvailable}/>)}</div>
     <section className="sheet stock"><h2>餐點供應</h2>{dishes.map(d=><div key={d.id}><span>{d.name}</span><button className="outline" disabled={busy} onClick={()=>update("availability",{id:d.id,available:sold.includes(d.id)})}>{sold.includes(d.id)?"已售完 · 恢復供應":"供應中 · 標記售完"}</button></div>)}</section>
     <Timing staffKey={key}/>
     {key&&<button className="outline" onClick={()=>{sessionStorage.removeItem("he-ri-staff");setRevision(v=>v+1);}}>登出金鑰</button>}

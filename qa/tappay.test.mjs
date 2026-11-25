@@ -707,6 +707,20 @@ test("D1 reserves supply by pickup day and moves that supply atomically across d
   assert.deepEqual(await prep(tomorrow),[accepted.id]);
 
   const guest={"X-Ticket":originals[index].token};
+  const options="/api/ticket/reschedule-options?date=";
+  const staffOptions=`/api/kitchen/pickup-reschedule-options?id=${accepted.id}&date=`;
+  assert.equal((await call(options+dayAfter)).status,404);
+  assert.equal((await call(options+dayAfter,{"X-Ticket":originals[1-index].token})).status,404);
+  assert.equal((await call(staffOptions+dayAfter)).status,403);
+  assert.equal((await call(options+outside,guest)).status,400);
+  const sameOptions=await (await call(options+tomorrow,guest)).json();
+  assert.deepEqual(sameOptions.shortages,[]);
+  const guestOptions=await call(options+dayAfter,guest);
+  assert.equal(guestOptions.headers.get("Cache-Control"),"no-store");
+  const shortage=await guestOptions.json();
+  assert.deepEqual(shortage.shortages,["sencha"]);
+  assert.ok(shortage.slots.some(slot=>slot.remaining>=2));
+  assert.deepEqual(await (await call(staffOptions+dayAfter,staff)).json(),shortage);
   const move=(from,to,revision)=>write("/api/kitchen/pickup-reschedule",{id:accepted.id,from,to,revision},staff,"PATCH");
   const receipt=async()=>(await (await call("/api/ticket?progress=1",guest)).json());
   const sameDay=start(tomorrow,"12:30"),nextDay=start(dayAfter);
@@ -719,6 +733,7 @@ test("D1 reserves supply by pickup day and moves that supply atomically across d
   assert.equal((await supply(dayAfter)).used,0);
 
   assert.equal((await setSupply(dayAfter,2,1)).status,200);
+  assert.deepEqual((await (await call(options+dayAfter,guest)).json()).shortages,[]);
   const competing=booking(start(dayAfter,"12:15"));
   const [moved,newBooking]=await Promise.all([move(sameDay,nextDay,1),submit(competing,0)]);
   assert.deepEqual([moved.status,newBooking.status].sort(),[200,409]);

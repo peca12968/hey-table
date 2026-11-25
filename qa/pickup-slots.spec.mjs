@@ -66,6 +66,58 @@ test("mobile guest books a future day despite today's sellout and moves the rece
   }
 });
 
+test("guest and staff see cross-day dish shortages before confirmation and can continue after restock",async({page,request})=>{
+  const today=Date.now(),tomorrow=businessDate(today+86_400_000),later=businessDate(today+2*86_400_000);
+  const start=Date.parse(tomorrow+"T15:45:00+08:00"),target=Date.parse(later+"T16:15:00+08:00");
+  const staff={Authorization:"Bearer local-test-kitchen"},token=randomUUID(),ticket={"X-Ticket":token};
+  const endpoint="/api/kitchen/daily-limits",dish="sencha";
+  const setting=async()=>(await (await request.get(endpoint+"?date="+later,{headers:staff})).json()).limits[dish];
+  const set=(capacity,revision)=>request.patch(endpoint,{headers:staff,data:{date:later,dish,capacity,revision}});
+  const previous=await setting();
+  const operator=await page.context().newPage();
+  let booked=false;
+  try{
+    expect((await set(previous.used+1,previous.revision)).ok()).toBe(true);
+    const created=await request.post("/api/orders",{data:{token,mode:"pickup",note:"",pickupSlot:start,items:[{id:dish,qty:2}]}});
+    expect(created.ok()).toBe(true);
+    booked=true;
+    const {id}=await created.json();
+    await page.setViewportSize({width:360,height:780});
+    await operator.setViewportSize({width:360,height:780});
+    await operator.addInitScript(()=>sessionStorage.setItem("he-ri-staff","local-test-kitchen"));
+    await page.goto("/ticket#"+token);
+    await operator.goto("/kitchen?booking="+id);
+    const blocked="取餐日份數不足的餐點為 日式熱煎茶。原預約仍有效。";
+    for(const browser of [page,operator]){
+      await browser.getByRole("button",{name:"更改取餐時段"}).click();
+      await browser.getByLabel("新的取餐日期").selectOption(later);
+      await browser.getByLabel("新的取餐時段").selectOption(String(target));
+      await expect(browser.getByText(blocked,{exact:true})).toBeVisible();
+      await expect(browser.getByRole("button",{name:"確認改期"})).toBeDisabled();
+      await expect(browser.locator(".pickupSlotTime time")).toHaveAttribute("datetime",new Date(start).toISOString());
+      expect(await browser.evaluate(()=>document.documentElement.scrollWidth)).toBe(360);
+    }
+    const current=await setting();
+    expect((await set(current.used+2,current.revision)).ok()).toBe(true);
+    for(const browser of [page,operator]){
+      await browser.evaluate(()=>window.dispatchEvent(new Event("online")));
+      await expect(browser.getByText(blocked,{exact:true})).toHaveCount(0);
+      await expect(browser.getByLabel("新的取餐時段")).toHaveValue(String(target));
+      await expect(browser.getByRole("button",{name:"確認改期"})).toBeEnabled();
+    }
+    await operator.getByRole("button",{name:"確認改期"}).click();
+    await expect(operator.locator(".pickupSlotTime time")).toHaveAttribute("datetime",new Date(target).toISOString());
+    await page.getByRole("button",{name:"更新進度"}).click();
+    await expect(page.locator(".pickupSlotTime time")).toHaveAttribute("datetime",new Date(target).toISOString());
+    expect((await setting()).used).toBe(current.used+2);
+  }finally{
+    if(booked)await request.post("/api/ticket/cancel",{headers:ticket,data:{}});
+    const current=await setting();
+    if(current.capacity!==previous.capacity)await set(previous.capacity,current.revision);
+    await operator.close();
+  }
+});
+
 test("customer and staff pickup recheck the selected slot before sending while preserving both drafts",async({page,request})=>{
   const headers={Authorization:"Bearer local-test-kitchen"};
   const date=businessDate(Date.now()+86_400_000),start=Date.parse(date+"T18:45:00+08:00");

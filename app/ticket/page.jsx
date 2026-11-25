@@ -143,7 +143,7 @@ export default function Ticket(){
     {latestPickup&&<p className="muted" role="status">{latestPickup.actor==="staff"?"店家已將取餐時段從":"取餐時段已從"} {previousWindow} 改到 {newWindow}。</p>}
     {calendarStatus&&<PickupCalendar key={"pickup-calendar-"+route.token+calendarStatus} id={order.id} token={route.token}
       status={calendarStatus} onChange={refreshReceipt}/>}
-    {order.pickupSlot!=null&&<ReschedulePickup key={"pickup-reschedule-"+route.token} order={order} onChange={refreshReceipt}
+    {order.pickupSlot!=null&&<ReschedulePickup key={"pickup-reschedule-"+route.token} order={order} onChange={refreshReceipt} ticket={route.token}
       submit={(change,signal)=>request("/api/ticket/reschedule",{method:"POST",headers:{"Content-Type":"application/json","X-Ticket":route.token},
         body:JSON.stringify(change),signal})}/>}
     {latestMove&&<p className="muted" role="status">店家已將餐單從 {latestMove.from} 桌移到 {latestMove.to} 桌。</p>}
