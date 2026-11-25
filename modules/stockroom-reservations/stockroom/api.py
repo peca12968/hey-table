@@ -196,10 +196,14 @@ class ReleaseReceipt(BaseModel):
     held_after: int
 
 
+ExpectedDeadline = Annotated[int, Field(strict=True, ge=0, le=2**63 - 1)]
+ExtensionSeconds = Annotated[int, Field(strict=True, ge=1, le=86_400)]
+
+
 class Renewal(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    expected_expires_at_ms: int = Field(strict=True, ge=0, le=2**63 - 1)
-    extend_seconds: int = Field(strict=True, ge=1, le=86_400)
+    expected_expires_at_ms: ExpectedDeadline
+    extend_seconds: ExtensionSeconds
 
 
 class RenewalReceipt(BaseModel):
@@ -207,6 +211,36 @@ class RenewalReceipt(BaseModel):
     renewal_id: str
     previous_expires_at_ms: int
     expires_at_ms: int
+
+
+class RenewalBatchItem(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    reservation_id: BoxKey
+    expected_expires_at_ms: ExpectedDeadline
+
+
+class RenewalBatch(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    extend_seconds: ExtensionSeconds
+    items: list[RenewalBatchItem] = Field(min_length=1, max_length=100)
+
+    @field_validator("items")
+    @classmethod
+    def distinct_reservations(cls, items):
+        if len({item.reservation_id for item in items}) != len(items):
+            raise ValueError("Repeat reservation in renewal batch")
+        return items
+
+
+class RenewedBatchItem(BaseModel):
+    reservation_id: str
+    previous_expires_at_ms: int
+    expires_at_ms: int
+
+
+class RenewalBatchReceipt(BaseModel):
+    batch_id: str
+    items: list[RenewedBatchItem]
 
 
 RequestKey = Annotated[str, Header(pattern=r"^[a-zA-Z0-9_-]{1,80}$")]
@@ -280,6 +314,21 @@ def create_app(path: Path, *, ttl_seconds=900, clock=time.time):
     @app.get("/dispatch-batches/{batch_id}", response_model=BatchReceipt)
     def dispatch_batch_receipt(batch_id: str):
         return store.dispatch_batch_receipt(batch_id)
+
+    @app.post("/renewal-batches", response_model=RenewalBatchReceipt, status_code=201,
+              responses={200: {"model": RenewalBatchReceipt, "description": "Original renewal batch receipt"}})
+    def renew_batch(batch: RenewalBatch, response: Response, idempotency_key: RequestKey):
+        items = [(item.reservation_id, item.expected_expires_at_ms) for item in batch.items]
+        receipt, created = store.renew_batch(idempotency_key, items, batch.extend_seconds)
+        response.headers["Cache-Control"] = "no-store"
+        if not created:
+            response.status_code = 200
+        return receipt
+
+    @app.get("/renewal-batches/{batch_id}", response_model=RenewalBatchReceipt)
+    def renewal_batch_receipt(batch_id: BoxKey, response: Response):
+        response.headers["Cache-Control"] = "no-store"
+        return store.renewal_batch_receipt(batch_id)
 
     @app.post("/return-batches", response_model=ReturnBatchReceipt, status_code=201,
               responses={200: {"model": ReturnBatchReceipt, "description": "Original return batch receipt"}})

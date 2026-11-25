@@ -77,6 +77,12 @@ python -m uvicorn stockroom.api:app
 
 若回應含 `next`，沿用其中三個參數及原 SKU 查下一頁。截止範圍固定，各頁會按當下庫存重新結算。舊版無到期時間的單仍可由原查單 API 查閱。執行 `python batch_status_demo.py` 可看到包材續期後離開短期清單、套件到期後釋回庫存。[到期邊界、續頁與並行出貨測試](tests/test_expiry_queue.py)
 
+### 將多張保留單一起續期
+
+從到期清單選擇保留單後，向 `POST /renewal-batches` 傳送 `Idempotency-Key`、共用的 `extend_seconds`（1 至 86,400 秒），以及最多 100 筆 `items`。每筆填入 `reservation_id` 與清單上的 `expires_at_ms` 作為 `expected_expires_at_ms`。
+
+服務先結算到期，再在同一筆交易核對期限、延長仍有效的保留並保存整批收據。任一筆不存在、已結單或期限過期，整批退回，回應會指出保留編號。首次回 201，改變順序重送相同內容回 200；同批號更換內容回 409。可用 `GET /renewal-batches/{batch_id}` 查回原收據。[並行續期與收據回滾測試](tests/test_renewal_batches.py)
+
 ## 同車退回的多箱商品一起驗收
 
 倉庫同時收到東區和西區兩張訂單的退貨。在各箱驗收後，將可重新入庫的數量送到 `POST /return-batches`，以 `Idempotency-Key` 傳入此次驗收批號。以下範例假設兩張訂單各已有一箱出貨，箱號都叫 `box`。

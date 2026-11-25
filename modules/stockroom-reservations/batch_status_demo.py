@@ -51,7 +51,39 @@ def capture(db):
         api.delete(batch_path).raise_for_status()
         record("cancelled")
 
-    return {"stages": stages}
+        now = 200
+        new_batch = api.post("/reservation-batches", headers={"Idempotency-Key": "renew-demo"},
+                             json={"items": items}).raise_for_status().json()
+        before = api.get("/expiring-reservations", params={"within_seconds": 4}).raise_for_status().json()
+        deadline = {hold["reservation_id"]: hold["expires_at_ms"] for hold in before["reservations"]}
+        selected = [{"reservation_id": item["id"], "expected_expires_at_ms": deadline[item["id"]]}
+                    for item in new_batch["items"]]
+        stale = [selected[0], {**selected[1], "expected_expires_at_ms": deadline[selected[1]["reservation_id"]] + 1}]
+        headers = {"Idempotency-Key": "delay-truck"}
+        rejected = api.post("/renewal-batches", headers=headers, json={"items": stale, "extend_seconds": 10})
+        after_rejection = api.get("/expiring-reservations", params={"within_seconds": 4}).raise_for_status().json()
+        unchanged = {hold["reservation_id"]: hold["expires_at_ms"] for hold in after_rejection["reservations"]}
+        accepted = api.post("/renewal-batches", headers=headers, json={"items": selected, "extend_seconds": 10})
+        renewal = accepted.raise_for_status().json()
+        replay = api.post("/renewal-batches", headers=headers,
+                          json={"items": selected[::-1], "extend_seconds": 10})
+        after_commit = api.get("/expiring-reservations", params={"within_seconds": 4}).raise_for_status().json()
+        by_id = {row["reservation_id"]: row for row in renewal["items"]}
+        renewal_batch = {
+            "captured_at_ms": before["captured_at_ms"],
+            "through_ms": before["through_ms"],
+            "extend_seconds": 10,
+            "stale_status": rejected.status_code,
+            "accepted_status": accepted.status_code,
+            "replay_status": replay.status_code,
+            "same_receipt": replay.json() == renewal,
+            "queued_after_commit": len(after_commit["reservations"]),
+            "items": [{"sku": row["sku"], "previous_expires_at_ms": by_id[row["id"]]["previous_expires_at_ms"],
+                       "after_rejected_expires_at_ms": unchanged[row["id"]], "expires_at_ms": by_id[row["id"]]["expires_at_ms"]}
+                      for row in new_batch["items"]],
+        }
+
+    return {"stages": stages, "renewal_batch": renewal_batch}
 
 
 if __name__ == "__main__":

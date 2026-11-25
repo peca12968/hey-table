@@ -73,6 +73,13 @@ CREATE TABLE IF NOT EXISTS reservation_renewals (
     expires_at_ms INTEGER NOT NULL CHECK (expires_at_ms > previous_expires_at_ms),
     PRIMARY KEY (reservation_id, renewal_id)
 );
+CREATE TABLE IF NOT EXISTS reservation_renewal_batches (
+    batch_id TEXT NOT NULL,
+    reservation_id TEXT NOT NULL REFERENCES reservations(id),
+    previous_expires_at_ms INTEGER NOT NULL,
+    expires_at_ms INTEGER NOT NULL CHECK (expires_at_ms > previous_expires_at_ms),
+    PRIMARY KEY (batch_id, reservation_id)
+);
 CREATE TABLE IF NOT EXISTS shipment_returns (
     reservation_id TEXT NOT NULL,
     shipment_id TEXT NOT NULL,
@@ -361,18 +368,53 @@ class Store:
                 if (receipt["previous_expires_at_ms"], receipt["expires_at_ms"]) != (expected_deadline, deadline):
                     raise Conflict("Renewal key already used with different input")
                 return dict(receipt), False
-            if row["state"] != "held" or row["expires_at_ms"] is None:
-                raise Conflict("Only an active hold with a deadline can be renewed")
-            if row["expires_at_ms"] != expected_deadline:
-                raise Conflict("Reservation deadline changed")
-            if deadline > 2**63 - 1:
-                raise Conflict("Deadline exceeds SQLite integer range")
-            conn.execute("UPDATE reservations SET expires_at_ms=? WHERE id=?", (deadline, key))
+            self.extend_held_deadline(conn, row, expected_deadline, deadline)
             conn.execute("""INSERT INTO reservation_renewals
                             (reservation_id, renewal_id, previous_expires_at_ms, expires_at_ms)
                             VALUES (?,?,?,?)""", (key, renewal_id, expected_deadline, deadline))
             return {"reservation_id": key, "renewal_id": renewal_id, "previous_expires_at_ms": expected_deadline,
                     "expires_at_ms": deadline}, True
+
+    @staticmethod
+    def extend_held_deadline(conn, row, expected_deadline, deadline):
+        if row["state"] != "held" or row["expires_at_ms"] is None:
+            raise Conflict("Only an active hold with a deadline can be renewed")
+        if row["expires_at_ms"] != expected_deadline:
+            raise Conflict("Reservation deadline changed")
+        if deadline > 2**63 - 1:
+            raise Conflict("Deadline exceeds SQLite integer range")
+        conn.execute("UPDATE reservations SET expires_at_ms=? WHERE id=?", (deadline, row["id"]))
+
+    @staticmethod
+    def renewal_batch_rows(conn, batch_id):
+        return [dict(row) for row in conn.execute("""SELECT reservation_id,previous_expires_at_ms,expires_at_ms
+            FROM reservation_renewal_batches WHERE batch_id=? ORDER BY reservation_id""", (batch_id,))]
+
+    def renew_batch(self, batch_id, items, seconds):
+        requested = [(key, expected, expected + seconds * 1000) for key, expected in sorted(items)]
+        with self.current_inventory() as (conn, _):
+            receipts = self.renewal_batch_rows(conn, batch_id)
+            if receipts:
+                saved = [(row["reservation_id"], row["previous_expires_at_ms"], row["expires_at_ms"])
+                         for row in receipts]
+                if saved != requested:
+                    raise Conflict("Renewal batch key already used with different input")
+                return {"batch_id": batch_id, "items": receipts}, False
+            for key, expected, deadline in requested:
+                try:
+                    self.extend_held_deadline(conn, self.find_reservation(conn, key), expected, deadline)
+                except (Missing, Conflict) as error:
+                    raise type(error)(f"{key}: {error}") from error
+                conn.execute("INSERT INTO reservation_renewal_batches VALUES (?,?,?,?)",
+                             (batch_id, key, expected, deadline))
+            return {"batch_id": batch_id, "items": self.renewal_batch_rows(conn, batch_id)}, True
+
+    def renewal_batch_receipt(self, batch_id):
+        with closing(self.connect()) as conn:
+            items = self.renewal_batch_rows(conn, batch_id)
+            if not items:
+                raise Missing("Unknown renewal batch")
+            return {"batch_id": batch_id, "items": items}
 
     def release(self, key):
         with self.current_inventory() as (conn, _):

@@ -189,5 +189,29 @@
         "reservations": []
       }
     }
-  ]
+  ],
+  "renewal_batch": {
+    "captured_at_ms": 200000,
+    "through_ms": 204000,
+    "extend_seconds": 10,
+    "stale_status": 409,
+    "accepted_status": 201,
+    "replay_status": 200,
+    "same_receipt": true,
+    "queued_after_commit": 0,
+    "items": [
+      {
+        "sku": "KIT-01",
+        "previous_expires_at_ms": 203000,
+        "after_rejected_expires_at_ms": 203000,
+        "expires_at_ms": 213000
+      },
+      {
+        "sku": "WRAP-01",
+        "previous_expires_at_ms": 203000,
+        "after_rejected_expires_at_ms": 203000,
+        "expires_at_ms": 213000
+      }
+    ]
+  }
 }
