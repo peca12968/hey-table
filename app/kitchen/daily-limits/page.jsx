@@ -76,32 +76,39 @@ function LimitActions({date,dish,data,disabled,onWrite}){
   </>;
 }
 
-function RestockRecords({date,dish}){
+const capacityLabel=capacity=>capacity===null?"不限量":String(capacity);
+
+function LimitRecords({date,dish,restocksOnly}){
   const [cursors,setCursors]=useState([null]),[reload,setReload]=useState(0),[view,setView]=useState(null);
   const before=cursors.at(-1);
   useEffect(()=>{
     const controller=new AbortController();
     const query=new URLSearchParams({date,dish:dish.id});
     if(before!==null)query.set("before",String(before));
-    request(endpoint+"/restock?"+query,{
+    request(endpoint+(restocksOnly?"/restock?":"/history?")+query,{
       headers:staffHeaders(),signal:AbortSignal.any([controller.signal,AbortSignal.timeout(10_000)]),
     }).then(page=>{if(!controller.signal.aborted)setView({before,reload,page});})
       .catch(failure=>{if(!controller.signal.aborted)setView({before,reload,error:
-        failure.name==="TimeoutError"?"讀取補貨紀錄逾時，請重試。":failure.message});});
+        failure.name==="TimeoutError"?"讀取供應紀錄逾時，請重試。":failure.message});});
     return ()=>controller.abort();
-  },[date,dish.id,before,reload]);
+  },[date,dish.id,before,reload,restocksOnly]);
   const current=view?.before===before&&view.reload===reload?view:null;
   const page=current?.page;
-  return <section aria-label={dish.name+"補貨紀錄"}>
-    {!current&&<p role="status">正在讀取補貨紀錄…</p>}
+  return <>
+    {!current&&<p role="status">正在讀取供應紀錄…</p>}
     {current?.error&&<p role="alert" className="error">{current.error}</p>}
-    {page?.records.length===0&&<p>這一天沒有補貨紀錄。</p>}
-    {page?.records.length>0&&<ol aria-label="補貨明細" className="restockRecords">
-      {page.records.map(record=><li key={record.revision}>
-        <div><strong>補貨 {record.quantity} 份</strong><span>第 {record.revision} 版</span></div>
-        <time dateTime={new Date(record.restockedAt).toISOString()}>{taipei.format(record.restockedAt)}</time>
-        <p>供應上限 {record.previousCapacity} → {record.capacity} · 當時已占用 {record.used} 份</p>
-      </li>)}
+    {page?.records.length===0&&<p>這一天沒有{restocksOnly?"補貨":"供應變更"}紀錄。</p>}
+    {page?.records.length>0&&<ol aria-label="供應紀錄明細" className="restockRecords">
+      {page.records.map(record=>{
+        const kind=record.kind??"restock",at=record.changedAt??record.restockedAt;
+        const title=kind==="manual"?"手動儲存":kind==="copy"?"跨日複製":"補貨 "+record.quantity+" 份";
+        return <li key={record.revision}>
+          <div><strong>{title}</strong><span>第 {record.revision} 版</span></div>
+          <time dateTime={new Date(at).toISOString()}>{taipei.format(at)}</time>
+          <p>供應上限 {capacityLabel(record.previousCapacity)} → {capacityLabel(record.capacity)}
+            {kind==="restock"?" · 當時已占用 "+record.used+" 份":kind==="copy"?" · 來源 "+record.sourceDate:null}</p>
+        </li>;
+      })}
     </ol>}
     {current&&<div className="actions">
       <button className="outline" onClick={()=>{setCursors([null]);setReload(value=>value+1);}}>重新查詢紀錄</button>
@@ -109,8 +116,19 @@ function RestockRecords({date,dish}){
       {page?.nextBefore!=null&&<button className="outline" onClick={()=>setCursors(previous=>
         previous.at(-1)===before?[...previous,page.nextBefore]:previous)}>更早紀錄</button>}
       {page?.records.length>0&&<button className="outline" onClick={()=>downloadJson(
-        "hey-table-restock-"+date+"-"+dish.id+"-",page.capturedAt,page)}>下載這頁 JSON</button>}
+        (restocksOnly?"hey-table-restock-":"hey-table-limit-history-")+date+"-"+dish.id+"-",page.capturedAt,page)}>下載這頁 JSON</button>}
     </div>}
+  </>;
+}
+
+function LimitHistory({date,dish,revision}){
+  const [scope,setScope]=useState("all");
+  return <section aria-label={dish.name+"供應變更紀錄"}>
+    <label>紀錄範圍<select value={scope} onChange={event=>setScope(event.target.value)}>
+      <option value="all">所有變更</option><option value="restock">只看補貨</option>
+    </select></label>
+    {scope==="all"&&<p className="muted">手動儲存與跨日複製從紀錄啟用後開始保存。</p>}
+    <LimitRecords key={revision+":"+scope} date={date} dish={dish} restocksOnly={scope==="restock"}/>
   </section>;
 }
 
@@ -122,8 +140,8 @@ function LimitCard({date,dish,data,disabled,onWrite}){
     <p>已占用 {data.used} 份 · 剩餘 {remaining}</p>
     <LimitActions key={data.revision} date={date} dish={dish} data={data} disabled={disabled} onWrite={onWrite}/>
     <details className="limitRestock" onToggle={event=>setHistoryOpen(event.currentTarget.open)}>
-      <summary>查看補貨紀錄</summary>
-      {historyOpen&&<RestockRecords key={data.revision} date={date} dish={dish}/>}
+      <summary>查看供應變更紀錄</summary>
+      {historyOpen&&<LimitHistory date={date} dish={dish} revision={data.revision}/>}
     </details>
   </article>;
 }

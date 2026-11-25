@@ -11,7 +11,7 @@ const usedForLimit=`COALESCE((SELECT SUM(json_extract(line.value,'$.qty'))
   FROM orders JOIN json_each(orders.items) AS line
   WHERE ${suppliedWithin} AND json_extract(line.value,'$.id')=limits.dish),0)`;
 const restockReceiptColumns="date,dish,revision,quantity,previous_capacity AS previousCapacity,used,capacity,restocked_at AS restockedAt";
-const restockPageSize=25;
+const historyPageSize=25;
 
 const excessFor=items=>`SELECT limits.dish FROM daily_portion_limits AS limits
   JOIN json_each(${items}) AS requested ON json_extract(requested.value,'$.id')=limits.dish
@@ -62,13 +62,51 @@ export async function restockPortions(db,{date,dish,revision,quantity,operationI
 export async function restockHistory(db,date,dish,before){
   const {results}=await db.prepare(`SELECT ${restockReceiptColumns} FROM daily_portion_restocks
     WHERE date=? AND dish=?${before===null?"":" AND revision<?"} ORDER BY revision DESC LIMIT ?`)
-    .bind(date,dish,...(before===null?[]:[before]),restockPageSize+1).all();
-  const records=results.slice(0,restockPageSize);
-  return {date,dish,capturedAt:Date.now(),records,nextBefore:results.length>restockPageSize?records.at(-1).revision:null};
+    .bind(date,dish,...(before===null?[]:[before]),historyPageSize+1).all();
+  return historyPage(date,dish,results);
 }
 
-export async function copyPortionLimits(db,sourceDate,date,items){
-  const {results}=await db.prepare(`WITH plan AS MATERIALIZED (
+function historyPage(date,dish,results){
+  const records=results.slice(0,historyPageSize);
+  return {date,dish,capturedAt:Date.now(),records,nextBefore:results.length>historyPageSize?records.at(-1).revision:null};
+}
+
+export async function portionLimitHistory(db,date,dish,before){
+  const cursor=before===null?"":" AND revision<?";
+  const args=before===null?[date,dish]:[date,dish,before];
+  const {results}=await db.prepare(`SELECT revision,kind,previous_capacity AS previousCapacity,capacity,
+      source_date AS sourceDate,changed_at AS changedAt,NULL AS quantity,NULL AS used
+    FROM daily_portion_limit_changes WHERE date=? AND dish=?${cursor}
+    UNION ALL
+    SELECT revision,'restock',previous_capacity,capacity,NULL,restocked_at,quantity,used
+    FROM daily_portion_restocks WHERE date=? AND dish=?${cursor}
+    ORDER BY revision DESC LIMIT ?`).bind(...args,...args,historyPageSize+1).all();
+  return historyPage(date,dish,results);
+}
+
+function applyRecordedLimits(db,actionId){
+  return db.prepare(`INSERT INTO daily_portion_limits(date,dish,capacity,revision)
+    SELECT date,dish,capacity,revision FROM daily_portion_limit_changes WHERE action_id=?
+    ON CONFLICT(date,dish) DO UPDATE SET capacity=excluded.capacity,revision=excluded.revision
+    RETURNING dish,capacity,revision`).bind(actionId);
+}
+
+export async function changePortionLimit(db,{date,dish,capacity,revision},now){
+  const actionId=crypto.randomUUID();
+  const [,applied]=await db.batch([
+    db.prepare(`INSERT INTO daily_portion_limit_changes(date,dish,revision,action_id,kind,previous_capacity,capacity,changed_at)
+      SELECT ?,?,?,?,'manual',limits.capacity,?,? FROM (SELECT 1) AS anchor
+      LEFT JOIN daily_portion_limits AS limits ON limits.date=? AND limits.dish=?
+      WHERE COALESCE(limits.revision,0)=?`).bind(date,dish,revision+1,actionId,capacity,now,date,dish,revision),
+    applyRecordedLimits(db,actionId),
+  ]);
+  return applied.results[0];
+}
+
+export async function copyPortionLimits(db,sourceDate,date,items,now){
+  const actionId=crypto.randomUUID();
+  const [,applied]=await db.batch([
+    db.prepare(`WITH plan AS MATERIALIZED (
     SELECT json_extract(chosen.value,'$.dish') AS dish,
       json_extract(chosen.value,'$.sourceRevision') AS expectedSource,
       json_extract(chosen.value,'$.targetRevision') AS expectedTarget,
@@ -79,11 +117,12 @@ export async function copyPortionLimits(db,sourceDate,date,items){
     LEFT JOIN daily_portion_limits AS source ON source.date=? AND source.dish=json_extract(chosen.value,'$.dish')
     LEFT JOIN daily_portion_limits AS target ON target.date=? AND target.dish=json_extract(chosen.value,'$.dish')
   )
-  INSERT INTO daily_portion_limits(date,dish,capacity,revision)
-    SELECT ?,dish,capacity,targetRevision+1 FROM plan
+  INSERT INTO daily_portion_limit_changes(date,dish,revision,action_id,kind,previous_capacity,capacity,source_date,changed_at)
+    SELECT ?,dish,targetRevision+1,?,'copy',previousCapacity,capacity,?,? FROM plan
     WHERE NOT EXISTS (SELECT 1 FROM plan
-      WHERE sourceRevision<>expectedSource OR targetRevision<>expectedTarget OR capacity IS previousCapacity)
-  ON CONFLICT(date,dish) DO UPDATE SET capacity=excluded.capacity,revision=excluded.revision
-  RETURNING dish,capacity,revision`).bind(JSON.stringify(items),sourceDate,date,date).all();
-  return results;
+      WHERE sourceRevision<>expectedSource OR targetRevision<>expectedTarget OR capacity IS previousCapacity)`)
+      .bind(JSON.stringify(items),sourceDate,date,date,actionId,sourceDate,now),
+    applyRecordedLimits(db,actionId),
+  ]);
+  return applied.results;
 }

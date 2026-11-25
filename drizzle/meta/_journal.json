@@ -176,6 +176,13 @@
       "when": 1795568082440,
       "tag": "0024_daily_portion_restocks",
       "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "6",
+      "when": 1795570024962,
+      "tag": "0025_daily_portion_limit_changes",
+      "breakpoints": true
     }
   ]
 }

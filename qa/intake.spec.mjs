@@ -142,17 +142,21 @@ test("mobile restocking resumes a lost reply and preserves newer supply revision
     expect((await save(null,latest.revision)).ok()).toBe(true);
     await page.reload();
     await expect(card.getByText("已占用 "+before.used+" 份 · 剩餘 不限量")).toBeVisible();
+    await card.getByText("查看供應變更紀錄",{exact:true}).click();
+    const region=card.getByRole("region",{name:"海苔柴魚煎餃供應變更紀錄"});
+    const records=region.getByRole("listitem");
+    await expect(records.first()).toContainText("手動儲存");
+    await expect(records.first()).toContainText("供應上限 "+latest.capacity+" → 不限量");
+    await expect(records.nth(2)).toContainText("補貨 2 份");
     const historyResponse=page.waitForResponse(response=>{
       const url=new URL(response.url());
       return url.pathname===endpoint+"/restock"&&response.request().method()==="GET"&&url.searchParams.get("dish")===dish;
     });
-    await card.getByText("查看補貨紀錄",{exact:true}).click();
+    await region.getByLabel("紀錄範圍").selectOption("restock");
     const history=await (await historyResponse).json();
     expect(history.records.map(record=>record.revision)).toEqual([first.revision+1,first.revision]);
     expect(history.records[1]).toEqual(first);
     expect(history.nextBefore).toBeNull();
-    const region=card.getByRole("region",{name:"海苔柴魚煎餃補貨紀錄"});
-    const records=region.getByRole("listitem");
     await expect(records).toHaveCount(2);
     await expect(records.last()).toContainText("補貨 2 份");
     await expect(records.last()).toContainText("供應上限 0 → "+first.capacity+" · 當時已占用 "+before.used+" 份");
@@ -228,6 +232,12 @@ test("staff copy selected daily caps together and a stale source or destination 
   expect(finished.gyoza.capacity).toBe(copy.ok()?18:20);
   expect(finished.edamame.capacity).toBe(copy.ok()?8:2);
   expect((await read(sourceDate)).edamame.capacity).toBe(8);
+  const history=async dish=>(await (await request.get(endpoint+"/history?date="+date+"&dish="+dish,{headers:staff})).json()).records;
+  expect((await history("gyoza")).map(({kind,previousCapacity,capacity,sourceDate:from})=>[kind,previousCapacity,capacity,from]))
+    .toEqual([[copy.ok()?"copy":"manual",12,copy.ok()?18:20,copy.ok()?sourceDate:null],
+      ["copy",3,12,sourceDate],["manual",null,3,null]]);
+  expect((await history("edamame")).map(({kind,capacity})=>[kind,capacity]))
+    .toEqual(copy.ok()?[["copy",8],["manual",2]]:[["manual",2]]);
 });
 
 test("mobile guest keeps a draft through a pause and a second staff browser needs a fresh revision",async({browser,context,page,request})=>{

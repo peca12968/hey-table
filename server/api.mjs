@@ -4,7 +4,8 @@ import qrcode from "qrcode-generator";
 import {dishes, itemNoteLimit, numberOf, tables, transitions} from "../lib/menu.mjs";
 import {intakeLabels,intakeNotice} from "../lib/order-intake.mjs";
 import {businessDate,businessDayRange} from "../lib/business-day.mjs";
-import {copyPortionLimits,dailyLimits,exceededOrderPortions,exceededPortions,readRemaining,restockHistory,restockPortions,supplyTime} from "./daily-limits.mjs";
+import {changePortionLimit,copyPortionLimits,dailyLimits,exceededOrderPortions,exceededPortions,portionLimitHistory,
+  readRemaining,restockHistory,restockPortions,supplyTime} from "./daily-limits.mjs";
 import {expirePaymentHolds,noBlockingPayment,paymentHoldMs} from "./payment-holds.mjs";
 import {dailyTiming,dailyTimingRows} from "./daily-timing.mjs";
 import {kitchenOverdue} from "./kitchen-overdue.mjs";
@@ -259,11 +260,8 @@ export async function api(request, env) {
       (capacity!==null&&(!Number.isSafeInteger(capacity)||capacity<0))||
       !Number.isSafeInteger(revision)||revision<0||revision>=Number.MAX_SAFE_INTEGER)
       return fail("供應日期、餐點、份數或版本無效");
-    const {meta}=await db.prepare(`INSERT INTO daily_portion_limits(date,dish,capacity,revision)
-      SELECT ?,?,?,? WHERE COALESCE((SELECT revision FROM daily_portion_limits WHERE date=? AND dish=?),0)=?
-      ON CONFLICT(date,dish) DO UPDATE SET capacity=excluded.capacity,revision=excluded.revision`)
-      .bind(date,dish,capacity,revision+1,date,dish,revision).run();
-    return meta.changes?json({date,dish,capacity,revision:revision+1}):
+    const saved=await changePortionLimit(db,{date,dish,capacity,revision},Date.now());
+    return saved?json({date,...saved}):
       fail("供應上限已由其他店員更新，請重新載入後再儲存。",409);
   }
   if(path==="/api/kitchen/daily-limits/copy"&&method==="POST"){
@@ -279,11 +277,11 @@ export async function api(request, env) {
         return fail("請確認品項與其版本，且每個品項只能選一次。");
       chosen.add(item.dish);
     }
-    const limits=await copyPortionLimits(db,sourceDate,date,items);
+    const limits=await copyPortionLimits(db,sourceDate,date,items,Date.now());
     return limits.length?json({sourceDate,date,limits}):
       fail("來源或目的設定已變更，請重新讀取後核對。這次沒有套用任何品項。",409);
   }
-  if(path==="/api/kitchen/daily-limits/restock"&&method==="GET"){
+  if((path==="/api/kitchen/daily-limits/restock"||path==="/api/kitchen/daily-limits/history")&&method==="GET"){
     const dates=url.searchParams.getAll("date"),dishesRequested=url.searchParams.getAll("dish");
     const [date]=dates,[dish]=dishesRequested;
     const cursor=url.searchParams.getAll("before");
@@ -291,7 +289,7 @@ export async function api(request, env) {
     if(dates.length!==1||!businessDayRange(date)||dishesRequested.length!==1||!dishes.some(item=>item.id===dish)||
       cursor.length>1||(before!==null&&(!/^\d+$/.test(cursor[0])||!Number.isSafeInteger(before)||before<2)))
       return fail("請確認供應日期、餐點與查詢位置。");
-    return json(await restockHistory(db,date,dish,before));
+    return json(await (path.endsWith("/restock")?restockHistory:portionLimitHistory)(db,date,dish,before));
   }
   if(path==="/api/kitchen/daily-limits/restock"&&method==="POST"){
     const {date,dish,quantity,revision,operationId}=input;

@@ -106,6 +106,43 @@ test("staff restock history pages by revision without exposing operation IDs or 
   assert.deepEqual(empty.records,[]);
   assert.equal(empty.nextBefore,null);
 });
+test("supply migration retains old limits and merges existing restocks with new manual and copy history",async t=>{
+  const sourceDate="2026-11-24",date="2026-11-25",dish="gyoza";
+  const db=database((tag,sqlite)=>{
+    if(tag!=="0025_daily_portion_limit_changes")return;
+    const limit=sqlite.prepare("INSERT INTO daily_portion_limits(date,dish,capacity,revision) VALUES (?,?,?,?)");
+    limit.run(sourceDate,dish,11,1);
+    limit.run(date,dish,9,5);
+    sqlite.prepare(`INSERT INTO daily_portion_restocks
+      (date,dish,revision,operation_id,quantity,previous_capacity,used,capacity,restocked_at)
+      VALUES (?,?,4,?,2,5,1,7,1000)`).run(date,dish,crypto.randomUUID());
+  });
+  t.after(()=>db.sqlite.close());
+  const query="?date="+date+"&dish="+dish;
+  const call=(suffix,method="GET",data,staff=true)=>api(new Request("https://order.example/api/kitchen/daily-limits"+suffix,{
+    method,headers:staff?{Authorization:"Bearer test-staff","Content-Type":"application/json"}:{},
+    ...(data?{body:JSON.stringify(data)}:{}),
+  }),{DB:db,STAFF_KEY:"test-staff"});
+  assert.equal((await call("/history"+query,"GET",undefined,false)).status,403);
+  assert.equal((await (await call("?date="+date)).json()).limits[dish].capacity,9);
+  const manual=await call("","PATCH",{date,dish,capacity:null,revision:5});
+  assert.deepEqual(await manual.json(),{date,dish,capacity:null,revision:6});
+  const payload={sourceDate,date,items:[{dish,sourceRevision:1,targetRevision:6}]};
+  const copy=await call("/copy","POST",payload);
+  assert.deepEqual(await copy.json(),{sourceDate,date,limits:[{dish,capacity:11,revision:7}]});
+  assert.equal((await call("/copy","POST",payload)).status,409);
+  const {records,nextBefore}=await (await call("/history"+query)).json();
+  assert.ok(records.every(record=>Number.isSafeInteger(record.changedAt)));
+  assert.deepEqual(records.map(({changedAt,...record})=>record),[
+    {revision:7,kind:"copy",previousCapacity:null,capacity:11,sourceDate,quantity:null,used:null},
+    {revision:6,kind:"manual",previousCapacity:9,capacity:null,sourceDate:null,quantity:null,used:null},
+    {revision:4,kind:"restock",previousCapacity:5,capacity:7,sourceDate:null,quantity:2,used:1},
+  ]);
+  assert.equal(nextBefore,null);
+  const older=await (await call("/history"+query+"&before=7")).json();
+  assert.deepEqual(older.records,records.slice(1));
+  assert.equal((await (await call("/restock"+query)).json()).records[0].restockedAt,1000);
+});
 test("staff payment export matches both reconciliation tools without exporting customer fields",async t=>{
   const temp=mkdtempSync(join(tmpdir(),"hey-table-payment-snapshot-"));
   t.after(()=>rmSync(temp,{recursive:true,force:true}));

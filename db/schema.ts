@@ -86,6 +86,22 @@ export const dailyPortionLimits = sqliteTable("daily_portion_limits", {
   check("daily_portion_capacity",sql`${t.capacity} IS NULL OR ${t.capacity} >= 0`),
   check("daily_portion_revision",sql`${t.revision} > 0`),
 ]);
+export const dailyPortionLimitChanges = sqliteTable("daily_portion_limit_changes", {
+  date: text("date").notNull(),
+  dish: text("dish").notNull(),
+  revision: integer("revision").notNull(),
+  actionId: text("action_id").notNull(),
+  kind: text("kind",{enum:["manual","copy"]}).notNull(),
+  previousCapacity: integer("previous_capacity"),
+  capacity: integer("capacity"),
+  sourceDate: text("source_date"),
+  changedAt: integer("changed_at").notNull(),
+}, t=>[
+  primaryKey({columns:[t.date,t.dish,t.revision]}),
+  index("daily_portion_changes_action").on(t.actionId),
+  check("daily_portion_changes_kind",sql`(${t.kind}='manual' AND ${t.sourceDate} IS NULL) OR
+    (${t.kind}='copy' AND ${t.sourceDate} IS NOT NULL AND ${t.sourceDate}<>${t.date})`),
+]);
 export const dailyPortionRestocks = sqliteTable("daily_portion_restocks", {
   date: text("date").notNull(),
   dish: text("dish").notNull(),
