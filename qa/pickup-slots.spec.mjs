@@ -411,6 +411,7 @@ test("a mobile receipt preserves its booking across a full slot and retries one 
     created:first-3_600_000,paymentMethod:"cash",paymentEnv:"cash",paymentState:"unpaid",total:90};
   let full=false,attempt,readBack=false;
   const moved={...base,pickupSlot:next,pickupChanges:[{from:first,to:next,at:first-3_500_000}]};
+  await page.clock.setFixedTime(new Date(base.created));
   await page.setViewportSize({width:360,height:780});
   await page.route(url=>url.pathname==="/api/ticket",route=>route.fulfill({json:readBack?moved:base}));
   await page.route("**/api/pickup-slots",route=>route.fulfill({json:{slots:[
@@ -463,6 +464,7 @@ test("mobile staff find a booking by number, recover a full slot and reconcile a
   const change={from:first,to:next,at:first-2_400_000,actor:"staff"};
   const moved={...order,pickupSlot:next,pickupRevision:1,latestPickupChange:change};
   let closed=false,accepted=false;
+  await page.clock.setFixedTime(new Date(order.created));
   await page.setViewportSize({width:360,height:780});
   await page.addInitScript(()=>sessionStorage.setItem("he-ri-staff","local-test-kitchen"));
   await page.route("**/api/kitchen",route=>route.fulfill({json:[immediate,accepted?moved:order]}));
