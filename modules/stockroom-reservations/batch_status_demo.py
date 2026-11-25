@@ -209,12 +209,20 @@ def capture_batch_replacement(db):
         now = 503
         api.post("/reservations", headers={"Idempotency-Key": "hold-packaging"},
                  json={"sku": "WRAP-01", "quantity": 2}).raise_for_status()
+        def preview():
+            data = api.get(path + "/replacement-preview").raise_for_status().json()
+            return {"status": data["status"], "captured_at_ms": data["captured_at_ms"],
+                    "items": [{key: row[key] for key in ("sku", "expired_quantity", "available", "shortfall", "status")}
+                              for row in data["items"]]}
+
+        blocked = preview()
         before_conflict = api.get("/inventory").raise_for_status().json()
         headers = {"Idempotency-Key": "continue-kit-and-packaging"}
         shortage = api.post(path + "/replacement", headers=headers)
         after_conflict = api.get("/inventory").raise_for_status().json()
         missing = api.get(path + "/replacement")
         api.delete("/reservations/hold-packaging").raise_for_status()
+        ready = preview()
         before_commit = api.get("/inventory").raise_for_status().json()
         accepted = api.post(path + "/replacement", headers=headers)
         receipt = accepted.raise_for_status().json()
@@ -241,6 +249,7 @@ def capture_batch_replacement(db):
             "accepted_status": accepted.status_code, "replay_status": replay.status_code,
             "same_receipt": replay.json() == receipt == recovered, "created_at_ms": receipt["created_at_ms"],
             "expires_at_ms": receipt["expires_at_ms"], "items": items,
+            "preview": {"blocked": blocked, "ready": ready},
         }
 
 

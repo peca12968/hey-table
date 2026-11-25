@@ -21,7 +21,11 @@ def replace(client, batch="cart", request="continue"):
     return client.post(route(batch), headers={"Idempotency-Key": request})
 
 
-def test_batch_replacement_waits_for_all_holds_and_rolls_back_on_late_sku_shortage(tmp_path):
+def preview(client, batch="cart"):
+    return client.get(f"/reservation-batches/{batch}/replacement-preview")
+
+
+def test_batch_preview_shows_blockers_and_commit_rechecks_the_latest_availability(tmp_path):
     db = tmp_path / "warehouse.db"
     now = 100
     clock = lambda: now
@@ -39,13 +43,28 @@ def test_batch_replacement_waits_for_all_holds_and_rolls_back_on_late_sku_shorta
                            json={"expected_expires_at_ms": 105_000, "extend_seconds": 3}).status_code == 201
         now = 105
         assert replace(client, "missing").status_code == 404
+        assert preview(client, "missing").status_code == 404
+        active = preview(client)
+        assert active.headers["Cache-Control"] == "no-store"
+        assert active.json()["status"] == "active"
+        assert [(row["sku"], row["status"]) for row in active.json()["items"]] == [
+            ("DONE-01", "closed"), ("KIT-01", "ready"), ("WRAP-01", "active"),
+        ]
         assert replace(client).json() == {"detail": "Reservation batch still has active holds"}
         assert client.get(route()).status_code == 404
         now = 108
-        assert client.post("/reservations", headers={"Idempotency-Key": "other"}, json={
-            "sku": "WRAP-01", "quantity": 3,
-        }).status_code == 201
+        ready = preview(client).raise_for_status().json()
+        assert ready["status"] == "ready" and ready["captured_at_ms"] == 108_000
+        assert client.get(route()).status_code == 404
+        with TestClient(create_app(db, ttl_seconds=5, clock=clock)) as second:
+            assert second.post("/reservations", headers={"Idempotency-Key": "other"}, json={
+                "sku": "WRAP-01", "quantity": 3,
+            }).status_code == 201
         before = client.get("/inventory").json()
+        blocked = preview(client).raise_for_status().json()
+        assert blocked["status"] == "shortage" and blocked["replacement_batch_id"] is None
+        assert blocked["items"][-1] == {"source_id": wrap, "sku": "WRAP-01", "expired_quantity": 3,
+                                         "available": 0, "shortfall": 3, "status": "shortage", "replacement_id": None}
         conflict = replace(client)
         assert conflict.status_code == 409 and conflict.json() == {"detail": "WRAP-01: Insufficient stock"}
         assert client.get("/inventory").json() == before
@@ -70,6 +89,9 @@ def test_batch_replacement_waits_for_all_holds_and_rolls_back_on_late_sku_shorta
         assert [row["state"] for row in client.get("/reservation-batches/cart/status").json()["items"]] == [
             "fulfilled", "expired", "expired",
         ]
+        finished = preview(client).raise_for_status().json()
+        assert finished["status"] == "replaced" and finished["replacement_batch_id"] == receipt["batch_id"]
+        assert [row["replacement_id"] for row in finished["items"][1:]] == [row["id"] for row in receipt["items"]]
         assert replace(client, request="different").status_code == 409
 
     now = 109
@@ -116,6 +138,7 @@ def test_batch_and_single_replacement_serialize_without_leaving_partial_holds(tm
         assert first.get(f"/reservations/{kit}/replacement").status_code == (200 if batch_won else 404)
         assert first.get("/inventory").json()[0]["available"] == (18 if batch_won else 20)
         assert first.get("/inventory").json()[1]["available"] == 0
+        assert preview(first).json()["status"] == ("replaced" if batch_won else "item_replaced")
 
 
 def test_batch_replacement_upgrades_existing_db_and_rolls_back_if_receipt_fails(tmp_path):
@@ -130,6 +153,7 @@ def test_batch_replacement_upgrades_existing_db_and_rolls_back_if_receipt_fails(
     now = 105
     with TestClient(create_app(db, ttl_seconds=5, clock=clock), raise_server_exceptions=False) as upgraded:
         assert upgraded.delete("/reservation-batches/cancelled").status_code == 200
+        assert preview(upgraded, "cancelled").json()["status"] == "cancelled"
         assert replace(upgraded, "cancelled").status_code == 409
         store = Store(db)
         with store.transaction() as conn:
@@ -144,3 +168,23 @@ def test_batch_replacement_upgrades_existing_db_and_rolls_back_if_receipt_fails(
             conn.execute("DROP TRIGGER fail_header")
         assert replace(upgraded).status_code == 201
         assert upgraded.get("/inventory").json()[0]["available"] == 18
+
+
+def test_preview_lists_multiple_shortages_without_creating_reservations(tmp_path):
+    db = tmp_path / "blocked.db"
+    now = 100
+    with TestClient(create_app(db, ttl_seconds=5, clock=lambda: now)) as client:
+        with Store(db).transaction() as conn:
+            conn.execute("INSERT INTO products VALUES ('WRAP-01',4,4)")
+        create(client, [("KIT-01", 10), ("WRAP-01", 4)])
+        before_expiry = preview(client).json()
+        assert before_expiry["status"] == "active" and all(row["expired_quantity"] == 0 for row in before_expiry["items"])
+        now = 105
+        create(client, [("KIT-01", 19), ("WRAP-01", 3)], "other")
+        report = preview(client).raise_for_status().json()
+        assert report["status"] == "shortage"
+        assert [(row["sku"], row["expired_quantity"], row["available"], row["shortfall"]) for row in report["items"]] == [
+            ("KIT-01", 10, 1, 9), ("WRAP-01", 4, 1, 3),
+        ]
+        assert client.get(route()).status_code == 404
+        assert [row["available"] for row in client.get("/inventory").json()] == [1, 1]

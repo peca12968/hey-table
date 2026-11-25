@@ -75,6 +75,24 @@ class BatchReplacementReceipt(ReservationBatchReceipt):
     items: list[ReplacedBatchItem]
 
 
+class ReplacementPreviewItem(BaseModel):
+    source_id: str
+    sku: str
+    expired_quantity: int
+    available: int
+    shortfall: int
+    status: Literal["active", "replaced", "closed", "shortage", "ready"]
+    replacement_id: str | None
+
+
+class BatchReplacementPreview(BaseModel):
+    source_batch_id: str
+    captured_at_ms: int
+    status: Literal["cancelled", "active", "none_expired", "item_replaced", "shortage", "ready", "replaced"]
+    replacement_batch_id: str | None
+    items: list[ReplacementPreviewItem]
+
+
 class CancelledBatchItem(BaseModel):
     id: str
     sku: str
@@ -482,6 +500,11 @@ def create_app(path: Path, *, ttl_seconds=900, clock=time.time):
     def batch_replacement_receipt(batch_id: str, response: Response):
         response.headers["Cache-Control"] = "no-store"
         return store.get_batch_replacement(batch_id)
+
+    @app.get("/reservation-batches/{batch_id}/replacement-preview", response_model=BatchReplacementPreview)
+    def batch_replacement_preview(batch_id: str, response: Response):
+        response.headers["Cache-Control"] = "no-store"
+        return store.batch_replacement_preview(batch_id)
 
     @app.post("/reservations", response_model=Reservation, status_code=201,
               responses={200: {"model": Reservation, "description": "Idempotent replay"}})

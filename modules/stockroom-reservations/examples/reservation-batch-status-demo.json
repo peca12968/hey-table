@@ -369,6 +369,48 @@
         "before_commit": 2,
         "after_commit": 0
       }
-    ]
+    ],
+    "preview": {
+      "blocked": {
+        "status": "shortage",
+        "captured_at_ms": 503000,
+        "items": [
+          {
+            "sku": "KIT-01",
+            "expired_quantity": 2,
+            "available": 17,
+            "shortfall": 0,
+            "status": "ready"
+          },
+          {
+            "sku": "WRAP-01",
+            "expired_quantity": 2,
+            "available": 0,
+            "shortfall": 2,
+            "status": "shortage"
+          }
+        ]
+      },
+      "ready": {
+        "status": "ready",
+        "captured_at_ms": 503000,
+        "items": [
+          {
+            "sku": "KIT-01",
+            "expired_quantity": 2,
+            "available": 17,
+            "shortfall": 0,
+            "status": "ready"
+          },
+          {
+            "sku": "WRAP-01",
+            "expired_quantity": 2,
+            "available": 2,
+            "shortfall": 0,
+            "status": "ready"
+          }
+        ]
+      }
+    }
   }
 }

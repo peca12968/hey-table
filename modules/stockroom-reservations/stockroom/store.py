@@ -410,6 +410,57 @@ class Store:
         }
         return first["request_id"], receipt
 
+    def batch_replacement_plan(self, conn, batch_id):
+        members = self.reservation_batch_members(conn, batch_id)
+        if not members:
+            raise Missing("Unknown reservation batch")
+        available = {row["sku"]: row["available"] for row in self.products_for(conn, (row["sku"] for row in members))}
+        linked = {row["source_id"]: row["replacement_id"] for row in conn.execute("""
+            SELECT link.source_id,link.replacement_id FROM reservation_batch_items b
+            JOIN reservation_replacements link ON link.source_id=b.reservation_id WHERE b.batch_id=?
+        """, (batch_id,))}
+        items = []
+        for row in members:
+            sku, source_id = row["sku"], row["id"]
+            quantity = row["quantity"] - row["shipped"] - row["reduced"] if row["timed_out"] else 0
+            if sku not in available:
+                raise Missing(f"{sku}: Unknown SKU")
+            on_hand = available[sku]
+            shortfall = max(0, quantity - on_hand)
+            replacement_id = linked.get(source_id)
+            if row["state"] == "held":
+                status = "active"
+            elif replacement_id is not None:
+                status = "replaced"
+            elif not quantity:
+                status = "closed"
+            else:
+                status = "shortage" if shortfall else "ready"
+            items.append({"source_id": source_id, "sku": sku, "expired_quantity": quantity,
+                          "available": on_hand, "shortfall": shortfall, "status": status,
+                          "replacement_id": replacement_id})
+        cancelled = conn.execute("SELECT 1 FROM reservation_batch_cancellations WHERE batch_id=?", (batch_id,)).fetchone()
+        blocked = next((item for item in items if item["status"] in ("replaced", "shortage")), None)
+        if cancelled:
+            status = "cancelled"
+        elif any(item["status"] == "active" for item in items):
+            status = "active"
+        elif not any(item["expired_quantity"] for item in items):
+            status = "none_expired"
+        elif blocked:
+            status = "item_replaced" if blocked["status"] == "replaced" else "shortage"
+        else:
+            status = "ready"
+        return members, items, status, blocked
+
+    def batch_replacement_preview(self, batch_id):
+        with self.current_inventory() as (conn, now):
+            _, items, status, _ = self.batch_replacement_plan(conn, batch_id)
+            existing = self.batch_replacement_record(conn, batch_id)
+            return {"source_batch_id": batch_id, "captured_at_ms": now, "items": items,
+                    "status": "replaced" if existing else status,
+                    "replacement_batch_id": existing[1]["batch_id"] if existing else None}
+
     def replace_expired_batch(self, batch_id, request_id):
         with self.current_inventory() as (conn, now):
             existing = self.batch_replacement_record(conn, batch_id)
@@ -417,26 +468,26 @@ class Store:
                 if request_id != existing[0]:
                     raise Conflict("Reservation batch already has a replacement")
                 return existing[1], False
-            members = self.reservation_batch_members(conn, batch_id)
-            if not members:
-                raise Missing("Unknown reservation batch")
-            if conn.execute("SELECT 1 FROM reservation_batch_cancellations WHERE batch_id=?", (batch_id,)).fetchone():
-                raise Conflict("Reservation batch was cancelled")
-            if any(row["state"] == "held" for row in members):
-                raise Conflict("Reservation batch still has active holds")
-            expired = [row for row in members if row["timed_out"]]
-            if not expired:
-                raise Conflict("Reservation batch has no expired holds")
+            members, items, status, blocked = self.batch_replacement_plan(conn, batch_id)
+            if status != "ready":
+                messages = {
+                    "cancelled": "Reservation batch was cancelled",
+                    "active": "Reservation batch still has active holds",
+                    "none_expired": "Reservation batch has no expired holds",
+                    "item_replaced": "Reservation already has a replacement",
+                    "shortage": "Insufficient stock",
+                }
+                message = messages[status]
+                if status in ("item_replaced", "shortage"):
+                    message = f"{blocked['sku']}: {message}"
+                raise Conflict(message)
             replacement_batch = uuid4().hex
             expires_at_ms = now + self.ttl_ms
-            for row in expired:
-                try:
-                    if self.replacement_record(conn, row["id"]):
-                        raise Conflict("Reservation already has a replacement")
-                    # Individual request keys cannot contain a colon.
-                    key = self.create_replacement(conn, row, f"batch:{request_id}", now, expires_at_ms)
-                except (Missing, Conflict) as error:
-                    raise type(error)(f"{row['sku']}: {error}") from error
+            for row, item in zip(members, items, strict=True):
+                if item["status"] != "ready":
+                    continue
+                # Individual request keys cannot contain a colon.
+                key = self.create_replacement(conn, row, f"batch:{request_id}", now, expires_at_ms)
                 conn.execute("INSERT INTO reservation_batch_items VALUES (?,?,?)",
                              (replacement_batch, key, expires_at_ms))
             conn.execute("INSERT INTO reservation_batch_replacements VALUES (?,?,?,?)",
