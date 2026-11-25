@@ -1,4 +1,4 @@
-import {dailyCashReceipts} from "./cash-receipts.mjs";
+import {cashCorrectionsInRange,dailyCashReceipts} from "./cash-receipts.mjs";
 import {reconcileCash} from "../lib/cash-reconciliation.mjs";
 
 const versionFromRow=row=>({date:row.date,revision:row.revision,savedAt:row.saved_at,report:JSON.parse(row.snapshot)});
@@ -19,27 +19,28 @@ export async function cashCloseVersion(db,date,revision){
 }
 
 export async function saveCashClose(db,input,range,now,amounts){
-  const {date,revision,operationId,capturedAt,receiptCount}=input;
+  const {date,revision,operationId,capturedAt,receiptCount,correctionCount=0}=input;
   const [opening,adjustments,counted]=amounts;
   const readOperation=db.prepare("SELECT date,revision,saved_at,snapshot FROM cash_close_versions WHERE operation_id=?").bind(operationId);
   function replay(row){
     const saved=versionFromRow(row),match=saved.report.reconciliation;
     return saved.date===date&&saved.revision===revision+1&&saved.report.capturedAt===capturedAt&&
-      saved.report.totals.receipts===receiptCount&&match.opening===String(opening)&&
+      saved.report.totals.receipts===receiptCount&&(saved.report.correctionCount??0)===correctionCount&&match.opening===String(opening)&&
       match.adjustments===String(adjustments)&&match.counted===String(counted)?saved:null;
   }
   const already=await readOperation.first();
   if(already)return replay(already);
 
   const report=await dailyCashReceipts(db,date,range,capturedAt);
-  if(report.totals.receipts!==receiptCount)return null;
+  if(report.totals.receipts!==receiptCount||(report.correctionCount??0)!==correctionCount)return null;
   const reconciliation=reconcileCash(report.totals.net,opening,adjustments,counted);
   const [,lookup]=await db.batch([
     db.prepare(`INSERT INTO cash_close_versions(date,revision,operation_id,saved_at,snapshot)
       SELECT ?,?,?,?,? WHERE COALESCE((SELECT MAX(revision) FROM cash_close_versions WHERE date=?),0)=?
       AND (SELECT COUNT(*) FROM cash_receipts WHERE collected_at>=? AND collected_at<?)=?
+      AND (${cashCorrectionsInRange})=?
       ON CONFLICT DO NOTHING`).bind(date,revision+1,operationId,now,JSON.stringify({...report,reconciliation}),
-      date,revision,...range,receiptCount),
+      date,revision,...range,receiptCount,...range,correctionCount),
     readOperation,
   ]);
   return lookup.results[0]?replay(lookup.results[0]):null;

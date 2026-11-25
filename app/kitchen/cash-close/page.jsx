@@ -119,7 +119,7 @@ export default function CashClose(){
   async function save(reconciliation){
     if(saving||!report||(!operation&&!reconciliation))return;
     const payload=operation??{date,revision:current.versions[0]?.revision??0,operationId:crypto.randomUUID(),
-      capturedAt:report.capturedAt,receiptCount:report.totals.receipts,
+      capturedAt:report.capturedAt,receiptCount:report.totals.receipts,correctionCount:report.correctionCount??0,
       opening:reconciliation.opening,adjustments:reconciliation.adjustments,counted:reconciliation.counted};
     rememberPending(date,payload);
     setSavedCount({date,value:{opening:payload.opening,adjustments:payload.adjustments,counted:payload.counted}});
@@ -168,7 +168,8 @@ export default function CashClose(){
         {report.receipts.length===0?<p>這天沒有已登記的現金收款。</p>:<table aria-label="現金收款明細">
           <thead><tr><th scope="col">餐單</th><th scope="col">實收</th><th scope="col">找零</th><th scope="col">淨收</th></tr></thead>
           <tbody>{report.receipts.map(row=><tr key={row.orderId}>
-            <th scope="row">#{numberOf(row.orderId)} <small>{row.mode==="table"?"掃碼內用":"自取"} · <time dateTime={new Date(row.recordedAt).toISOString()}>{time.format(row.recordedAt)}</time></small></th>
+            <th scope="row">#{numberOf(row.orderId)} <small>{row.mode==="table"?"掃碼內用":"自取"} · <time dateTime={new Date(row.recordedAt).toISOString()}>{time.format(row.recordedAt)}</time>
+              {row.correctionRevision?(" · 已更正 "+row.correctionRevision+" 次"):""}</small></th>
             <td>{money(row.tendered)}</td><td>{money(row.change)}</td><td>{money(row.amount)}</td>
           </tr>)}</tbody>
         </table>}

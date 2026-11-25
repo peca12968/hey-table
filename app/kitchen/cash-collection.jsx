@@ -1,5 +1,6 @@
 import {useEffect,useRef,useState} from "react";
 import CashReceipt from "../cash-receipt";
+import CashCorrection from "./cash-correction";
 
 const draftKey=id=>"he-ri-cash-collection:"+id;
 
@@ -50,7 +51,7 @@ export default function CashCollection({order,disabled,submit,onChange}){
     }
   }
 
-  if(recorded)return <CashReceipt record={recorded}/>;
+  if(recorded)return <><CashReceipt record={recorded}/><CashCorrection id={order.id} record={recorded} disabled={disabled} onChange={onChange}/></>;
   return <details className="cashCollection" open={opened} onToggle={event=>setOpened(event.currentTarget.open)}>
     <summary>登記現金收款</summary>
     <form className="actions" onSubmit={confirm}>

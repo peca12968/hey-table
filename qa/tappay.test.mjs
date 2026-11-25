@@ -895,6 +895,59 @@ test("D1 saves immutable cash close versions, rejects stale receipts and replays
   assert.deepEqual(history.versions.map(version=>[version.revision,version.receipts]),[[2,2],[1,1]]);
 });
 
+test("cash corrections preserve net and old close versions and reject concurrently edited receipts",async t=>{
+  const host=await pickupWorkerOrigin(t);
+  const staff={Authorization:"Bearer fixture-staff"},token=crypto.randomUUID(),ticket={"X-Ticket":token};
+  const date="2026-11-25",query="?date="+date,corrections="/api/kitchen/cash-corrections",versions="/api/kitchen/cash-close-versions";
+  const call=(path,headers=staff)=>fetch(host+path,{headers});
+  const write=(path,body,headers=staff,method="POST")=>fetch(host+path,{method,
+    headers:{"Content-Type":"application/json",...headers},body:JSON.stringify(body)});
+  const captured=async()=>await (await call("/api/kitchen/cash-close"+query)).json();
+  const order=await (await write("/api/orders",{token,mode:"pickup",note:"",items:[{id:"sencha",qty:1}]},{})).json();
+  const id=order.id;
+  const advance=(from,to)=>write("/api/kitchen/status",{id,from,to},staff,"PATCH");
+  assert.equal((await advance("pending","preparing")).status,200);
+  assert.equal((await advance("preparing","ready")).status,200);
+  const collect={id,operationId:crypto.randomUUID(),expectedTotal:45,tendered:100};
+  const original=await (await write("/api/kitchen/cash-receipt",collect)).json();
+  assert.equal(original.cashReceipt.change,55);
+  const before=await captured();
+  const close=(report,revision)=>({date,revision,operationId:crypto.randomUUID(),capturedAt:report.capturedAt,
+    receiptCount:report.totals.receipts,correctionCount:report.correctionCount??0,opening:"20",adjustments:"0",counted:"65"});
+  const frozen=await (await write(versions,close(before,0))).json();
+  const correct=(tendered,revision=0)=>({id,tendered,revision,operationId:crypto.randomUUID(),reason:"覆核實收金額"});
+  assert.equal((await write(corrections,correct(50),{})).status,403);
+  assert.equal((await call(corrections+"?id="+id,{})).status,403);
+  assert.equal((await write(corrections,{...correct(50),reason:" "})).status,400);
+  assert.equal((await write(corrections,correct(40))).status,400);
+  assert.equal((await write(corrections,correct(100))).status,409);
+  assert.equal((await advance("ready","completed")).status,200);
+  const attempts=[correct(50),correct(200)];
+  const responses=await Promise.all(attempts.map(input=>write(corrections,input)));
+  assert.deepEqual(responses.map(response=>response.status).sort(),[200,409]);
+  const winner=responses.findIndex(response=>response.ok),first=await responses[winner].json();
+  assert.equal(first.cashReceipt.revision,1);
+  assert.equal(first.cashReceipt.tendered,attempts[winner].tendered);
+  const second=await (await write(corrections,correct(150,1))).json();
+  assert.equal(second.cashReceipt.change,105);
+  assert.deepEqual(await (await write(corrections,attempts[winner])).json(),first);
+  assert.deepEqual(await (await write("/api/kitchen/cash-receipt",collect)).json(),original);
+  const reader=await (await call("/api/ticket",ticket)).text();
+  assert.ok(!reader.includes("覆核實收金額"));
+  assert.deepEqual(JSON.parse(reader).cashReceipt,second.cashReceipt);
+  const history=await (await call(corrections+"?id="+id)).json();
+  assert.deepEqual(history.corrections.map(row=>[row.revision,row.previousTendered,row.tendered,row.reason]),
+    [[2,first.cashReceipt.tendered,150,"覆核實收金額"],[1,100,first.cashReceipt.tendered,"覆核實收金額"]]);
+  assert.equal((await write(versions,close(before,1))).status,409);
+  const latest=await captured();
+  assert.equal(latest.correctionCount,2);
+  assert.deepEqual(latest.totals,{receipts:1,net:"45",tendered:"150",change:"105"});
+  assert.equal(latest.receipts[0].correctionRevision,2);
+  assert.equal((await write(versions,close(latest,1))).status,200);
+  assert.deepEqual(await (await call(versions+query+"&revision=1")).json(),frozen);
+  assert.equal(frozen.report.totals.tendered,"100");
+});
+
 test("staff pickup roster groups one Taipei day and excludes private receipt and payment fields",async t=>{
   const db=database();
   t.after(()=>db.sqlite.close());

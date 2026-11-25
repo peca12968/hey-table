@@ -13,7 +13,7 @@ import {canReschedulePickup,capacityAtPickupSlot,editablePickupSlots,orderPortio
   pickupDayPaused,pickupDaySettings,pickupSlotUsage,pickupSlots,usedAtPickupSlot} from "./pickup-slots.mjs";
 import {pickupCalendar} from "./pickup-calendar.mjs";
 import {pickupRoster} from "./pickup-roster.mjs";
-import {cashReceiptColumn,collectCash,dailyCashReceipts} from "./cash-receipts.mjs";
+import {cashCorrectionHistory,cashReceiptColumn,collectCash,correctCashReceipt,dailyCashReceipts} from "./cash-receipts.mjs";
 import {cashCloseVersion,cashCloseVersions,saveCashClose} from "./cash-close-versions.mjs";
 import {cashAmount} from "../lib/cash-reconciliation.mjs";
 
@@ -168,6 +168,26 @@ export async function api(request, env) {
     if(!range)return fail("請選擇有效的收款登記日期。");
     return json(await dailyCashReceipts(db,date,range,Date.now()));
   }
+  if(path==="/api/kitchen/cash-corrections"&&method==="GET"){
+    const id=collectionId(url);
+    if(id===null)return fail("請輸入有效的餐號。");
+    return json({id,corrections:await cashCorrectionHistory(db,id)});
+  }
+  if(path==="/api/kitchen/cash-corrections"&&method==="POST"){
+    const {id,revision,operationId,tendered}=input;
+    const reason=typeof input.reason==="string"?input.reason.trim():"";
+    if(!Number.isSafeInteger(id)||id<1||!Number.isSafeInteger(revision)||revision<0||revision>=Number.MAX_SAFE_INTEGER||
+      typeof operationId!=="string"||!uuid.test(operationId)||!Number.isSafeInteger(tendered)||tendered<0||
+      !reason||reason.length>120)return fail("請確認餐號、版本、實收金額與更正原因。");
+    const {stored,receipt}=await correctCashReceipt(db,{id,revision,operationId,tendered,reason},Date.now());
+    if(stored?.orderId===id&&stored.revision===revision+1&&stored.tendered===tendered&&stored.reason===reason){
+      const {amount,collectedAt,correctedAt}=stored;
+      return json({id,cashReceipt:{amount,tendered,change:tendered-amount,collectedAt,revision:stored.revision,correctedAt}});
+    }
+    if(!receipt)return fail("找不到現金收款紀錄。",404);
+    if(tendered<receipt.amount)return fail("實收金額少於應收金額。");
+    return fail("現金紀錄已更新或金額相同，請重新核對。",409);
+  }
   if(path==="/api/kitchen/cash-close-versions"&&method==="GET"){
     const dates=url.searchParams.getAll("date"),[date]=dates;
     if(dates.length!==1||!businessDayRange(date))return fail("請選擇有效的收款登記日期。");
@@ -179,12 +199,13 @@ export async function api(request, env) {
     return saved?json(saved):fail("找不到這一版盤點。",404);
   }
   if(path==="/api/kitchen/cash-close-versions"&&method==="POST"){
-    const {date,revision,operationId,capturedAt,receiptCount,opening,adjustments,counted}=input;
+    const {date,revision,operationId,capturedAt,receiptCount,correctionCount=0,opening,adjustments,counted}=input;
     const now=Date.now(),range=businessDayRange(date);
     const amounts=[cashAmount(opening),cashAmount(adjustments,true),cashAmount(counted)];
     if(!range||date>businessDate(now)||!Number.isSafeInteger(revision)||revision<0||revision>=Number.MAX_SAFE_INTEGER||
       typeof operationId!=="string"||!uuid.test(operationId)||!Number.isSafeInteger(capturedAt)||capturedAt<=0||capturedAt>now||
-      !Number.isSafeInteger(receiptCount)||receiptCount<0||amounts.includes(null))return fail("請確認日期、版本與盤點金額。");
+      !Number.isSafeInteger(receiptCount)||receiptCount<0||!Number.isSafeInteger(correctionCount)||correctionCount<0||
+      amounts.includes(null))return fail("請確認日期、版本與盤點金額。");
     const saved=await saveCashClose(db,input,range,now,amounts);
     return saved?json(saved):fail("收款資料或盤點版本已更新，請重新擷取後再核對。",409);
   }

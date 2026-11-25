@@ -50,6 +50,19 @@ export const cashReceipts = sqliteTable("cash_receipts", {
   check("cash_receipt_amount",sql`${t.amount} >= 0 AND ${t.tendered} >= ${t.amount}`),
   index("cash_receipts_collected_at").on(t.collectedAt,t.orderId),
 ]);
+export const cashReceiptCorrections = sqliteTable("cash_receipt_corrections", {
+  orderId: integer("order_id").notNull().references(()=>cashReceipts.orderId),
+  revision: integer("revision").notNull(),
+  operationId: text("operation_id").notNull().unique(),
+  previousTendered: integer("previous_tendered").notNull(),
+  tendered: integer("tendered").notNull(),
+  reason: text("reason").notNull(),
+  correctedAt: integer("corrected_at").notNull(),
+}, t => [
+  primaryKey({columns:[t.orderId,t.revision]}),
+  check("cash_correction_revision",sql`${t.revision} > 0`),
+  check("cash_correction_amount",sql`${t.previousTendered} >= 0 AND ${t.tendered} >= 0 AND ${t.previousTendered} <> ${t.tendered}`),
+]);
 export const cashCloseVersions = sqliteTable("cash_close_versions", {
   date: text("date").notNull(),
   revision: integer("revision").notNull(),

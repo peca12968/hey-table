@@ -56,6 +56,22 @@ test("mobile cash collection previews change and resumes the same operation afte
   const saved=await (await request.get("/api/ticket",{headers:ticket})).json();
   expect(saved).toMatchObject({status:"completed",cashReceipt:{amount:45,tendered:100,change:55}});
   expect(saved.cashReceipt.operationId).toBeUndefined();
+  await page.goto("/kitchen?pickup="+id);
+  await page.getByText("更正現金收款",{exact:true}).click();
+  await page.getByLabel("更正後實收金額").fill("50");
+  const correct=page.getByRole("button",{name:"確認更正"});
+  await expect(correct).toBeDisabled();
+  await page.getByLabel("更正原因").fill("更正櫃台輸入");
+  await expect(page.getByText("更正後找零 NT$ 5",{exact:true})).toBeVisible();
+  await correct.click();
+  await expect(page.getByText("已保存第 1 版更正。")).toBeVisible();
+  const history=page.getByRole("list",{name:"現金更正紀錄"});
+  await expect(history).toContainText("NT$ 100 改為 NT$ 50");
+  await expect(history).toContainText("更正櫃台輸入");
+  await page.goto("/ticket#"+token);
+  await expect(cash).toContainText("NT$ 5");
+  await expect(cash).toContainText("收款金額已更正");
+  await expect(page.getByText("更正櫃台輸入")).toHaveCount(0);
 });
 
 test("mobile cash close reconciles a count and downloads the displayed snapshot before a new collection",async({page,request})=>{
