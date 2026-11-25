@@ -11,6 +11,27 @@ from execute import prepare, stockroom_client
 from replan import packing_snapshot
 
 
+RESERVATION_STATES = ("held", "expired", "released", "fulfilled")
+CONFLICTS = ("plan_conflict", "quantity_conflict")
+
+
+def box_status(references, dispatched):
+    amounts = {reference["quantity"] for reference in references}
+    if len(amounts) > 1:
+        return "plan_conflict"
+    if dispatched is None:
+        return "pending"
+    return "confirmed" if dispatched == references[0]["quantity"] else "quantity_conflict"
+
+
+def totals(boxes):
+    return {
+        "confirmed_units": sum(box["recorded_units"] for box in boxes if box["status"] == "confirmed"),
+        "pending_units": sum(box["plans"][0]["quantity"] for box in boxes if box["status"] == "pending"),
+        "conflicting_boxes": sum(box["status"] in CONFLICTS for box in boxes),
+    }
+
+
 def audit(plans, request):
     box_plans = {}
     reservation_ids = set()
@@ -35,7 +56,7 @@ def audit(plans, request):
     for reservation, entry in holds.items():
         statement = entry["snapshot"]
         state = statement["reservation"]["state"]
-        if state not in ("held", "expired", "released", "fulfilled"):
+        if state not in RESERVATION_STATES:
             raise ValueError(f"{reservation}: unknown reservation state")
         reservation_states[reservation] = state
         for shipment, box in indexed(statement["boxes"], "shipment_id").items():
@@ -45,29 +66,14 @@ def audit(plans, request):
             recorded[reservation, shipment] = (units, integer(box["restocked"], "restocked", high=units))
 
     boxes = []
-    confirmed_units = pending_units = conflicting_boxes = 0
     for pair, references in sorted(box_plans.items()):
         reservation, shipment = pair
-        amounts = {reference["quantity"] for reference in references}
         dispatched, restocked = recorded.get(pair, (None, None))
-        if len(amounts) > 1:
-            status = "plan_conflict"
-            conflicting_boxes += 1
-        elif dispatched is None:
-            status = "pending"
-            pending_units += references[0]["quantity"]
-        elif dispatched != references[0]["quantity"]:
-            status = "quantity_conflict"
-            conflicting_boxes += 1
-        else:
-            status = "confirmed"
-            confirmed_units += dispatched
         boxes.append({"reservation_id": reservation, "shipment_id": shipment, "plans": references,
                       "recorded_units": dispatched, "restocked_units": restocked,
-                      "reservation_state": reservation_states[reservation], "status": status})
+                      "reservation_state": reservation_states[reservation], "status": box_status(references, dispatched)})
     return {"format": "dispatch-window.audit.v1", "captured_at_ms": captured, "plan_count": len(plans),
-            "confirmed_units": confirmed_units, "pending_units": pending_units,
-            "conflicting_boxes": conflicting_boxes, "boxes": boxes}
+            **totals(boxes), "boxes": boxes}
 
 
 def main(argv=None):

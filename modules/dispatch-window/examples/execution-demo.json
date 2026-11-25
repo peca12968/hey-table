@@ -698,6 +698,347 @@
           "status": "quantity_conflict"
         }
       ]
+    },
+    "after_returns": {
+      "format": "dispatch-window.audit.v1",
+      "captured_at_ms": 114000,
+      "plan_count": 2,
+      "confirmed_units": 9,
+      "pending_units": 0,
+      "conflicting_boxes": 0,
+      "boxes": [
+        {
+          "reservation_id": "B",
+          "shipment_id": "B1",
+          "plans": [
+            {
+              "plan": 1,
+              "quantity": 2
+            }
+          ],
+          "recorded_units": 2,
+          "restocked_units": 1,
+          "reservation_state": "fulfilled",
+          "status": "confirmed"
+        },
+        {
+          "reservation_id": "B",
+          "shipment_id": "B2",
+          "plans": [
+            {
+              "plan": 1,
+              "quantity": 2
+            }
+          ],
+          "recorded_units": 2,
+          "restocked_units": 0,
+          "reservation_state": "fulfilled",
+          "status": "confirmed"
+        },
+        {
+          "reservation_id": "C",
+          "shipment_id": "C1",
+          "plans": [
+            {
+              "plan": 1,
+              "quantity": 3
+            }
+          ],
+          "recorded_units": 3,
+          "restocked_units": 0,
+          "reservation_state": "fulfilled",
+          "status": "confirmed"
+        },
+        {
+          "reservation_id": "D",
+          "shipment_id": "D1",
+          "plans": [
+            {
+              "plan": 1,
+              "quantity": 2
+            },
+            {
+              "plan": 2,
+              "quantity": 2
+            }
+          ],
+          "recorded_units": 2,
+          "restocked_units": 0,
+          "reservation_state": "fulfilled",
+          "status": "confirmed"
+        }
+      ]
+    },
+    "differences": {
+      "movement": {
+        "format": "dispatch-window.audit-difference.v1",
+        "before_ms": 112000,
+        "after_ms": 114000,
+        "comparable_boxes": 4,
+        "added_boxes": 0,
+        "removed_boxes": 0,
+        "new_dispatched_units": 2,
+        "new_restocked_units": 1,
+        "resolved_conflicts": 0,
+        "new_conflicts": 0,
+        "changes": [
+          {
+            "reservation_id": "B",
+            "shipment_id": "B1",
+            "before": {
+              "plans": [
+                {
+                  "plan": 1,
+                  "quantity": 2
+                }
+              ],
+              "recorded_units": 2,
+              "restocked_units": 0,
+              "reservation_state": "fulfilled",
+              "status": "confirmed"
+            },
+            "after": {
+              "plans": [
+                {
+                  "plan": 1,
+                  "quantity": 2
+                }
+              ],
+              "recorded_units": 2,
+              "restocked_units": 1,
+              "reservation_state": "fulfilled",
+              "status": "confirmed"
+            },
+            "dispatched_delta": 0,
+            "restocked_delta": 1
+          },
+          {
+            "reservation_id": "D",
+            "shipment_id": "D1",
+            "before": {
+              "plans": [
+                {
+                  "plan": 1,
+                  "quantity": 2
+                },
+                {
+                  "plan": 2,
+                  "quantity": 2
+                }
+              ],
+              "recorded_units": null,
+              "restocked_units": null,
+              "reservation_state": "held",
+              "status": "pending"
+            },
+            "after": {
+              "plans": [
+                {
+                  "plan": 1,
+                  "quantity": 2
+                },
+                {
+                  "plan": 2,
+                  "quantity": 2
+                }
+              ],
+              "recorded_units": 2,
+              "restocked_units": 0,
+              "reservation_state": "fulfilled",
+              "status": "confirmed"
+            },
+            "dispatched_delta": 2,
+            "restocked_delta": 0
+          }
+        ]
+      },
+      "corrected": {
+        "format": "dispatch-window.audit-difference.v1",
+        "before_ms": 113000,
+        "after_ms": 114000,
+        "comparable_boxes": 4,
+        "added_boxes": 0,
+        "removed_boxes": 0,
+        "new_dispatched_units": 0,
+        "new_restocked_units": 1,
+        "resolved_conflicts": 1,
+        "new_conflicts": 0,
+        "changes": [
+          {
+            "reservation_id": "B",
+            "shipment_id": "B1",
+            "before": {
+              "plans": [
+                {
+                  "plan": 1,
+                  "quantity": 2
+                }
+              ],
+              "recorded_units": 2,
+              "restocked_units": 0,
+              "reservation_state": "fulfilled",
+              "status": "confirmed"
+            },
+            "after": {
+              "plans": [
+                {
+                  "plan": 1,
+                  "quantity": 2
+                }
+              ],
+              "recorded_units": 2,
+              "restocked_units": 1,
+              "reservation_state": "fulfilled",
+              "status": "confirmed"
+            },
+            "dispatched_delta": 0,
+            "restocked_delta": 1
+          },
+          {
+            "reservation_id": "D",
+            "shipment_id": "D1",
+            "before": {
+              "plans": [
+                {
+                  "plan": 1,
+                  "quantity": 2
+                },
+                {
+                  "plan": 2,
+                  "quantity": 1
+                }
+              ],
+              "recorded_units": 2,
+              "restocked_units": 0,
+              "reservation_state": "fulfilled",
+              "status": "plan_conflict"
+            },
+            "after": {
+              "plans": [
+                {
+                  "plan": 1,
+                  "quantity": 2
+                },
+                {
+                  "plan": 2,
+                  "quantity": 2
+                }
+              ],
+              "recorded_units": 2,
+              "restocked_units": 0,
+              "reservation_state": "fulfilled",
+              "status": "confirmed"
+            },
+            "dispatched_delta": 0,
+            "restocked_delta": 0
+          }
+        ]
+      },
+      "expanded": {
+        "format": "dispatch-window.audit-difference.v1",
+        "before_ms": 113000,
+        "after_ms": 114000,
+        "comparable_boxes": 1,
+        "added_boxes": 3,
+        "removed_boxes": 0,
+        "new_dispatched_units": 0,
+        "new_restocked_units": 0,
+        "resolved_conflicts": 1,
+        "new_conflicts": 0,
+        "changes": [
+          {
+            "reservation_id": "B",
+            "shipment_id": "B1",
+            "before": null,
+            "after": {
+              "plans": [
+                {
+                  "plan": 1,
+                  "quantity": 2
+                }
+              ],
+              "recorded_units": 2,
+              "restocked_units": 1,
+              "reservation_state": "fulfilled",
+              "status": "confirmed"
+            },
+            "dispatched_delta": null,
+            "restocked_delta": null
+          },
+          {
+            "reservation_id": "B",
+            "shipment_id": "B2",
+            "before": null,
+            "after": {
+              "plans": [
+                {
+                  "plan": 1,
+                  "quantity": 2
+                }
+              ],
+              "recorded_units": 2,
+              "restocked_units": 0,
+              "reservation_state": "fulfilled",
+              "status": "confirmed"
+            },
+            "dispatched_delta": null,
+            "restocked_delta": null
+          },
+          {
+            "reservation_id": "C",
+            "shipment_id": "C1",
+            "before": null,
+            "after": {
+              "plans": [
+                {
+                  "plan": 1,
+                  "quantity": 3
+                }
+              ],
+              "recorded_units": 3,
+              "restocked_units": 0,
+              "reservation_state": "fulfilled",
+              "status": "confirmed"
+            },
+            "dispatched_delta": null,
+            "restocked_delta": null
+          },
+          {
+            "reservation_id": "D",
+            "shipment_id": "D1",
+            "before": {
+              "plans": [
+                {
+                  "plan": 1,
+                  "quantity": 1
+                }
+              ],
+              "recorded_units": 2,
+              "restocked_units": 0,
+              "reservation_state": "fulfilled",
+              "status": "quantity_conflict"
+            },
+            "after": {
+              "plans": [
+                {
+                  "plan": 1,
+                  "quantity": 2
+                },
+                {
+                  "plan": 2,
+                  "quantity": 2
+                }
+              ],
+              "recorded_units": 2,
+              "restocked_units": 0,
+              "reservation_state": "fulfilled",
+              "status": "confirmed"
+            },
+            "dispatched_delta": 0,
+            "restocked_delta": 0
+          }
+        ]
+      }
     }
   }
 }

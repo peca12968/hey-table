@@ -13,6 +13,7 @@ from tempfile import TemporaryDirectory
 from fastapi.testclient import TestClient
 
 from audit import audit
+from compare_audits import compare_audits
 from execute import execute
 from replan import replan
 
@@ -101,12 +102,27 @@ def execution_demo(client, clock, report, manifest):
             for result in (plan_conflict, stock_conflict)] == [(1, "plan_conflict", 2), (1, "quantity_conflict", 2)]
     final_inventory = client.get("/inventory").json()
     assert final_inventory == [{"sku": "KIT-01", "capacity": 11, "available": 11}]
+    clock[0] = 114.0
+    returned = client.post("/reservations/B/fulfillments/B1/returns",
+                           headers={"Idempotency-Key": "audit-return-B1"}, json={"quantity": 1})
+    assert returned.status_code == 201
+    after_returns = audit([report, next_plan], request)
+    movement = compare_audits(before_audit, after_returns)
+    corrected = compare_audits(plan_conflict, after_returns)
+    expanded = compare_audits(stock_conflict, after_returns)
+    assert (movement["new_dispatched_units"], movement["new_restocked_units"]) == (2, 1)
+    assert [change["shipment_id"] for change in movement["changes"]] == ["B1", "D1"]
+    assert (corrected["resolved_conflicts"], corrected["new_dispatched_units"], corrected["new_restocked_units"]) == (1, 0, 1)
+    assert (expanded["added_boxes"], expanded["comparable_boxes"], expanded["new_restocked_units"]) == (3, 1, 0)
+    assert client.get("/inventory").json() == [{"sku": "KIT-01", "capacity": 12, "available": 12}]
     return {"format": "dispatch-window.execution-demo.v1", "start_ms": report["start_ms"],
             "stages": stages, "attempts": first_attempts, "inventory_after": with_inventory[0],
             "next_truck": {"plan": next_plan, "execution": sent, "first_truck_review": old_plan,
                            "inventory_after": final_inventory[0]},
             "audit": {"format": "dispatch-window.audit-demo.v1", "before": before_audit, "after": after_audit,
-                      "plan_conflict": plan_conflict, "stock_conflict": stock_conflict}}
+                      "plan_conflict": plan_conflict, "stock_conflict": stock_conflict,
+                      "after_returns": after_returns, "differences": {"movement": movement, "corrected": corrected,
+                                                                    "expanded": expanded}}}
 
 
 def demo(stockroom, stations=1, delayed=False, *, paused=False, restricted=False, execute_plan=False):
