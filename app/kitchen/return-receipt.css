@@ -12,3 +12,7 @@
 .returnQuote dl { margin: 0; }
 .returnQuote dl div { display: flex; flex-wrap: wrap; justify-content: space-between; gap: .25rem .8rem; padding-top: .5rem; }
 .returnQuote dd { font-weight: 700; margin: 0; }
+.returnQuote dl + button { margin-top: .7rem; }
+.returnQuoteHistory ol { padding-left: 1.35rem; }
+.returnQuoteHistory li { padding-block: .35rem; }
+.returnQuoteHistory p { margin: .3rem 0; }

@@ -14,7 +14,7 @@ import {applyDemoMigrations} from "../scripts/apply-demo-migrations.mjs";
 import {bookablePickupSlots} from "../lib/pickup-slots.mjs";
 import {stationReview,stationReviewDigest} from "../lib/kitchen-timing.mjs";
 import {cartShareLink,readCartShare,readCartShareAddress} from "../lib/cart-share.mjs";
-import {quoteReturn,returnLots} from "../modules/receipt-returns/quote.mjs";
+import {quoteReturn,remainingReturnLots,returnLots} from "../modules/receipt-returns/quote.mjs";
 
 const env={TAPPAY_MODE:"sandbox",TAPPAY_APP_ID:"123",TAPPAY_APP_KEY:"test-public",TAPPAY_PARTNER_KEY:"test-only",
   TAPPAY_SITE_ORIGIN:"https://order.example",TAPPAY_NOTIFY_URL:"https://notify.example/api/payments/notify"};
@@ -53,13 +53,20 @@ test("partial-return quotes recover frozen price lots and reject inconsistent re
     {dish:"gyoza",bundle:null,qty:1,unit:85,amount:85},
     {dish:"gyoza",bundle:"chicken-gyoza",qty:1,unit:72,amount:72},
   ],amount:157,remainingValue:188});
+  const first=returns(["gyoza",1]);
+  const following=remainingReturnLots(pricing,[first]);
+  assert.equal(quoteReturn(following,new Map([["gyoza",1]])).amount,72);
+  assert.throws(()=>remainingReturnLots(pricing,[first,first]),/計價資料不完整/);
+  assert.equal(returns(["gyoza",1]).amount,85);
   assert.equal(returns(["sencha",1],["gyoza",2],["oyakodon",1]).remainingValue,0);
   assert.throws(()=>returns(["gyoza",3]),/超出原單/);
   assert.throws(()=>returns(["wrong-dish",1]),/超出原單/);
   assert.throws(()=>returns(["gyoza",0]),/正整數/);
   assert.throws(()=>returns(),/至少/);
   const plain=returnLots({items:[{id:"legacy_free",price:0,qty:2},{id:"legacy_tea",price:38,qty:1}],total:38});
-  assert.equal(quoteReturn(plain,new Map([["legacy_free",1]])).amount,0);
+  const free=quoteReturn(plain,new Map([["legacy_free",2]]));
+  assert.equal(free.amount,0);
+  assert.throws(()=>quoteReturn(remainingReturnLots(plain,[free]),new Map([["legacy_free",1]])),/超出原單/);
   assert.equal(quoteReturn(plain,new Map([["legacy_tea",1]])).amount,38);
   for(const alter of [
     value=>value.total++,

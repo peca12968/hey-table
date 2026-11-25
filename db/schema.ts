@@ -217,3 +217,15 @@ export const stationBatchReceipts = sqliteTable("station_batch_receipts", {
   index("station_batch_receipts_day").on(t.recordedAt,t.operationId),
   index("station_batch_receipts_station_day").on(t.station,t.recordedAt,t.operationId),
 ]);
+
+export const returnQuoteEntries = sqliteTable("return_quote_entries", {
+  orderId: integer("order_id").notNull().references(()=>orders.id),
+  revision: integer("revision").notNull(),
+  operationId: text("operation_id").notNull().unique(),
+  selection: text("selection").notNull(),
+  quote: text("quote").notNull(),
+  recordedAt: integer("recorded_at").notNull(),
+}, t => [
+  primaryKey({columns:[t.orderId,t.revision]}),
+  check("return_quote_revision",sql`${t.revision} > 0`),
+]);

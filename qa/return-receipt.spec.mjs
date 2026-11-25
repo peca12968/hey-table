@@ -122,3 +122,83 @@ test("staff finds an archived combo receipt on mobile and imports its download i
   expect(after).toEqual(before);
   expect(after.paymentState).toBe("paid");
 });
+
+function combo(){
+  return {mode:"pickup",note:"",items:[{id:"oyakodon",qty:1},{id:"gyoza",qty:2},{id:"sencha",qty:1}],
+    paymentMethod:"px_pay_plus",comboVersion:"demo-v1",expectedTotal:345};
+}
+
+test("the D1 quote ledger guards overlapping entries, stale amounts and exact retries",async({request})=>{
+  const {ticket,token}=await place(request,combo());
+  const ledgerUrl=endpoint+"?"+new URLSearchParams({id:String(ticket.id),ledger:"1"});
+  const original=await (await request.get("/api/ticket",{headers:{"X-Ticket":token}})).json();
+  expect((await request.get(ledgerUrl)).status()).toBe(403);
+  const view=async()=>(await request.get(ledgerUrl,{headers:staff})).json();
+  expect((await view()).ledger).toEqual({revision:0,records:[]});
+  const payload={id:ticket.id,revision:0,amount:85,operationId:randomUUID(),items:[{id:"gyoza",qty:1}]};
+  const submit=data=>request.post(endpoint,{headers:staff,data});
+  expect((await request.post(endpoint,{data:payload})).status()).toBe(403);
+  expect((await submit({...payload,items:[payload.items[0],payload.items[0]]})).status()).toBe(400);
+  const forms=[payload,{...payload,operationId:randomUUID()}];
+  const responses=await Promise.all(forms.map(submit));
+  expect(responses.map(res=>res.status()).sort()).toEqual([200,409]);
+  const winner=responses[0].ok()?0:1;
+  const saved=await responses[winner].json();
+  expect(saved).toMatchObject({revision:1,amount:85,remainingValue:260,
+    lines:[{dish:"gyoza",bundle:null,qty:1,unit:85,amount:85}]});
+  expect(await (await submit(forms[winner])).json()).toEqual(saved);
+  expect((await submit({...forms[winner],items:[{id:"gyoza",qty:2}]})).status()).toBe(409);
+  const second={...payload,revision:1,operationId:randomUUID()};
+  expect((await submit(second)).status()).toBe(409);
+  const renewed=await submit({...second,amount:72});
+  expect(renewed.status()).toBe(200);
+  const next=await renewed.json();
+  expect(next).toMatchObject({revision:2,amount:72,remainingValue:188,
+    lines:[{dish:"gyoza",bundle:"chicken-gyoza",qty:1,unit:72,amount:72}]});
+  expect((await submit({...payload,revision:2,operationId:randomUUID()})).status()).toBe(400);
+  expect((await view()).ledger).toEqual({revision:2,records:[saved,next]});
+  expect(await (await request.get("/api/ticket",{headers:{"X-Ticket":token}})).json()).toEqual(original);
+});
+
+test("mobile staff recover a lost quote receipt and continue from the saved portions after reloading",async({page,request})=>{
+  const {ticket}=await place(request,combo());
+  await page.setViewportSize({width:360,height:780});
+  await page.addInitScript(()=>sessionStorage.setItem("he-ri-staff","local-test-kitchen"));
+  const details=page.getByRole("region",{name:"部分退餐試算"}),result=details.getByRole("region",{name:"本次退餐試算"});
+  async function openReceipt(){
+    await page.getByText("匯出退餐試算收據",{exact:true}).click();
+    await page.getByRole("textbox",{name:"取餐號碼",exact:true}).fill(String(ticket.id));
+    await page.getByRole("button",{name:"查詢計價明細"}).click();
+  }
+  async function preview(){
+    await details.getByRole("textbox",{name:/海苔柴魚煎餃退餐份數/}).fill("1");
+    await details.getByRole("button",{name:"試算退餐金額"}).click();
+  }
+  await page.goto("/kitchen");
+  await openReceipt();
+  await preview();
+  await expect(result).toContainText("NT$ 85");
+  let originally;
+  await page.route("**"+endpoint,async route=>{
+    originally=route.request().postDataJSON();
+    expect((await route.fetch()).status()).toBe(200);
+    await route.abort();
+  },{times:1});
+  await result.getByRole("button",{name:"記入試算紀錄"}).click();
+  await expect(details.getByRole("alert")).toHaveText("尚未收到登記結果，請重試同一筆試算。");
+  const resent=page.waitForRequest(req=>req.method()==="POST"&&new URL(req.url()).pathname===endpoint);
+  await result.getByRole("button",{name:"重試登記同一筆"}).click();
+  expect((await resent).postDataJSON()).toEqual(originally);
+  await expect(details.getByRole("status")).toHaveText("已記入第 1 筆試算。");
+  await page.reload();
+  await openReceipt();
+  await expect(details.getByText("第 1 筆 · NT$ 85")).toBeVisible();
+  await expect(details.getByText("原單 2 份 · 可試算 1 份")).toBeVisible();
+  await preview();
+  await expect(result).toContainText("NT$ 72");
+  await expect(result).toContainText("NT$ 188");
+  await result.getByRole("button",{name:"記入試算紀錄"}).click();
+  await expect(details.getByText("第 2 筆 · NT$ 72")).toBeVisible();
+  await expect(details.getByRole("textbox",{name:/海苔柴魚煎餃退餐份數/})).toBeDisabled();
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBe(360);
+});

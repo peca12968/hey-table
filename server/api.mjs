@@ -24,6 +24,7 @@ import {pickupWeek} from "./pickup-week.mjs";
 import {cashCorrectionHistory,cashReceiptColumn,collectCash,correctCashReceipt,dailyCashReceipts} from "./cash-receipts.mjs";
 import {cashCloseVersion,cashCloseVersions,saveCashClose} from "./cash-close-versions.mjs";
 import {cashAmount} from "../lib/cash-reconciliation.mjs";
+import {readReturnReceipt,recordReturnQuote} from "./return-ledger.mjs";
 
 const json = (value, status=200) => Response.json(value,{status,headers:{"Cache-Control":"no-store"}});
 const fail = (message,status=400) => json({error:message},status);
@@ -949,12 +950,22 @@ export async function api(request, env) {
   }
   if (path === "/api/kitchen/return-receipt" && method === "GET") {
     const id = collectionId(url);
-    if (id === null) return fail("請輸入有效的取餐號碼");
-    const row = await db.prepare("SELECT id,created,items,total,combo_quote FROM orders WHERE id=?").bind(id).first();
-    if (!row) return fail("找不到這個取餐號碼",404);
-    const items = JSON.parse(row.items).map(({id,name,price,qty}) => ({id,name,price,qty}));
-    return json({id:row.id, created:row.created, items, total:row.total,
-      ...(row.combo_quote ? {combo:JSON.parse(row.combo_quote)} : {})});
+    if(id===null||url.searchParams.getAll("id").length!==1)return fail("請輸入有效的取餐號碼");
+    const ticket=await readReturnReceipt(db,id,url.searchParams.get("ledger")==="1");
+    return ticket?json(ticket):fail("找不到這個取餐號碼",404);
+  }
+  if(path==="/api/kitchen/return-receipt"&&method==="POST"){
+    const {id,revision,operationId,items,amount}=input;
+    if(!Number.isSafeInteger(id)||id<1||!Number.isSafeInteger(revision)||revision<0||revision>=Number.MAX_SAFE_INTEGER||
+      typeof operationId!=="string"||!uuid.test(operationId)||!Number.isSafeInteger(amount)||amount<0||
+      !Array.isArray(items)||!items.length||items.length>24||
+      items.some(item=>!item||typeof item.id!=="string"||!item.id.trim()||item.id.length>100||!Number.isSafeInteger(item.qty)||item.qty<1)||
+      new Set(items.map(item=>item.id)).size!==items.length)return fail("請確認餐號、份數及試算版本。");
+    const result=await recordReturnQuote(db,{id,revision,operationId:operationId.toLowerCase(),items,amount},Date.now());
+    if(result.kind==="saved")return json(result.entry);
+    if(result.kind==="missing")return fail("找不到這個取餐號碼",404);
+    if(result.kind==="invalid")return fail(result.message);
+    return fail("試算紀錄已更新，請重新讀取後試算。",409);
   }
   if (path === "/api/kitchen/payment-snapshot" && method === "GET") {
     const environments = url.searchParams.getAll("environment");

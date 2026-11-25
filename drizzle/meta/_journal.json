@@ -274,6 +274,13 @@
       "when": 1795604099687,
       "tag": "0038_station_batch_history_indexes",
       "breakpoints": true
+    },
+    {
+      "idx": 39,
+      "version": "6",
+      "when": 1795608298670,
+      "tag": "0039_return_quote_entries",
+      "breakpoints": true
     }
   ]
 }
