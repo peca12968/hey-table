@@ -4,6 +4,7 @@ import {Header,Footer,request} from "../../shared";
 import {businessDate} from "../../../lib/business-day.mjs";
 import {pickupRosterPath,pickupWindow} from "../../../lib/pickup-slots.mjs";
 import BatchSlotLimits from "./batch-slot-limits";
+import PickupLimitHistory from "./limit-history";
 import "./slots.css";
 
 const endpoint="/api/kitchen/pickup-slots";
@@ -92,6 +93,8 @@ export default function PickupSlotLimits(){
       </div>
     </section>}
     {current&&<BatchSlotLimits key={current.date} snapshot={current} busy={busy} save={save}/>}
+    {current&&<PickupLimitHistory key={"history-"+current.date} date={current.date} defaultCapacity={current.defaultCapacity}
+      revision={revision} staffHeaders={staffHeaders}/>}
     {current&&rows.length===0&&<p role="status">這天目前沒有可調整的時段。</p>}
     {current&&rows.length>0&&<div className="pickupLimitGrid">
       {rows.map(slot=><SlotLimit key={slot.start+":"+slot.revision} slot={slot} date={current.date} defaultCapacity={current.defaultCapacity} busy={busy}

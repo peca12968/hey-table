@@ -138,6 +138,17 @@ export const pickupSlotLimits = sqliteTable("pickup_slot_limits", {
   check("pickup_slot_limit_capacity",sql`${t.capacity} IS NULL OR ${t.capacity} >= 0`),
   check("pickup_slot_limit_revision",sql`${t.revision} > 0`),
 ]);
+export const pickupLimitEvents = sqliteTable("pickup_limit_events", {
+  id: integer("id").primaryKey({autoIncrement:true}),
+  operationId: text("operation_id").notNull().unique(),
+  date: text("date").notNull(),
+  changedAt: integer("changed_at").notNull(),
+  kind: text("kind").notNull(),
+  changes: text("changes").notNull(),
+}, t => [
+  check("pickup_limit_event_kind",sql`${t.kind} IN ('slot','batch','day')`),
+  index("pickup_limit_events_date").on(t.date,t.id),
+]);
 export const pickupDayIntake = sqliteTable("pickup_day_intake", {
   date: text("date").primaryKey().notNull(),
   accepting: integer("accepting", {mode:"boolean"}).notNull(),

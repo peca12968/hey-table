@@ -593,6 +593,14 @@ test("mobile staff preview a slot batch, recover a conflict and preserve existin
     expect(after.get(third)).toEqual(before.get(third));
     const receipt=await (await request.get("/api/ticket",{headers:{"X-Ticket":order.token}})).json();
     expect(receipt).toMatchObject({pickupSlot:first,status:"pending"});
+    await page.getByText("查看預約調整紀錄",{exact:true}).click();
+    const history=page.getByRole("region",{name:"預約調整紀錄"});
+    const batch=history.getByRole("heading",{name:"批次調整 · 2 個時段"});
+    await expect(batch).toHaveCount(1);
+    await expect(batch).toBeVisible();
+    await expect(history.getByText("17:00～17:15 · 預設 12 份 → 0 份",{exact:true})).toBeVisible();
+    await expect(history.getByText("17:15～17:30 · 7 份 → 0 份",{exact:true})).toBeVisible();
+    expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBe(360);
   }finally{
     if(booked)await request.post("/api/ticket/cancel",{headers:{"X-Ticket":order.token},data:{}});
     const current=await settings();

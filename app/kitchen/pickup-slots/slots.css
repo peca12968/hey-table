@@ -18,3 +18,7 @@
 .batchSlotOptions label{display:flex;align-items:center;gap:6px;min-height:40px;font-size:.875rem;white-space:nowrap}
 .batchSlotOptions input{width:1rem;height:1rem;accent-color:var(--green)}
 .batchSlotControls{align-items:end;gap:8px 12px}.batchSlotControls input{width:8rem}
+.limitHistory{margin-bottom:14px}.limitHistory summary{font-weight:700;cursor:pointer}
+.limitHistory ol{padding:0;list-style:none}.limitHistory ol>li{padding-block:8px;border-top:1px solid var(--line)}
+.limitHistory h3{margin:0;font-size:1rem}.limitHistory time{font-size:.85rem;color:var(--muted)}
+.limitHistory ul{margin:4px 0 0;padding-left:16px}

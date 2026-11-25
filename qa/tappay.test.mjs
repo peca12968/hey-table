@@ -1344,6 +1344,58 @@ test("pickup slot batches compare every revision and cutoff before writing any l
   assert.deepEqual(stored(),before);
 });
 
+test("pickup limit history preserves preexisting settings and records only committed changes",async t=>{
+  const date="2026-11-25",first=Date.parse(date+"T12:00:00+08:00"),second=first+900_000;
+  const now=first-75*60_000;
+  t.mock.method(Date,"now",()=>now);
+  const db=database((tag,sqlite)=>{
+    if(tag==="0028_pickup_limit_events")sqlite.prepare("INSERT INTO pickup_slot_limits VALUES (?,8,1)").run(first);
+  });
+  t.after(()=>db.sqlite.close());
+  const runtime={DB:db,STAFF_KEY:"fixture-staff"},staff={Authorization:"Bearer fixture-staff"};
+  const call=(path,options)=>api(new Request("https://order.example/api/kitchen/"+path,options),runtime);
+  const patch=(path,input)=>call(path,{method:"PATCH",headers:{...staff,"Content-Type":"application/json"},body:JSON.stringify({date,...input})});
+  const history="pickup-slots/history?date="+date;
+  const read=async(path=history)=>(await call(path,{headers:staff})).json();
+  const batch=(revision,capacity)=>patch("pickup-slot-batch",{capacity,slots:[{start:second,revision:0},{start:first,revision}]});
+  const day=(accepting,revision)=>patch("pickup-day",{accepting,revision});
+  assert.equal((await call(history)).status,403);
+  for(const suffix of ["&date="+date,"&before=0","&before=1e3","&before=1&before=2"])
+    assert.equal((await call(history+suffix,{headers:staff})).status,400);
+  assert.equal((await call(history,{headers:staff})).headers.get("cache-control"),"no-store");
+  assert.deepEqual(await read(),{date,events:[],nextBefore:null});
+  assert.equal((await patch("pickup-slots",{start:first,capacity:null,revision:1})).status,200);
+  assert.equal((await batch(1,0)).status,409);
+  db.sqlite.exec("CREATE TRIGGER fail_second_limit BEFORE INSERT ON pickup_slot_limits WHEN NEW.start="+second+
+    " BEGIN SELECT RAISE(ABORT,'write rejected'); END");
+  await assert.rejects(batch(2,0),/write rejected/);
+  assert.deepEqual(db.sqlite.prepare("SELECT start,capacity,revision FROM pickup_slot_limits").all().map(row=>({...row})),
+    [{start:first,capacity:null,revision:2}]);
+  assert.equal((await read()).events.length,1);
+  db.sqlite.exec("DROP TRIGGER fail_second_limit");
+  assert.equal((await batch(2,0)).status,200);
+  assert.equal((await day(false,0)).status,200);
+  assert.equal((await day(true,0)).status,409);
+  assert.equal((await day(true,1)).status,200);
+  assert.deepEqual(await read(),{date,events:[
+    {id:4,changedAt:now,kind:"day",changes:[{previousAccepting:false,accepting:true,revision:2}]},
+    {id:3,changedAt:now,kind:"day",changes:[{previousAccepting:true,accepting:false,revision:1}]},
+    {id:2,changedAt:now,kind:"batch",changes:[{start:first,previousCapacity:null,capacity:0,revision:3},
+      {start:second,previousCapacity:null,capacity:0,revision:1}]},
+    {id:1,changedAt:now,kind:"slot",changes:[{start:first,previousCapacity:8,capacity:null,revision:2}]},
+  ],nextBefore:null});
+  assert.equal((await patch("pickup-day",{date:"2026-11-26",accepting:false,revision:0})).status,200);
+  for(let revision=2;revision<26;revision++)assert.equal((await day(revision%2===1,revision)).status,200);
+  const latest=await read();
+  assert.equal(latest.events.length,25);
+  assert.equal(latest.nextBefore,4);
+  assert.equal((await day(false,26)).status,200);
+  const older=await read(history+"&before="+latest.nextBefore);
+  assert.deepEqual(older.events.map(event=>event.id),[3,2,1]);
+  assert.equal(older.nextBefore,null);
+  assert.equal((await read("pickup-slots/history?date=2026-11-26")).events.length,1);
+});
+
 test("authorized staff can close, raise and reset an individual slot without displacing bookings",async t=>{
   const db=database();
   t.after(()=>db.sqlite.close());
