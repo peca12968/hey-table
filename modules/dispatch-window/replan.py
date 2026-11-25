@@ -13,6 +13,13 @@ from execute import stockroom_client
 WINDOW_FIELDS = {"start_ms", "cutoff_ms", "stations", "station_ready_ms", "station_pauses"}
 
 
+def packing_snapshot(request, reservation_ids):
+    status, snapshot = request("/packing-snapshots", {"reservation_ids": sorted(reservation_ids)})
+    if status != 200:
+        raise ValueError(f"Stockroom packing snapshot failed (HTTP {status})")
+    return snapshot
+
+
 def replan(manifest, window, request):
     if not isinstance(window, dict) or window.keys() - WINDOW_FIELDS:
         raise ValueError("the truck window must contain only start, cutoff and station settings")
@@ -24,9 +31,7 @@ def replan(manifest, window, request):
     stations = integer(window.get("stations", 1), "stations", 1, 2)
     requested = integer(window["start_ms"], "start_ms") if "start_ms" in window else None
     cutoff = integer(window["cutoff_ms"], "cutoff_ms", 1 if requested is None else requested + 1)
-    status, snapshot = request("/packing-snapshots", {"reservation_ids": sorted(orders)})
-    if status != 200:
-        raise ValueError(f"Stockroom packing snapshot failed (HTTP {status})")
+    snapshot = packing_snapshot(request, orders)
     captured = integer(snapshot["captured_at_ms"], "captured_at_ms")
     start = captured if requested is None else requested
     if start < captured:

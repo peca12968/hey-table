@@ -2,6 +2,7 @@
 
 import argparse
 from contextlib import closing
+from copy import deepcopy
 import json
 from pathlib import Path
 import sqlite3
@@ -11,6 +12,7 @@ from tempfile import TemporaryDirectory
 
 from fastapi.testclient import TestClient
 
+from audit import audit
 from execute import execute
 from replan import replan
 
@@ -76,6 +78,9 @@ def execution_demo(client, clock, report, manifest):
     [job] = next_plan["scheduled"]
     assert (job["reservation_id"], job["station"], job["dispatch_ms"], job["units"]) == ("D", 2, 113000, 2)
     assert next_plan["ship_units"] == 2
+    before_audit = audit([report, next_plan], request)
+    assert (before_audit["confirmed_units"], before_audit["pending_units"]) == (7, 2)
+    assert before_audit["boxes"][-1]["reservation_state"] == "held"
     sent = execute_at(job["dispatch_ms"], chosen=next_plan)
     assert sent["confirmed_units"] == 2
     assert sent["results"][0]["state"] == "dispatched"
@@ -85,12 +90,23 @@ def execution_demo(client, clock, report, manifest):
     assert old_plan["results"][-1]["receipt"] == sent["results"][0]["receipt"]
     assert attempts == [*first_attempts, {"reservation_id": "D", "http_status": 201}]
     assert client.get("/reservations/D").json()["state"] == "fulfilled"
+    after_audit = audit([report, next_plan], request)
+    assert (after_audit["confirmed_units"], after_audit["pending_units"], after_audit["conflicting_boxes"]) == (9, 0, 0)
+    assert after_audit["boxes"][-1]["plans"] == [{"plan": 1, "quantity": 2}, {"plan": 2, "quantity": 2}]
+    altered = deepcopy(next_plan)
+    altered["ship_units"] = altered["scheduled"][0]["units"] = altered["scheduled"][0]["dispatch"]["boxes"][0]["quantity"] = 1
+    plan_conflict = audit([report, altered], request)
+    stock_conflict = audit([altered], request)
+    assert [(result["conflicting_boxes"], result["boxes"][-1]["status"], result["boxes"][-1]["recorded_units"])
+            for result in (plan_conflict, stock_conflict)] == [(1, "plan_conflict", 2), (1, "quantity_conflict", 2)]
     final_inventory = client.get("/inventory").json()
     assert final_inventory == [{"sku": "KIT-01", "capacity": 11, "available": 11}]
     return {"format": "dispatch-window.execution-demo.v1", "start_ms": report["start_ms"],
             "stages": stages, "attempts": first_attempts, "inventory_after": with_inventory[0],
             "next_truck": {"plan": next_plan, "execution": sent, "first_truck_review": old_plan,
-                           "inventory_after": final_inventory[0]}}
+                           "inventory_after": final_inventory[0]},
+            "audit": {"format": "dispatch-window.audit-demo.v1", "before": before_audit, "after": after_audit,
+                      "plan_conflict": plan_conflict, "stock_conflict": stock_conflict}}
 
 
 def demo(stockroom, stations=1, delayed=False, *, paused=False, restricted=False, execute_plan=False):
