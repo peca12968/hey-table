@@ -103,7 +103,8 @@ def capture(db):
 
     return {"stages": stages, "renewal_batch": renewal_batch, "release_batch": release_batch,
             "replacement": capture_replacement(db), "batch_replacement": capture_batch_replacement(db),
-            "dispatch_preview": capture_dispatch_preview(db)}
+            "dispatch_preview": capture_dispatch_preview(db),
+            "expiry_history": capture_expiry_history(db.with_name("expiry-history.db"))}
 
 
 def capture_release_batch(api):
@@ -277,6 +278,34 @@ def capture_dispatch_preview(db):
         after_conflict = preview(boxes)
         return {"blocked": blocked, "ready": ready, "after_conflict": after_conflict,
                 "submit_status": submit.status_code}
+
+
+def capture_expiry_history(db):
+    with closing(sqlite3.connect(db)) as conn:
+        conn.executescript("""
+            CREATE TABLE products(sku TEXT PRIMARY KEY, capacity INTEGER, available INTEGER);
+            CREATE TABLE reservations(id TEXT PRIMARY KEY, sku TEXT, quantity INTEGER, state TEXT,
+                                      expires_at_ms INTEGER, timed_out INTEGER NOT NULL DEFAULT 0);
+            INSERT INTO products VALUES ('KIT-01',20,20);
+            INSERT INTO reservations VALUES ('legacy-cart','KIT-01',3,'released',700000,1);
+        """)
+    now = 700
+    with TestClient(create_app(db, ttl_seconds=3, clock=lambda: now)) as api:
+        api.post("/reservations", headers={"Idempotency-Key": "reclaim-cart"},
+                 json={"sku": "KIT-01", "quantity": 8}).raise_for_status()
+        api.post("/reservations/reclaim-cart/fulfillments", headers={"Idempotency-Key": "box"},
+                 json={"quantity": 3}).raise_for_status()
+        api.post("/reservations/reclaim-cart/releases", headers={"Idempotency-Key": "customer-edit"},
+                 json={"quantity": 2}).raise_for_status()
+        now = 702
+        api.post("/reservations", headers={"Idempotency-Key": "later-cart"},
+                 json={"sku": "KIT-01", "quantity": 1}).raise_for_status()
+        scope = {"sku": "KIT-01", "since_ms": 700_000, "limit": 1}
+        now = 704
+        first = api.get("/expired-reservations", params=scope).raise_for_status().json()
+        now = 707
+        next_page = api.get("/expired-reservations", params={**scope, **first["next"]}).raise_for_status().json()
+        return {"sku": scope["sku"], "pages": [first, next_page]}
 
 
 if __name__ == "__main__":

@@ -164,11 +164,15 @@ class Store:
             if "reduced" not in columns:
                 conn.execute("""ALTER TABLE reservations ADD COLUMN reduced INTEGER NOT NULL DEFAULT 0
                                 CHECK (reduced BETWEEN 0 AND quantity - shipped)""")
+            if "reclaimed_at_ms" not in columns:
+                conn.execute("ALTER TABLE reservations ADD COLUMN reclaimed_at_ms INTEGER")
             release_columns = {row["name"] for row in conn.execute("PRAGMA table_info(reservation_releases)")}
             if "released_at_ms" not in release_columns:
                 conn.execute("ALTER TABLE reservation_releases ADD COLUMN released_at_ms INTEGER")
             conn.execute("""CREATE INDEX IF NOT EXISTS active_deadlines ON reservations(expires_at_ms)
                             WHERE state='held' AND expires_at_ms IS NOT NULL""")
+            conn.execute("""CREATE INDEX IF NOT EXISTS expiry_history_deadlines ON reservations(expires_at_ms, id)
+                            WHERE timed_out=1""")
             conn.execute("INSERT OR IGNORE INTO products VALUES ('KIT-01', 20, 20)")
 
     @contextmanager
@@ -189,8 +193,8 @@ class Store:
                       WHERE state='held' AND expires_at_ms<=? GROUP BY sku) AS due
                 WHERE products.sku=due.sku
             """, (now,))
-            conn.execute("""UPDATE reservations SET state='released', timed_out=1
-                            WHERE state='held' AND expires_at_ms<=?""", (now,))
+            conn.execute("""UPDATE reservations SET state='released', timed_out=1, reclaimed_at_ms=?
+                            WHERE state='held' AND expires_at_ms<=?""", (now, now))
             yield conn, now
 
     @staticmethod
@@ -198,6 +202,7 @@ class Store:
         result = dict(row)
         shipped = result.pop("shipped")
         result.pop("reduced")
+        result.pop("reclaimed_at_ms")
         if result.pop("timed_out"):
             result["state"] = "expired"
         elif shipped == result["quantity"]:
@@ -241,6 +246,31 @@ class Store:
                 next_page = {"through_ms": through, "after_expires_at_ms": last["expires_at_ms"],
                              "after_id": last["reservation_id"]}
             return {"captured_at_ms": now, "through_ms": through, "reservations": items, "next": next_page}
+
+    def expiry_history(self, since_ms, through_ms, sku, before, limit):
+        with self.current_inventory() as (conn, now):
+            through = now if through_ms is None else through_ms
+            if not since_ms <= through <= now:
+                raise ValueError("Invalid expiry history interval")
+            rows = conn.execute("""SELECT r.id AS reservation_id, r.sku, b.batch_id, r.expires_at_ms,
+                                    r.reclaimed_at_ms, r.quantity, r.shipped, r.reduced AS released_before_expiry,
+                                    r.quantity - r.shipped - r.reduced AS reclaimed
+                                    FROM reservations r
+                                    LEFT JOIN reservation_batch_items b ON b.reservation_id=r.id
+                                    WHERE r.timed_out=1 AND r.expires_at_ms BETWEEN ? AND ?
+                                    AND (r.reclaimed_at_ms IS NULL OR r.reclaimed_at_ms<=?)
+                                    AND (? IS NULL OR r.sku=?)
+                                    AND (? IS NULL OR (r.expires_at_ms, r.id) < (?,?))
+                                    ORDER BY r.expires_at_ms DESC, r.id DESC LIMIT ?""",
+                                (since_ms, through, through, sku, sku, before[0], *before, limit + 1)).fetchall()
+            items = [dict(row) for row in rows[:limit]]
+            next_page = None
+            if len(rows) > limit:
+                last = items[-1]
+                next_page = {"through_ms": through, "before_expires_at_ms": last["expires_at_ms"],
+                             "before_id": last["reservation_id"]}
+            return {"captured_at_ms": now, "since_ms": since_ms, "through_ms": through,
+                    "reservations": items, "next": next_page}
 
     def apply_receipts(self, records):
         applied = replayed = units = 0

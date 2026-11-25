@@ -85,6 +85,12 @@ python -m uvicorn stockroom.api:app
 
 若回應含 `next`，沿用其中三個參數及原 SKU 查下一頁。截止範圍固定，各頁會按當下庫存重新結算。舊版無到期時間的單仍可由原查單 API 查閱。執行 `python batch_status_demo.py` 可看到包材續期後離開短期清單、套件到期後釋回庫存。[到期邊界、續頁與並行出貨測試](tests/test_expiry_queue.py)
 
+### 查閱已到期的庫存回收
+
+`GET /expired-reservations?sku=KIT-01&since_ms=700000&limit=50` 會先結算到期，再從同一筆 SQLite 交易查詢已回收的保留單。每張單列出原保留、已出貨、先前減量與此次釋回件數，有批號時一併顯示。截止時間使用 `expires_at_ms`。真正釋回庫存的時間使用 `reclaimed_at_ms`，舊單若未記錄則回傳 `null`。
+
+首張回應會固定查詢的上限 `through_ms`。依 `next` 並保留原 `sku` 與 `since_ms`，可按到期時間及保留編號由新到舊翻頁。首查之後才釋回的保留會出現在新查詢。每次到期回收在同一筆交易更新庫存與回收時間，重查會沿用原時間。[跨服務回收與續頁測試](tests/test_expiry_queue.py) · [舊資料升級測試](tests/test_api.py)
+
 ### 將多張保留單一起續期
 
 從到期清單選擇保留單後，向 `POST /renewal-batches` 傳送 `Idempotency-Key`、共用的 `extend_seconds`（1 至 86,400 秒），以及最多 100 筆 `items`。每筆填入 `reservation_id` 與清單上的 `expires_at_ms` 作為 `expected_expires_at_ms`。

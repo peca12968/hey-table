@@ -532,5 +532,52 @@
       ]
     },
     "submit_status": 409
+  },
+  "expiry_history": {
+    "sku": "KIT-01",
+    "pages": [
+      {
+        "captured_at_ms": 704000,
+        "since_ms": 700000,
+        "through_ms": 704000,
+        "reservations": [
+          {
+            "reservation_id": "reclaim-cart",
+            "sku": "KIT-01",
+            "batch_id": null,
+            "expires_at_ms": 703000,
+            "reclaimed_at_ms": 704000,
+            "quantity": 8,
+            "shipped": 3,
+            "released_before_expiry": 2,
+            "reclaimed": 3
+          }
+        ],
+        "next": {
+          "through_ms": 704000,
+          "before_expires_at_ms": 703000,
+          "before_id": "reclaim-cart"
+        }
+      },
+      {
+        "captured_at_ms": 707000,
+        "since_ms": 700000,
+        "through_ms": 704000,
+        "reservations": [
+          {
+            "reservation_id": "legacy-cart",
+            "sku": "KIT-01",
+            "batch_id": null,
+            "expires_at_ms": 700000,
+            "reclaimed_at_ms": null,
+            "quantity": 3,
+            "shipped": 0,
+            "released_before_expiry": 0,
+            "reclaimed": 3
+          }
+        ],
+        "next": null
+      }
+    ]
   }
 }

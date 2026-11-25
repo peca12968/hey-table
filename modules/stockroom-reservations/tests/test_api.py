@@ -636,6 +636,12 @@ def test_upgrades_deadline_schema_and_preserves_earlier_states(tmp_path):
         assert counts(http, "old") == ("expired", 0, 0, 4)
         assert counts(http, "open") == ("held", 0, 8, 0)
         assert ship(http, "open", "box", 3).status_code == 201
+        old = http.get("/expired-reservations").raise_for_status().json()["reservations"]
+        assert [(row["reservation_id"], row["reclaimed"], row["reclaimed_at_ms"]) for row in old] == [("old", 4, None)]
     with TestClient(create_app(path, clock=lambda: 100)) as http:
         assert counts(http, "open") == ("expired", 3, 0, 5)
         assert available(http) == 17
+        events = http.get("/expired-reservations").raise_for_status().json()["reservations"]
+        assert [(row["reservation_id"], row["reclaimed"], row["reclaimed_at_ms"]) for row in events] == [
+            ("open", 5, 100_000), ("old", 4, None),
+        ]

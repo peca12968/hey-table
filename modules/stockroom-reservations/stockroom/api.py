@@ -138,6 +138,32 @@ class ExpiryQueue(BaseModel):
     next: ExpiryCursor | None
 
 
+class ReclaimedReservation(BaseModel):
+    reservation_id: str
+    sku: str
+    batch_id: str | None
+    expires_at_ms: int
+    reclaimed_at_ms: int | None
+    quantity: int
+    shipped: int
+    released_before_expiry: int
+    reclaimed: int
+
+
+class ExpiryHistoryCursor(BaseModel):
+    through_ms: int
+    before_expires_at_ms: int
+    before_id: str
+
+
+class ExpiryHistory(BaseModel):
+    captured_at_ms: int
+    since_ms: int
+    through_ms: int
+    reservations: list[ReclaimedReservation]
+    next: ExpiryHistoryCursor | None
+
+
 class Progress(Reservation):
     shipped: int
     held: int
@@ -418,6 +444,27 @@ def create_app(path: Path, *, ttl_seconds=900, clock=time.time):
                 raise HTTPException(422, "Supply a complete deadline cursor")
         try:
             result = store.expiring_reservations(within_seconds, limit, sku, through_ms, (after_expires_at_ms, after_id))
+        except ValueError as error:
+            raise HTTPException(422, str(error)) from error
+        response.headers["Cache-Control"] = "no-store"
+        return result
+
+    @app.get("/expired-reservations", response_model=ExpiryHistory)
+    def expiry_history(
+        response: Response,
+        limit: Annotated[int, Query(ge=1, le=100)] = 50,
+        sku: Annotated[str | None, Query(min_length=1, max_length=80)] = None,
+        since_ms: Annotated[int, Query(ge=0, le=2**63 - 1)] = 0,
+        through_ms: Annotated[int | None, Query(ge=0, le=2**63 - 1)] = None,
+        before_expires_at_ms: Annotated[int | None, Query(ge=0, le=2**63 - 1)] = None,
+        before_id: Annotated[str | None, Query(min_length=1, max_length=80)] = None,
+    ):
+        if before_expires_at_ms is not None or before_id is not None:
+            if (through_ms is None or before_id is None or before_expires_at_ms is None
+                    or not since_ms <= before_expires_at_ms <= through_ms):
+                raise HTTPException(422, "Supply a complete expiry history cursor")
+        try:
+            result = store.expiry_history(since_ms, through_ms, sku, (before_expires_at_ms, before_id), limit)
         except ValueError as error:
             raise HTTPException(422, str(error)) from error
         response.headers["Cache-Control"] = "no-store"
