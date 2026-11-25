@@ -74,14 +74,16 @@ function historyPage(date,dish,results){
 export async function portionLimitHistory(db,date,dish,before){
   const cursor=before===null?"":" AND revision<?";
   const args=before===null?[date,dish]:[date,dish,before];
-  const {results}=await db.prepare(`SELECT revision,kind,previous_capacity AS previousCapacity,capacity,
-      source_date AS sourceDate,changed_at AS changedAt,NULL AS quantity,NULL AS used
+  const {results}=await db.prepare(`SELECT revision,
+      CASE WHEN restored_from_revision IS NULL THEN kind ELSE 'restore' END AS kind,previous_capacity AS previousCapacity,capacity,
+      source_date AS sourceDate,changed_at AS changedAt,NULL AS quantity,NULL AS used,restored_from_revision AS restoredFromRevision
     FROM daily_portion_limit_changes WHERE date=? AND dish=?${cursor}
     UNION ALL
-    SELECT revision,'restock',previous_capacity,capacity,NULL,restocked_at,quantity,used
+    SELECT revision,'restock',previous_capacity,capacity,NULL,restocked_at,quantity,used,NULL
     FROM daily_portion_restocks WHERE date=? AND dish=?${cursor}
     ORDER BY revision DESC LIMIT ?`).bind(...args,...args,historyPageSize+1).all();
-  return historyPage(date,dish,results);
+  return historyPage(date,dish,results.map(({restoredFromRevision,...row})=>
+    restoredFromRevision===null?row:{...row,restoredFromRevision}));
 }
 
 function applyRecordedLimits(db,actionId){
@@ -98,6 +100,25 @@ export async function changePortionLimit(db,{date,dish,capacity,revision},now){
       SELECT ?,?,?,?,'manual',limits.capacity,?,? FROM (SELECT 1) AS anchor
       LEFT JOIN daily_portion_limits AS limits ON limits.date=? AND limits.dish=?
       WHERE COALESCE(limits.revision,0)=?`).bind(date,dish,revision+1,actionId,capacity,now,date,dish,revision),
+    applyRecordedLimits(db,actionId),
+  ]);
+  return applied.results[0];
+}
+
+export async function restorePortionLimit(db,{date,dish,revision,fromRevision},now){
+  const actionId=crypto.randomUUID();
+  const [,applied]=await db.batch([
+    db.prepare(`WITH original AS (
+      SELECT previous_capacity FROM daily_portion_limit_changes WHERE date=? AND dish=? AND revision=?
+      UNION ALL
+      SELECT previous_capacity FROM daily_portion_restocks WHERE date=? AND dish=? AND revision=?
+    )
+    INSERT INTO daily_portion_limit_changes(date,dish,revision,action_id,kind,previous_capacity,capacity,
+      restored_from_revision,changed_at)
+    SELECT limits.date,limits.dish,limits.revision+1,?,'manual',limits.capacity,original.previous_capacity,?,?
+    FROM daily_portion_limits AS limits CROSS JOIN original
+    WHERE limits.date=? AND limits.dish=? AND limits.revision=? AND limits.capacity IS NOT original.previous_capacity`)
+      .bind(date,dish,fromRevision,date,dish,fromRevision,actionId,fromRevision,now,date,dish,revision),
     applyRecordedLimits(db,actionId),
   ]);
   return applied.results[0];

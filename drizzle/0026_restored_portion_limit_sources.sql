@@ -1,0 +1,1 @@
+ALTER TABLE `daily_portion_limit_changes` ADD `restored_from_revision` integer;

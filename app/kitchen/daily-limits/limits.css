@@ -14,6 +14,9 @@
 .restockRecords li>div{display:flex;flex-wrap:wrap;gap:6px 12px;justify-content:space-between}
 .restockRecords time,.restockRecords li>div span{font-size:.85rem;color:var(--muted)}
 .restockRecords li p{margin:2px 0 0}
+.restockRecords li>button{margin-top:6px}
+.limitRestore{margin-top:6px;padding:8px;border:1px solid var(--line);border-radius:8px}
+.limitRestore .actions{margin-top:6px;gap:8px}
 .limitCopy{margin-bottom:16px}
 .limitCopy summary{cursor:pointer;font-weight:700}
 .limitCopyChanges{padding:0;list-style:none;margin:10px 0}

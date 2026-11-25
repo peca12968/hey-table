@@ -142,6 +142,20 @@ test("supply migration retains old limits and merges existing restocks with new 
   const older=await (await call("/history"+query+"&before=7")).json();
   assert.deepEqual(older.records,records.slice(1));
   assert.equal((await (await call("/restock"+query)).json()).records[0].restockedAt,1000);
+  const restore={date,dish,revision:7,fromRevision:4};
+  assert.equal((await call("/restore","POST",restore,false)).status,403);
+  assert.equal((await call("/restore","POST",{...restore,fromRevision:8})).status,400);
+  assert.equal((await call("/restore","POST",{...restore,fromRevision:5})).status,409);
+  const restored=await call("/restore","POST",restore);
+  assert.deepEqual(await restored.json(),{date,dish,revision:8,capacity:5,restoredFromRevision:4});
+  assert.equal((await call("/restore","POST",restore)).status,409);
+  assert.equal((await call("/restore","POST",{...restore,revision:8})).status,409);
+  const after=await (await call("/history"+query)).json();
+  const {changedAt,...revision}=after.records[0];
+  assert.ok(Number.isSafeInteger(changedAt));
+  assert.deepEqual(revision,{revision:8,kind:"restore",previousCapacity:11,capacity:5,
+    sourceDate:null,quantity:null,used:null,restoredFromRevision:4});
+  assert.deepEqual(after.records.slice(1),records);
 });
 test("staff payment export matches both reconciliation tools without exporting customer fields",async t=>{
   const temp=mkdtempSync(join(tmpdir(),"hey-table-payment-snapshot-"));

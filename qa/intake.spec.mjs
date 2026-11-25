@@ -240,6 +240,64 @@ test("staff copy selected daily caps together and a stale source or destination 
     .toEqual(copy.ok()?[["copy",8],["manual",2]]:[["manual",2]]);
 });
 
+test("mobile restore checks the current cap, preserves the accepted order and appends its source revision",async({page,request})=>{
+  const date=businessDate(Date.now()),dish="gyoza",endpoint="/api/kitchen/daily-limits";
+  const settings=async()=>(await (await request.get(endpoint+"?date="+date,{headers:staff})).json()).limits[dish];
+  const set=(capacity,revision)=>request.patch(endpoint,{headers:staff,data:{date,dish,capacity,revision}});
+  const restore=(revision,fromRevision)=>request.post(endpoint+"/restore",{headers:staff,data:{date,dish,revision,fromRevision}});
+  const initial=await settings(),sale=order("pickup",{items:[{id:dish,qty:1}]});
+  const ordered=await request.post("/api/orders",{data:sale});
+  expect(ordered.ok()).toBe(true);
+  const {id}=await ordered.json();
+  try{
+    expect((await set(0,initial.revision)).ok()).toBe(true);
+    const closed=await settings();
+    expect((await set(8,closed.revision)).ok()).toBe(true);
+    const open=await settings();
+    expect(open.used).toBeGreaterThanOrEqual(1);
+    await page.setViewportSize({width:360,height:780});
+    await page.addInitScript(()=>sessionStorage.setItem("he-ri-staff","local-test-kitchen"));
+    await page.goto("/kitchen/daily-limits");
+    const card=page.getByRole("article",{name:"海苔柴魚煎餃"});
+    await card.getByText("查看供應變更紀錄",{exact:true}).click();
+    const history=card.getByRole("region",{name:"海苔柴魚煎餃供應變更紀錄"});
+    const old=history.getByRole("listitem").filter({hasText:"第 "+open.revision+" 版"});
+    const check=history.getByRole("region",{name:"核對還原供應上限"});
+    await old.getByRole("button",{name:"還原變更前上限"}).click();
+    await expect(check).toContainText("上限 8 → 0");
+    await expect(check).toContainText("還原後暫時沒有可售份數");
+    expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBe(360);
+    await check.getByRole("button",{name:"取消還原"}).click();
+    expect(await settings()).toEqual(open);
+
+    await old.getByRole("button",{name:"還原變更前上限"}).click();
+    expect((await set(9,open.revision)).ok()).toBe(true);
+    await check.getByRole("button",{name:"確認還原"}).click();
+    await expect(page.getByRole("alert")).toContainText("目前上限已變更");
+    await expect(card.getByLabel("供應上限")).toHaveValue("9");
+    await old.getByRole("button",{name:"還原變更前上限"}).click();
+    await expect(check).toContainText("上限 9 → 0");
+    await check.getByRole("button",{name:"確認還原"}).click();
+    await expect(page.getByText("已還原 海苔柴魚煎餃 第 "+open.revision+" 版變更前的上限。")).toBeVisible();
+    await expect(history.getByRole("listitem").first()).toContainText("還原上限");
+    await expect(history.getByRole("listitem").first()).toContainText("回到第 "+open.revision+" 版變更前");
+    const restored=await settings();
+    expect(restored).toEqual({capacity:0,used:open.used,revision:open.revision+2});
+    expect((await (await request.get("/api/ticket",{headers:{"X-Ticket":sale.token}})).json()).id).toBe(id);
+    expect((await request.post("/api/orders",{data:{...sale,token:randomUUID()}})).status()).toBe(409);
+    const competing=await Promise.all([restore(restored.revision,closed.revision),restore(restored.revision,closed.revision)]);
+    expect(competing.map(response=>response.status()).sort()).toEqual([200,409]);
+    expect((await settings()).capacity).toBe(initial.capacity);
+    const exported=await (await request.get(endpoint+"/history?date="+date+"&dish="+dish,{headers:staff})).json();
+    expect(exported.records.filter(row=>row.kind==="restore").map(row=>row.restoredFromRevision))
+      .toEqual([closed.revision,open.revision]);
+  }finally{
+    const current=await settings();
+    if(current.capacity!==initial.capacity)await set(initial.capacity,current.revision);
+    await request.patch("/api/kitchen/status",{headers:staff,data:{id,from:"pending",to:"cancelled"}});
+  }
+});
+
 test("mobile guest keeps a draft through a pause and a second staff browser needs a fresh revision",async({browser,context,page,request})=>{
   const guest=await browser.newContext({viewport:{width:390,height:844}});
   try{

@@ -95,6 +95,7 @@ export const dailyPortionLimitChanges = sqliteTable("daily_portion_limit_changes
   previousCapacity: integer("previous_capacity"),
   capacity: integer("capacity"),
   sourceDate: text("source_date"),
+  restoredFromRevision: integer("restored_from_revision"),
   changedAt: integer("changed_at").notNull(),
 }, t=>[
   primaryKey({columns:[t.date,t.dish,t.revision]}),

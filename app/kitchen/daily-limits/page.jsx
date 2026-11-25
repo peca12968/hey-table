@@ -78,8 +78,9 @@ function LimitActions({date,dish,data,disabled,onWrite}){
 
 const capacityLabel=capacity=>capacity===null?"不限量":String(capacity);
 
-function LimitRecords({date,dish,restocksOnly}){
+function LimitRecords({date,dish,data,restocksOnly,disabled,onRestore}){
   const [cursors,setCursors]=useState([null]),[reload,setReload]=useState(0),[view,setView]=useState(null);
+  const [review,setReview]=useState(null);
   const before=cursors.at(-1);
   useEffect(()=>{
     const controller=new AbortController();
@@ -94,6 +95,14 @@ function LimitRecords({date,dish,restocksOnly}){
   },[date,dish.id,before,reload,restocksOnly]);
   const current=view?.before===before&&view.reload===reload?view:null;
   const page=current?.page;
+
+  async function restore(record){
+    if(disabled||record.previousCapacity===data.capacity)return;
+    try{
+      await onRestore(dish,{date,dish:dish.id,revision:data.revision,fromRevision:record.revision});
+    }catch{/* The request error is reported above the supply cards. */}
+    setReview(null);
+  }
   return <>
     {!current&&<p role="status">正在讀取供應紀錄…</p>}
     {current?.error&&<p role="alert" className="error">{current.error}</p>}
@@ -101,38 +110,53 @@ function LimitRecords({date,dish,restocksOnly}){
     {page?.records.length>0&&<ol aria-label="供應紀錄明細" className="restockRecords">
       {page.records.map(record=>{
         const kind=record.kind??"restock",at=record.changedAt??record.restockedAt;
-        const title=kind==="manual"?"手動儲存":kind==="copy"?"跨日複製":"補貨 "+record.quantity+" 份";
+        const title={manual:"手動儲存",copy:"跨日複製",restore:"還原上限"}[kind]??"補貨 "+record.quantity+" 份";
         return <li key={record.revision}>
           <div><strong>{title}</strong><span>第 {record.revision} 版</span></div>
           <time dateTime={new Date(at).toISOString()}>{taipei.format(at)}</time>
           <p>供應上限 {capacityLabel(record.previousCapacity)} → {capacityLabel(record.capacity)}
-            {kind==="restock"?" · 當時已占用 "+record.used+" 份":kind==="copy"?" · 來源 "+record.sourceDate:null}</p>
+            {kind==="restock"?" · 當時已占用 "+record.used+" 份":kind==="copy"?" · 來源 "+record.sourceDate:
+              kind==="restore"?" · 回到第 "+record.restoredFromRevision+" 版變更前":null}</p>
+          {record.revision<=data.revision&&record.previousCapacity!==data.capacity&&(review===record.revision?
+            <section className="limitRestore" aria-label="核對還原供應上限">
+              <p>{date} · 上限 {capacityLabel(data.capacity)} → {capacityLabel(record.previousCapacity)}</p>
+              <p>目前已占用 {data.used} 份，已成立餐單會保留。</p>
+              {record.previousCapacity!==null&&record.previousCapacity<=data.used&&
+                <p>還原後暫時沒有可售份數。</p>}
+              <div className="actions">
+                <button className="outline" disabled={disabled} onClick={()=>setReview(null)}>取消還原</button>
+                <button className="primary" disabled={disabled} onClick={()=>restore(record)}>確認還原</button>
+              </div>
+            </section>:
+            <button className="outline" disabled={disabled} onClick={()=>setReview(record.revision)}>還原變更前上限</button>)}
         </li>;
       })}
     </ol>}
     {current&&<div className="actions">
-      <button className="outline" onClick={()=>{setCursors([null]);setReload(value=>value+1);}}>重新查詢紀錄</button>
-      {cursors.length>1&&<button className="outline" onClick={()=>setCursors(previous=>previous.slice(0,-1))}>較新一頁</button>}
-      {page?.nextBefore!=null&&<button className="outline" onClick={()=>setCursors(previous=>
-        previous.at(-1)===before?[...previous,page.nextBefore]:previous)}>更早紀錄</button>}
+      <button className="outline" onClick={()=>{setReview(null);setCursors([null]);setReload(value=>value+1);}}>重新查詢紀錄</button>
+      {cursors.length>1&&<button className="outline" onClick={()=>{setReview(null);setCursors(previous=>previous.slice(0,-1));}}>較新一頁</button>}
+      {page?.nextBefore!=null&&<button className="outline" onClick={()=>{
+        setReview(null);setCursors(previous=>previous.at(-1)===before?[...previous,page.nextBefore]:previous);
+      }}>更早紀錄</button>}
       {page?.records.length>0&&<button className="outline" onClick={()=>downloadJson(
         (restocksOnly?"hey-table-restock-":"hey-table-limit-history-")+date+"-"+dish.id+"-",page.capturedAt,page)}>下載這頁 JSON</button>}
     </div>}
   </>;
 }
 
-function LimitHistory({date,dish,revision}){
+function LimitHistory({date,dish,data,disabled,onRestore}){
   const [scope,setScope]=useState("all");
   return <section aria-label={dish.name+"供應變更紀錄"}>
     <label>紀錄範圍<select value={scope} onChange={event=>setScope(event.target.value)}>
       <option value="all">所有變更</option><option value="restock">只看補貨</option>
     </select></label>
     {scope==="all"&&<p className="muted">手動儲存與跨日複製從紀錄啟用後開始保存。</p>}
-    <LimitRecords key={revision+":"+scope} date={date} dish={dish} restocksOnly={scope==="restock"}/>
+    <LimitRecords key={data.revision+":"+scope} date={date} dish={dish} data={data} restocksOnly={scope==="restock"}
+      disabled={disabled} onRestore={onRestore}/>
   </section>;
 }
 
-function LimitCard({date,dish,data,disabled,onWrite}){
+function LimitCard({date,dish,data,disabled,onWrite,onRestore}){
   const [historyOpen,setHistoryOpen]=useState(false);
   const remaining=data.capacity===null?"不限量":Math.max(0,data.capacity-data.used)+" 份";
   return <article className="sheet limitCard" aria-label={dish.name}>
@@ -141,7 +165,7 @@ function LimitCard({date,dish,data,disabled,onWrite}){
     <LimitActions key={data.revision} date={date} dish={dish} data={data} disabled={disabled} onWrite={onWrite}/>
     <details className="limitRestock" onToggle={event=>setHistoryOpen(event.currentTarget.open)}>
       <summary>查看供應變更紀錄</summary>
-      {historyOpen&&<LimitHistory date={date} dish={dish} revision={data.revision}/>}
+      {historyOpen&&<LimitHistory date={date} dish={dish} data={data} disabled={disabled} onRestore={onRestore}/>}
     </details>
   </article>;
 }
@@ -202,6 +226,9 @@ export default function DailyLimits(){
   const copy=operation=>write({path:endpoint+"/copy",method:"POST",operation,
     describe:saved=>"已複製 "+saved.limits.length+" 個品項上限。",
     uncertain:"尚未收到套用結果，請重新讀取兩個日期確認。",refreshOnError:true});
+  const restore=(dish,operation)=>write({path:endpoint+"/restore",method:"POST",operation,
+    describe:saved=>"已還原 "+dish.name+" 第 "+saved.restoredFromRevision+" 版變更前的上限。",
+    uncertain:"尚未收到還原結果，請重新讀取上限和紀錄確認。",refreshOnError:true});
   return <><Header/><main className="shell section dailyLimits">
     <a className="textLink" href="/kitchen">返回店家接單台</a>
     <h1>每日限量供應</h1>
@@ -216,6 +243,6 @@ export default function DailyLimits(){
     {current&&<CopyLimits key={date} date={date} limits={current.limits} disabled={busy} loadSource={readLimits} onCopy={copy}/>}
     {current&&<div className="kGrid">{dishes.map(dish=><LimitCard
       key={date+":"+dish.id} date={date} dish={dish} data={current.limits[dish.id]}
-      disabled={busy} onWrite={writeLimit}/>)}</div>}
+      disabled={busy} onWrite={writeLimit} onRestore={restore}/>)}</div>}
   </main><Footer/></>;
 }

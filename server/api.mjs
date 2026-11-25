@@ -5,7 +5,7 @@ import {dishes, itemNoteLimit, numberOf, tables, transitions} from "../lib/menu.
 import {intakeLabels,intakeNotice} from "../lib/order-intake.mjs";
 import {businessDate,businessDayRange} from "../lib/business-day.mjs";
 import {changePortionLimit,copyPortionLimits,dailyLimits,exceededOrderPortions,exceededPortions,portionLimitHistory,
-  readRemaining,restockHistory,restockPortions,supplyTime} from "./daily-limits.mjs";
+  readRemaining,restockHistory,restockPortions,restorePortionLimit,supplyTime} from "./daily-limits.mjs";
 import {expirePaymentHolds,noBlockingPayment,paymentHoldMs} from "./payment-holds.mjs";
 import {dailyTiming,dailyTimingRows} from "./daily-timing.mjs";
 import {kitchenOverdue} from "./kitchen-overdue.mjs";
@@ -263,6 +263,16 @@ export async function api(request, env) {
     const saved=await changePortionLimit(db,{date,dish,capacity,revision},Date.now());
     return saved?json({date,...saved}):
       fail("供應上限已由其他店員更新，請重新載入後再儲存。",409);
+  }
+  if(path==="/api/kitchen/daily-limits/restore"&&method==="POST"){
+    const {date,dish,revision,fromRevision}=input;
+    if(typeof date!=="string"||!businessDayRange(date)||!dishes.some(item=>item.id===dish)||
+      !Number.isSafeInteger(revision)||revision<1||revision>=Number.MAX_SAFE_INTEGER||
+      !Number.isSafeInteger(fromRevision)||fromRevision<1||fromRevision>revision)
+      return fail("請確認供應日期、品項與可還原的版次。");
+    const saved=await restorePortionLimit(db,{date,dish,revision,fromRevision},Date.now());
+    return saved?json({date,...saved,restoredFromRevision:fromRevision}):
+      fail("目前上限已變更、相同，或查無該版次。請重新核對供應紀錄。",409);
   }
   if(path==="/api/kitchen/daily-limits/copy"&&method==="POST"){
     const {sourceDate,date,items}=input;
