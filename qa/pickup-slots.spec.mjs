@@ -541,8 +541,46 @@ test("staff can print the selected pickup date with the same mobile roster and s
     await expect(assertReceipt(phone)).toHaveCount(0);
     await refresh.click();
     await expect(assertReceipt(phone)).toBeVisible();
+
+    await page.goto("/kitchen/pickup-slots");
+    await page.getByLabel("取餐日期").fill(date);
+    const target=page.getByRole("article",{name:"11:45～12:00"});
+    await target.getByRole("link",{name:"查看此時段預約"}).click();
+    expect(new URL(page.url()).searchParams.get("date")).toBe(date);
+    expect(new URL(page.url()).searchParams.get("slot")).toBe(String(later));
+    const time=page.getByLabel("取餐時段");
+    await expect(time).toHaveValue(String(later));
+    await expect(page.getByText(date+" · 11:45～12:00")).toBeVisible();
+    await expect(page.getByText("1 張有效預約 · 1 份",{exact:false})).toBeVisible();
+    await expect(assertReceipt(phone)).toBeVisible();
+    await expect(assertReceipt(wallet)).toHaveCount(0);
+    await page.getByRole("checkbox",{name:"顯示 1 張已取消餐單"}).check();
+    await print.click();
+    await page.emulateMedia({media:"print"});
+    await expect(time).toBeHidden();
+    await expect(page.getByText(date+" · 11:45～12:00")).toBeVisible();
+    await expect(assertReceipt(cancelled)).toBeVisible();
+    await expect(assertReceipt(wallet)).toHaveCount(0);
+    await page.emulateMedia({media:"screen"});
+    expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBe(360);
+    await time.selectOption(String(early));
+    await expect(assertReceipt(wallet)).toBeVisible();
+    await expect(assertReceipt(phone)).toHaveCount(0);
+    expect(new URL(page.url()).searchParams.get("slot")).toBe(String(early));
+    await page.reload();
+    await expect(time).toHaveValue(String(early));
+    await expect(assertReceipt(wallet)).toBeVisible();
+    await time.selectOption("");
+    await expect(assertReceipt(phone)).toBeVisible();
+
+    await page.goto("/kitchen/pickup-roster?date="+date+"&slot="+(later+86_400_000));
+    await expect(page.getByRole("alert")).toHaveText("請選擇這個日期的取餐時段。");
+    await expect(print).toBeDisabled();
+    await expect(assertReceipt(phone)).toHaveCount(0);
+    await time.selectOption("");
+    await expect(assertReceipt(phone)).toBeVisible();
     await page.getByLabel("取餐日期").fill("2001-01-01");
-    await expect(page.getByText("這天沒有自取預約。")).toBeVisible();
+    await expect(page.getByText("這天沒有有效的自取預約。")).toBeVisible();
     await expect(print).toBeDisabled();
   }finally{
     for(const token of tokens)await request.post("/api/ticket/cancel",{headers:{"X-Ticket":token},data:{}});

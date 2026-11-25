@@ -1104,6 +1104,18 @@ test("staff pickup roster groups one Taipei day and excludes private receipt and
     ],
   });
   assert.deepEqual((await (await call(endpoint+"?date=2026-11-27",staff)).json()).windows,[]);
+  const selected=endpoint+"?date="+date+"&slot="+first;
+  assert.equal((await call(selected)).status,403);
+  const filtered=await call(selected,staff);
+  assert.equal(filtered.status,200);
+  assert.equal(filtered.headers.get("Cache-Control"),"no-store");
+  const day=JSON.parse(raw);
+  assert.deepEqual(await filtered.json(),{...day,totals:{bookings:1,portions:2,cancelled:1},windows:[day.windows[0]]});
+  assert.deepEqual(await (await call(endpoint+"?date="+date+"&slot="+(later+900_000),staff)).json(),
+    {...day,totals:{bookings:0,portions:0,cancelled:0},windows:[]});
+  for(const slot of ["",first+1,first+86_400_000,"NaN"]){
+    assert.equal((await call(endpoint+"?date="+date+"&slot="+slot,staff)).status,400);
+  }
 });
 
 test("authorized staff can close, raise and reset an individual slot without displacing bookings",async t=>{

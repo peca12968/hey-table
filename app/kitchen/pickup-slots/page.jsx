@@ -2,7 +2,7 @@
 import {useEffect,useState} from "react";
 import {Header,Footer,request} from "../../shared";
 import {businessDate} from "../../../lib/business-day.mjs";
-import {pickupWindow} from "../../../lib/pickup-slots.mjs";
+import {pickupRosterPath,pickupWindow} from "../../../lib/pickup-slots.mjs";
 import "./slots.css";
 
 const endpoint="/api/kitchen/pickup-slots";
@@ -11,13 +11,14 @@ function staffHeaders(){
   return key?{Authorization:"Bearer "+key}:{};
 }
 
-function SlotLimit({slot,defaultCapacity,busy,onSave}){
+function SlotLimit({slot,date,defaultCapacity,busy,onSave}){
   const windowText=pickupWindow(slot.start);
   const [value,setValue]=useState(slot.capacity??"");
   const capacity=value===""?null:Number(value);
   return <article className="sheet slotLimit" aria-label={windowText}>
     <h2>{windowText}</h2>
     <p>已占用 {slot.used} 份 · 剩餘 {slot.remaining} 份</p>
+    <a className="textLink slotRosterLink" href={pickupRosterPath(date,slot.start)}>查看此時段預約</a>
     {slot.editable?<form className="actions" onSubmit={event=>{
       event.preventDefault();
       if(!busy)onSave(slot,capacity);
@@ -78,15 +79,18 @@ export default function PickupSlotLimits(){
         <h2>整日預約</h2>
         <p>{current.intake.accepting?"依各時段上限受理預約。":"已暫停這天的新預約與改入。既有預約及各時段上限已保留。"}</p>
       </div>
-      {current.intake.editable&&<button className="outline" disabled={busy} onClick={()=>{
-        const accepting=!current.intake.accepting;
-        save("/api/kitchen/pickup-day",{date:current.date,accepting,revision:current.intake.revision},
-          current.date+(accepting?" 已恢復預約。":" 已暫停整日預約。"));
-      }}>{current.intake.accepting?"暫停整日預約":"恢復整日預約"}</button>}
+      <div className="actions">
+        <a className="outline" href={pickupRosterPath(current.date)}>查看當日預約</a>
+        {current.intake.editable&&<button className="outline" disabled={busy} onClick={()=>{
+          const accepting=!current.intake.accepting;
+          save("/api/kitchen/pickup-day",{date:current.date,accepting,revision:current.intake.revision},
+            current.date+(accepting?" 已恢復預約。":" 已暫停整日預約。"));
+        }}>{current.intake.accepting?"暫停整日預約":"恢復整日預約"}</button>}
+      </div>
     </section>}
     {current&&rows.length===0&&<p role="status">這天目前沒有可調整的時段。</p>}
     {current&&rows.length>0&&<div className="pickupLimitGrid">
-      {rows.map(slot=><SlotLimit key={slot.start+":"+slot.revision} slot={slot} defaultCapacity={current.defaultCapacity} busy={busy}
+      {rows.map(slot=><SlotLimit key={slot.start+":"+slot.revision} slot={slot} date={current.date} defaultCapacity={current.defaultCapacity} busy={busy}
         onSave={(slot,capacity)=>save(endpoint,{date:current.date,start:slot.start,capacity,revision:slot.revision},
           pickupWindow(slot.start)+" 的份數上限已儲存。")}/>)}
     </div>}
