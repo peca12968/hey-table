@@ -46,6 +46,8 @@ def test_offline_count_against_stockroom_snapshot(tmp_path):
             {"sku": "KIT-01", "capacity": 20, "available": 14},
         ]}
         assert client.get("/inventory").json() == snapshot["products"]
+        basis = client.get("/inventory/KIT-01/count-basis").raise_for_status().json()
+        assert basis["captured_at_ms"] == snapshot["captured_at_ms"]
         now[0] = 102
         assert client.get("/inventory-snapshot").json() == {"captured_at_ms": 102_000, "products": [
             {"sku": "KIT-01", "capacity": 20, "available": 20},
@@ -80,3 +82,13 @@ def test_offline_count_against_stockroom_snapshot(tmp_path):
     balanced = display("balanced", check(0))
     demo = json.loads((COUNT_RELAY / "examples" / "stockroom-audit.json").read_bytes())
     assert demo == [review, variance, balanced]
+
+    committed = result["products"]["KIT-01"]
+    with TestClient(create_app(tmp_path / "stock.db", clock=lambda: now[0])) as restarted:
+        receipt = restarted.post("/inventory/KIT-01/count-adjustments", headers={"Idempotency-Key": "adjust-shift-1"},
+                                 json={"expected_revision": basis["revision"], "counted": committed["counted"],
+                                       "count_session": result["session"], "reason": "Completed recount"})
+        assert receipt.status_code == 201
+        assert receipt.json()["count_session"] == "shift-1"
+        assert receipt.json()["counted"] == 19
+        assert restarted.get("/inventory").json() == [{"sku": "KIT-01", "capacity": 19, "available": 19}]

@@ -8,7 +8,7 @@ from typing import Annotated, Literal
 
 from fastapi import FastAPI, Header, HTTPException, Query, Response
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints, field_validator
 from prometheus_client import CollectorRegistry, Counter, generate_latest, CONTENT_TYPE_LATEST
 
 from .metrics import RequestMetrics
@@ -114,6 +114,34 @@ class Product(BaseModel):
 class InventorySnapshot(BaseModel):
     captured_at_ms: int
     products: list[Product]
+
+
+class StockCountBasis(Product):
+    captured_at_ms: int
+    held: int
+    revision: int
+
+
+class StockCountAdjustment(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    expected_revision: int = Field(strict=True, ge=0, le=2**63 - 1)
+    counted: int = Field(strict=True, ge=0, le=2**63 - 1)
+    count_session: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=80)]
+    reason: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=240)]
+
+
+class StockCountReceipt(BaseModel):
+    id: str
+    sku: str
+    count_session: str
+    reason: str
+    recorded_at_ms: int
+    previous_revision: int
+    previous_capacity: int
+    previous_available: int
+    counted: int
+    available: int
+    revision: int
 
 
 class ExpiringReservation(BaseModel):
@@ -428,6 +456,26 @@ def create_app(path: Path, *, ttl_seconds=900, clock=time.time):
     def inventory_snapshot(response: Response):
         response.headers["Cache-Control"] = "no-store"
         return store.inventory_snapshot()
+
+    @app.get("/inventory/{sku}/count-basis", response_model=StockCountBasis)
+    def stock_count_basis(sku: str, response: Response):
+        response.headers["Cache-Control"] = "no-store"
+        return store.stock_count_basis(sku)
+
+    @app.post("/inventory/{sku}/count-adjustments", response_model=StockCountReceipt, status_code=201,
+              responses={200: {"model": StockCountReceipt, "description": "Original stock count receipt"}})
+    def adjust_stock_count(sku: str, adjustment: StockCountAdjustment, response: Response, idempotency_key: RequestKey):
+        receipt, created = store.adjust_stock_count(sku, idempotency_key, adjustment.expected_revision,
+                                                   adjustment.counted, adjustment.count_session, adjustment.reason)
+        response.headers["Cache-Control"] = "no-store"
+        if not created:
+            response.status_code = 200
+        return receipt
+
+    @app.get("/inventory/{sku}/count-adjustments/{adjustment_id}", response_model=StockCountReceipt)
+    def stock_count_receipt(sku: str, adjustment_id: BoxKey, response: Response):
+        response.headers["Cache-Control"] = "no-store"
+        return store.stock_count_adjustment(sku, adjustment_id)
 
     @app.get("/expiring-reservations", response_model=ExpiryQueue)
     def expiring_reservations(

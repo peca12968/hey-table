@@ -74,6 +74,8 @@ python stockroom_check.py counts.json inventory.json scope.json
 
 端對端測試也會將實際命令輸出與 [作品站的三種示範結果](examples/stockroom-audit.json) 比對，涵蓋待複點、短少一件與盤點吻合。
 
+要入帳時，將已確認的實點數與盤點場次帶到 Stockroom 的調整單，並使用盤點截止時取得的該 SKU 版次。有待複點或缺讀數時先完成盤點。若現場進出貨已改變版次，系統會退回原調整申請。[保存盤點差異](../stockroom-reservations/README.md#核對實點後調整庫存)
+
 ## 為何不同傳送順序仍能得到相同結果
 
 每筆盤點紀錄有 UUID，並記下它取代的所有已知同批次讀數。兩個快照合併時取紀錄聯集，同一 UUID 的內容必須一致。仍未被後續紀錄取代的讀數共同決定該批次的狀態。裝置時鐘快慢不影響判定。檢查審閱版本與寫入複點結果共用一筆 SQLite 寫入交易。[合併與複點實作](count_relay.py)

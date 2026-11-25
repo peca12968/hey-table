@@ -55,6 +55,10 @@ RECEIPT_QUERIES = {
         """SELECT s.reservation_id, s.release_id, s.quantity
         FROM reservation_releases s JOIN reservations r ON r.id=s.reservation_id WHERE r.sku=?""",
     ),
+    "stock_count_adjustments": (
+        "count_adjustment",
+        "SELECT id, counted - previous_capacity FROM stock_count_adjustments WHERE sku=?",
+    ),
 }
 
 
@@ -208,7 +212,10 @@ def reconcile(opening, closing_snapshot, sku):
     ]
     additions = []
     movement = {"inbound": 0, "dispatch": 0, "restock": 0, "release": 0}
-    for key in sorted(before.receipts.keys() | after.receipts.keys()):
+    keys = before.receipts.keys() | after.receipts.keys()
+    if any(kind == "count_adjustment" for kind, *_ in keys):
+        movement["count_adjustment"] = 0
+    for key in sorted(keys):
         kind, *ids = key
         previous = before.receipts.get(key)
         current = after.receipts.get(key)
@@ -232,6 +239,7 @@ def reconcile(opening, closing_snapshot, sku):
         + movement["inbound"]
         - movement["dispatch"]
         + movement["restock"]
+        + movement.get("count_adjustment", 0)
     )
     difference = after.capacity - expected
     if difference:
@@ -247,6 +255,8 @@ def reconcile(opening, closing_snapshot, sku):
         "released": 0,
         "expired": 0,
     }
+    if "count_adjustment" in movement:
+        changes["count_adjustment"] = movement["count_adjustment"]
     for event in events:
         sign = -1 if event["kind"] == "reserve" else 1
         changes[event["kind"]] += sign * event["quantity"]

@@ -49,6 +49,16 @@ python -m uvicorn stockroom.api:app
 
 `GET /inventory-snapshot` 回傳 `captured_at_ms` 和依 SKU 排序的 `products`，兩者取自同一筆會結算到期保留的交易。結果包含全庫商品，可直接儲存為 JSON，當作 [Count Relay 實物盤點核對](../count-relay/README.md#核對實物盤點與-stockroom-庫存) 的帳面庫存依據。
 
+### 核對實點後調整庫存
+
+取得該 SKU 的盤點基準 `GET /inventory/KIT-01/count-basis`，記下實體庫存 `capacity` 和版次 `revision`。盤點與取得基準應使用同一個截止點。複點確認後，將實點值和場次帶到 `POST /inventory/KIT-01/count-adjustments`。標頭 `Idempotency-Key` 為調整單號。
+
+```json
+{"expected_revision":0,"counted":18,"count_session":"shift-1","reason":"實點複核短少兩件"}
+```
+
+SQLite 在同一筆交易核對實體庫存版次、結算到期保留並保存調整收據。出貨或入庫後即使庫存回到原數量，舊版次也會被退回。實點數不得低於仍在保留的件數。原本帳面 20 件且保留 6 件時，實點 18 件會把可用量改為 12 件。若實點吻合，仍可保存盤點收據。送出成功後可用 `GET /inventory/KIT-01/count-adjustments/{adjustment_id}` 查閱調整前後庫存、盤點原因與時間，原樣重送會取回同一份收據。兩份 SQLite 備份的盤點差異也會計入這項異動。[版次、舊庫及回滾測試](tests/test_stock_count.py)
+
 ## 一次保留多種商品
 
 以 `POST /reservation-batches` 帶上 `Idempotency-Key: order-24`。請求可含一至 100 個不同 SKU。範例假設倉庫已有 `KIT-01` 與 `WRAP-01`。

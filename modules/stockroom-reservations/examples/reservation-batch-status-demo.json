@@ -579,5 +579,34 @@
         "next": null
       }
     ]
+  },
+  "stock_count": {
+    "basis": {
+      "sku": "KIT-01",
+      "capacity": 20,
+      "available": 14,
+      "captured_at_ms": 800000,
+      "held": 6,
+      "revision": 0
+    },
+    "blocked_count": 5,
+    "blocked_status": 409,
+    "saved_status": 201,
+    "receipt": {
+      "id": "verified-count",
+      "sku": "KIT-01",
+      "count_session": "count-shift-1",
+      "reason": "\u5be6\u9ede\u8907\u6838\u77ed\u5c11\u5169\u4ef6",
+      "recorded_at_ms": 801000,
+      "previous_revision": 0,
+      "previous_capacity": 20,
+      "previous_available": 14,
+      "counted": 18,
+      "available": 12,
+      "revision": 1
+    },
+    "stale_status": 409,
+    "replay_status": 200,
+    "same_receipt": true
   }
 }

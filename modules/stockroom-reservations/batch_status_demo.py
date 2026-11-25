@@ -104,7 +104,8 @@ def capture(db):
     return {"stages": stages, "renewal_batch": renewal_batch, "release_batch": release_batch,
             "replacement": capture_replacement(db), "batch_replacement": capture_batch_replacement(db),
             "dispatch_preview": capture_dispatch_preview(db),
-            "expiry_history": capture_expiry_history(db.with_name("expiry-history.db"))}
+            "expiry_history": capture_expiry_history(db.with_name("expiry-history.db")),
+            "stock_count": capture_stock_count(db.with_name("stock-count.db"))}
 
 
 def capture_release_batch(api):
@@ -306,6 +307,29 @@ def capture_expiry_history(db):
         now = 707
         next_page = api.get("/expired-reservations", params={**scope, **first["next"]}).raise_for_status().json()
         return {"sku": scope["sku"], "pages": [first, next_page]}
+
+
+def capture_stock_count(db):
+    now = 800
+    with TestClient(create_app(db, clock=lambda: now)) as api:
+        api.post("/reservations", headers={"Idempotency-Key": "active-order"},
+                 json={"sku": "KIT-01", "quantity": 6}).raise_for_status()
+        basis = api.get("/inventory/KIT-01/count-basis").raise_for_status().json()
+        path = "/inventory/KIT-01/count-adjustments"
+        draft = {"expected_revision": basis["revision"], "counted": 18,
+                 "count_session": "count-shift-1", "reason": "實點複核短少兩件"}
+        headers = {"Idempotency-Key": "verified-count"}
+        blocked = api.post(path, headers=headers, json={**draft, "counted": 5})
+        now = 801
+        saved = api.post(path, headers=headers, json=draft)
+        receipt = saved.raise_for_status().json()
+        stale = api.post(path, headers={"Idempotency-Key": "older-draft"}, json={**draft, "counted": 19})
+        now = 802
+        replay = api.post(path, headers=headers, json=draft)
+        retrieved = api.get(path + "/" + receipt["id"]).raise_for_status().json()
+        return {"basis": basis, "blocked_count": 5, "blocked_status": blocked.status_code,
+                "saved_status": saved.status_code, "receipt": receipt, "stale_status": stale.status_code,
+                "replay_status": replay.status_code, "same_receipt": receipt == replay.json() == retrieved}
 
 
 if __name__ == "__main__":

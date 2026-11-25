@@ -25,6 +25,31 @@ CREATE TABLE IF NOT EXISTS products (
     capacity INTEGER NOT NULL CHECK (capacity >= 0),
     available INTEGER NOT NULL CHECK (available BETWEEN 0 AND capacity)
 );
+CREATE TABLE IF NOT EXISTS inventory_revisions (
+    sku TEXT PRIMARY KEY REFERENCES products(sku),
+    revision INTEGER NOT NULL CHECK (typeof(revision)='integer' AND revision>0)
+);
+CREATE TRIGGER IF NOT EXISTS track_inventory_capacity
+AFTER UPDATE OF capacity ON products WHEN NEW.capacity<>OLD.capacity
+BEGIN
+    INSERT INTO inventory_revisions(sku,revision) VALUES (NEW.sku,1)
+    ON CONFLICT(sku) DO UPDATE SET revision=revision+1;
+END;
+CREATE TABLE IF NOT EXISTS stock_count_adjustments (
+    id TEXT PRIMARY KEY,
+    sku TEXT NOT NULL REFERENCES products(sku),
+    count_session TEXT NOT NULL,
+    reason TEXT NOT NULL,
+    recorded_at_ms INTEGER NOT NULL,
+    previous_revision INTEGER NOT NULL CHECK (previous_revision>=0),
+    previous_capacity INTEGER NOT NULL,
+    previous_available INTEGER NOT NULL CHECK (previous_available BETWEEN 0 AND previous_capacity),
+    counted INTEGER NOT NULL,
+    available INTEGER NOT NULL CHECK (available BETWEEN 0 AND counted),
+    revision INTEGER NOT NULL,
+    CHECK (counted - available = previous_capacity - previous_available),
+    CHECK (revision = previous_revision + (counted <> previous_capacity))
+);
 CREATE TABLE IF NOT EXISTS reservations (
     id TEXT PRIMARY KEY,
     sku TEXT NOT NULL REFERENCES products(sku),
@@ -223,6 +248,55 @@ class Store:
         with self.current_inventory() as (conn, now):
             products = [dict(row) for row in conn.execute("SELECT * FROM products ORDER BY sku")]
             return {"captured_at_ms": now, "products": products}
+
+    @staticmethod
+    def stock_count_product(conn, sku):
+        row = conn.execute("""SELECT products.*, COALESCE(inventory_revisions.revision,0) AS revision
+                              FROM products LEFT JOIN inventory_revisions USING(sku)
+                              WHERE products.sku=?""", (sku,)).fetchone()
+        if row is None:
+            raise Missing("Unknown SKU")
+        return dict(row)
+
+    def stock_count_basis(self, sku):
+        with self.current_inventory() as (conn, now):
+            product = self.stock_count_product(conn, sku)
+            return {**product, "captured_at_ms": now, "held": product["capacity"] - product["available"]}
+
+    @staticmethod
+    def stock_count_row(conn, key):
+        return conn.execute("SELECT * FROM stock_count_adjustments WHERE id=?", (key,)).fetchone()
+
+    def adjust_stock_count(self, sku, key, expected_revision, counted, count_session, reason):
+        with self.current_inventory() as (conn, now):
+            prior = self.stock_count_row(conn, key)
+            if prior is not None:
+                original = tuple(prior[name] for name in ("sku", "previous_revision", "counted", "count_session", "reason"))
+                if original != (sku, expected_revision, counted, count_session, reason):
+                    raise Conflict("Adjustment key already used with different input")
+                return dict(prior), False
+            product = self.stock_count_product(conn, sku)
+            if product["revision"] != expected_revision:
+                raise Conflict("Physical stock changed since the count basis")
+            held = product["capacity"] - product["available"]
+            if counted < held:
+                raise Conflict("Count is below the units still reserved")
+            available = counted - held
+            conn.execute("UPDATE products SET capacity=?, available=? WHERE sku=?", (counted, available, sku))
+            revision = self.stock_count_product(conn, sku)["revision"]
+            conn.execute("""INSERT INTO stock_count_adjustments
+                (id,sku,count_session,reason,recorded_at_ms,previous_revision,previous_capacity,previous_available,counted,available,revision)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+                         (key, sku, count_session, reason, now, expected_revision, product["capacity"], product["available"],
+                          counted, available, revision))
+            return dict(self.stock_count_row(conn, key)), True
+
+    def stock_count_adjustment(self, sku, key):
+        with closing(self.connect()) as conn:
+            row = self.stock_count_row(conn, key)
+            if row is None or row["sku"] != sku:
+                raise Missing("Unknown stock count adjustment")
+            return dict(row)
 
     def expiring_reservations(self, within_seconds, limit, sku, through_ms, after):
         with self.current_inventory() as (conn, now):
