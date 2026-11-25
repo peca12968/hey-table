@@ -15,7 +15,7 @@ import {canReschedulePickup,capacityAtPickupSlot,editablePickupSlots,orderPortio
   savePickupSlotLimits,suggestCartPickupSlot,
   suggestPickupSlot,usedAtPickupSlot} from "./pickup-slots.mjs";
 import {pickupCalendar} from "./pickup-calendar.mjs";
-import {issuePickupPass,ownerPickupPass,readPickupPass,revokePickupPass} from "./pickup-pass.mjs";
+import {issuePickupPass,ownerPickupPass,readPickupPass,reportPickupPassArrival,revokePickupPass} from "./pickup-pass.mjs";
 import {pickupRoster} from "./pickup-roster.mjs";
 import {pickupWeek} from "./pickup-week.mjs";
 import {cashCorrectionHistory,cashReceiptColumn,collectCash,correctCashReceipt,dailyCashReceipts} from "./cash-receipts.mjs";
@@ -535,9 +535,11 @@ export async function api(request, env) {
       return fail("送單識別碼已用於另一張訂單",409);
     return json(saved);
   }
-  if(path==="/api/pickup-pass"&&method==="GET"){
+  const passArrival=path==="/api/pickup-pass/arrival"&&method==="POST";
+  if((path==="/api/pickup-pass"&&method==="GET")||passArrival){
     const pass=request.headers.get("X-Pickup-Pass");
-    const row=uuid.test(pass)?await readPickupPass(db,pass,Date.now()):null;
+    const load=passArrival?reportPickupPassArrival:readPickupPass;
+    const row=uuid.test(pass)?await load(db,pass,Date.now()):null;
     return row?json(row):fail("代取連結已失效，請向原訂餐人確認。",404);
   }
   if(path==="/api/ticket/pickup-pass"&&["GET","POST","PATCH"].includes(method)){

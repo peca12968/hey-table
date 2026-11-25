@@ -13,6 +13,7 @@ import {QuoteSummary} from "../cart-quote";
 import CancelReceipt from "./cancel-receipt";
 import ReschedulePickup from "../reschedule-pickup";
 import PickupCalendar from "./pickup-calendar";
+import PickupArrival from "../pickup-arrival";
 import PickupCode from "../pickup-code";
 import PickupPassShare from "./pickup-pass-share";
 import CashReceipt from "../cash-receipt";
@@ -38,30 +39,6 @@ function OrderProgress({history}){
       {at===null?<small>時間未記錄</small>:<time dateTime={new Date(at).toISOString()}>{progressTime.format(at)}</time>}
     </li>)}</ol>
   </section>;
-}
-
-function PickupArrival({order,token,onChange}){
-  const [reportedAt,setReportedAt]=useState(null),[busy,setBusy]=useState(false),[error,setError]=useState("");
-  const arrivedAt=order.pickupArrivedAt??reportedAt;
-  const eligible=["preparing","ready"].includes(order.status)&&canPrepare(order);
-  if(arrivedAt===null&&!eligible)return null;
-  async function report(){
-    setBusy(true);setError("");
-    try{
-      const result=await request("/api/ticket/arrival",{method:"POST",headers:{"Content-Type":"application/json","X-Ticket":token},
-        body:"{}",signal:AbortSignal.timeout(10_000)});
-      setReportedAt(result.pickupArrivedAt);
-    }catch(failure){
-      setError(failure.status?failure.message:"尚未收到到店回報結果，請再試一次。");
-    }finally{
-      setBusy(false);onChange();
-    }
-  }
-  return <div className="pickupArrival">
-    {arrivedAt!==null?<p role="status">已回報到店 · <time dateTime={new Date(arrivedAt).toISOString()}>{progressTime.format(arrivedAt)}</time></p>:
-      <><button className="outline" type="button" disabled={busy} onClick={report}>{busy?"正在回報…":"我已到店"}</button>
-        {error&&<p role="alert">{error}</p>}</>}
-  </div>;
 }
 
 function ReceiptHistory({entries,active,open,onRemove}){
@@ -167,7 +144,8 @@ export default function Ticket(){
       <PickupCode key={"pickup-code-"+route.token} number={numberOf(order.id)}/>
       <PickupPassShare key={"pickup-pass-"+route.token} token={route.token}/>
     </>}
-    {order.mode==="pickup"&&<PickupArrival key={"pickup-arrival-"+route.token} order={order} token={route.token} onChange={refreshReceipt}/>}
+    {order.mode==="pickup"&&<PickupArrival key={"pickup-arrival-"+route.token} arrivedAt={order.pickupArrivedAt}
+      eligible={["preparing","ready"].includes(order.status)&&payable} token={route.token} onChange={refreshReceipt}/>}
     <OrderProgress history={order.statusHistory}/>
     <ul className="orderLines">{order.items.map(d=><li key={d.id}><div><b>{d.name} × {d.qty}</b><ItemNote note={d.note}/></div><span>NT$ {d.price*d.qty}</span></li>)}</ul>
     {order.combo&&<p>餐點原價 NT$ {order.combo.quote.subtotal} · 套餐折抵 NT$ {order.combo.quote.discount}</p>}

@@ -2,6 +2,8 @@ import {payableForKitchen} from "./payment-api.mjs";
 
 const lifetime=30*60_000;
 const eligible=`orders.mode='pickup' AND orders.status='ready' AND ${payableForKitchen}`;
+const activePass=`FROM pickup_passes AS pass JOIN orders ON orders.id=pass.order_id
+  WHERE pass.token_hash=? AND pass.expires_at>? AND ${eligible}`;
 const encoder=new TextEncoder();
 async function hashPass(token){
   const digest=await crypto.subtle.digest("SHA-256",encoder.encode(token.toLowerCase()));
@@ -49,8 +51,16 @@ export async function revokePickupPass(db,token,revision,now){
 }
 
 export async function readPickupPass(db,token,now){
-  const row=await db.prepare(`SELECT orders.id,orders.pickup_slot AS pickupSlot,pass.expires_at AS expiresAt
-    FROM pickup_passes AS pass JOIN orders ON orders.id=pass.order_id
-    WHERE pass.token_hash=? AND pass.expires_at>? AND ${eligible}`).bind(await hashPass(token),now).first();
-  return row;
+  return db.prepare(`SELECT orders.id,orders.pickup_slot AS pickupSlot,pass.expires_at AS expiresAt,
+    orders.pickup_arrived_at AS pickupArrivedAt ${activePass}`).bind(await hashPass(token),now).first();
+}
+
+export async function reportPickupPassArrival(db,token,now){
+  const digest=await hashPass(token);
+  const [,lookup]=await db.batch([
+    db.prepare(`UPDATE orders SET pickup_arrived_at=? WHERE pickup_arrived_at IS NULL
+      AND id=(SELECT orders.id ${activePass})`).bind(now,digest,now),
+    db.prepare(`SELECT orders.id,orders.pickup_arrived_at AS pickupArrivedAt ${activePass}`).bind(digest,now),
+  ]);
+  return lookup.results[0]??null;
 }

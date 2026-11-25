@@ -2,6 +2,7 @@
 
 import {useEffect,useState,useSyncExternalStore} from "react";
 import {Header,Footer,PickupAppointment,request} from "../shared";
+import PickupArrival from "../pickup-arrival";
 import PickupCode from "../pickup-code";
 import {numberOf} from "../../lib/menu.mjs";
 
@@ -16,6 +17,7 @@ const expiresTime=new Intl.DateTimeFormat("zh-TW",{timeZone:"Asia/Taipei",dateSt
 export default function SharedPickup(){
   const token=useSyncExternalStore(subscribe,browserPass,serverPass);
   const [revision,setRevision]=useState(0),[view,setView]=useState(null);
+  const [invalid,setInvalid]=useState(null);
   useEffect(()=>{
     if(!token)return;
     const abort=new AbortController();
@@ -36,7 +38,9 @@ export default function SharedPickup(){
     const timer=setInterval(load,5000);
     return ()=>{abort.abort();clearInterval(timer);};
   },[token,revision]);
-  const current=view?.token===token&&view.revision===revision?view:null,pass=current?.pass;
+  const current=invalid?.token===token&&invalid.revision===revision?invalid:
+    view?.token===token&&view.revision===revision?view:null;
+  const pass=current?.pass;
   return <><Header/><main className="shell narrow section"><article className="sheet pickupPass">
     <h1>{pass?"取餐號碼 "+numberOf(pass.id):"親友代取"}</h1>
     {token===""&&<p role="alert">請開啟原訂餐人提供的完整代取連結。</p>}
@@ -46,6 +50,8 @@ export default function SharedPickup(){
     {pass&&<>
       <p>餐點已備妥。</p>
       <PickupAppointment start={pass.pickupSlot}/>
+      <PickupArrival key={token} arrivedAt={pass.pickupArrivedAt} token={token} pass
+        onInvalid={error=>setInvalid({token,revision,error})}/>
       <PickupCode key={pass.id} number={numberOf(pass.id)}/>
       <p className="muted">連結有效至 <time dateTime={new Date(pass.expiresAt).toISOString()}>{expiresTime.format(pass.expiresAt)}</time></p>
     </>}

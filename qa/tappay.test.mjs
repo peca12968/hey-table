@@ -1383,7 +1383,7 @@ test("pickup pass scopes access to one receipt and expires, rotates and revokes 
   assert.equal((await issue(pass,0)).status,200);
   const guest=await read(pass);
   assert.equal(guest.headers.get("Cache-Control"),"no-store");
-  assert.deepEqual(await guest.json(),{id:1,pickupSlot:1800000,expiresAt:1801000});
+  assert.deepEqual(await guest.json(),{id:1,pickupSlot:1800000,expiresAt:1801000,pickupArrivedAt:null});
   assert.equal((await call("/ticket",{headers:{"X-Ticket":pass}})).status,404);
   assert.equal((await owner(pass)).status,404);
   assert.equal((await call("/kitchen/pickup?id=1",{headers:{"X-Pickup-Pass":pass}})).status,403);
@@ -1416,6 +1416,61 @@ test("pickup pass scopes access to one receipt and expires, rotates and revokes 
     body:JSON.stringify({id:1,from:"ready",to:"completed"})})).status,200);
   assert.equal((await read(closing)).status,404);
   assert.equal((await issue(closing,4)).status,409);
+});
+
+test("a pickup delegate and receipt owner share the first arrival with staff",async t=>{
+  const db=database();
+  t.after(()=>db.sqlite.close());
+  let now=60_000;
+  t.mock.method(Date,"now",()=>now);
+  const env={DB:db,STAFF_KEY:"fixture-staff"},staff={Authorization:"Bearer fixture-staff"};
+  const call=(path,options)=>api(new Request("https://order.example/api"+path,options),env);
+  const post=(path,headers,body={},method="POST")=>call(path,{method,
+    headers:{"Content-Type":"application/json",...headers},body:JSON.stringify(body)});
+  const original=crypto.randomUUID(),pass=crypto.randomUUID(),rotated=crypto.randomUUID(),expired=crypto.randomUUID();
+  const owner={"X-Ticket":original},auth=token=>({"X-Pickup-Pass":token});
+  const issue=(token,revision)=>post("/ticket/pickup-pass",owner,{pass:token,revision});
+  const arrive=(token,extra={})=>post("/pickup-pass/arrival",{...auth(token),...extra});
+  const id=Number(db.sqlite.prepare(`INSERT INTO orders(token,mode,status,items,note,total,created)
+    VALUES (?,'pickup','ready','[]','original receipt only',45,1)`).run(original).lastInsertRowid);
+  const confirmation={id,pickupArrivedAt:now};
+  assert.equal((await issue(pass,0)).status,200);
+  assert.equal((await post("/pickup-pass/arrival",owner)).status,404);
+  assert.equal((await arrive(original)).status,404);
+  assert.equal((await arrive(pass,{Origin:"https://other.example"})).status,403);
+  assert.equal((await post("/ticket/arrival",{"X-Ticket":pass})).status,404);
+  const first=await call("/pickup-pass",{headers:auth(pass)});
+  assert.equal((await first.json()).pickupArrivedAt,null);
+
+  const [delegate,customer]=await Promise.all([arrive(pass),post("/ticket/arrival",owner)]);
+  assert.equal(delegate.headers.get("Cache-Control"),"no-store");
+  for(const response of [delegate,customer]){
+    assert.equal(response.status,200);
+    assert.deepEqual(await response.json(),confirmation);
+  }
+  const [receipt,lookup,queue]=await Promise.all([
+    call("/ticket",{headers:owner}),call("/kitchen/pickup?id="+id,{headers:staff}),call("/kitchen",{headers:staff}),
+  ]);
+  assert.equal((await receipt.json()).pickupArrivedAt,now);
+  assert.equal((await lookup.json()).pickupArrivedAt,now);
+  assert.equal((await queue.json()).find(row=>row.id===id).pickupArrivedAt,now);
+  now+=5_000;
+  assert.deepEqual(await (await arrive(pass)).json(),confirmation);
+  const projection=await (await call("/pickup-pass",{headers:auth(pass)})).json();
+  assert.deepEqual(projection,{id,pickupSlot:null,expiresAt:1860000,pickupArrivedAt:60000});
+  assert.equal((await issue(rotated,1)).status,200);
+  assert.equal((await arrive(pass)).status,404);
+  assert.deepEqual(await (await arrive(rotated)).json(),confirmation);
+  assert.equal((await post("/ticket/pickup-pass",owner,{revision:2},"PATCH")).status,200);
+  assert.equal((await arrive(rotated)).status,404);
+  const issued=await (await issue(expired,3)).json();
+  now=issued.expiresAt;
+  assert.equal((await arrive(expired)).status,404);
+  const closing=crypto.randomUUID();
+  assert.equal((await issue(closing,4)).status,200);
+  assert.equal((await post("/kitchen/status",staff,{id,from:"ready",to:"completed"},"PATCH")).status,200);
+  assert.equal((await arrive(closing)).status,404);
+  assert.equal(db.sqlite.prepare("SELECT pickup_arrived_at FROM orders WHERE id=?").get(id).pickup_arrived_at,confirmation.pickupArrivedAt);
 });
 
 test("pickup arrival uses the receipt credential and persists the first time through handoff",async t=>{
