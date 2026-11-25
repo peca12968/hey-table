@@ -613,6 +613,70 @@ test("a ready pickup QR opens the exact staff order without sharing the customer
   }finally{await staff.close();}
 });
 
+test("a staff phone updates the pickup estimate while the customer follows the original receipt",async({page,browser,request})=>{
+  const headers={Authorization:"Bearer local-test-kitchen"},token=randomUUID();
+  const response=await request.post("/api/orders",{data:{token,mode:"pickup",note:"",items:[{id:"sencha",qty:1}]}});
+  expect(response.ok()).toBe(true);
+  const {id}=await response.json(),number=String(id).padStart(4,"0");
+  const advance=(from,to)=>request.patch("/api/kitchen/status",{headers,data:{id,from,to}});
+  expect((await advance("pending","preparing")).ok()).toBe(true);
+  const staff=await browser.newContext({viewport:{width:360,height:780}});
+  try{
+    await page.setViewportSize({width:360,height:780});
+    await page.goto("/ticket#"+token);
+    await expect(page.getByRole("heading",{name:"取餐號碼 "+number})).toBeVisible();
+    const notification=page.getByRole("status").filter({hasText:"店家通知"});
+    const quote=page.getByRole("region",{name:"餐單出餐估算"});
+    await expect(quote).toBeVisible();
+    await staff.addInitScript(()=>sessionStorage.setItem("he-ri-staff","local-test-kitchen"));
+    const board=await staff.newPage(),attempts=[];
+    let saved;
+    await board.route("**/api/kitchen/pickup-delay",async route=>{
+      attempts.push(route.request().postDataJSON());
+      const result=await route.fetch();
+      expect(result.ok()).toBe(true);
+      saved=await result.json();
+      if(attempts.length===1)await route.abort();
+      else await route.fulfill({response:result});
+    });
+    await board.goto("/kitchen");
+    const card=board.locator(".kitchenTicket").filter({has:board.getByRole("heading",{name:"#"+number,exact:true})});
+    await card.getByText("通知取餐延誤",{exact:true}).click();
+    const editor=card.locator(".pickupDelay"),minutes=editor.getByRole("spinbutton",{name:"預計還需幾分鐘"});
+    await minutes.fill("12");
+    await editor.getByRole("button",{name:"通知顧客"}).click();
+    await expect(editor.getByRole("alert")).toHaveText("尚未收到更新結果，請重試原操作。");
+    await editor.getByRole("button",{name:"重試原操作"}).click();
+    await expect(editor.getByRole("status")).toHaveText("已更新顧客收據上的備妥時間。");
+    expect(attempts[0]).toEqual(attempts[1]);
+    const first=new Date(saved.readyAt).toISOString();
+    await page.getByRole("button",{name:"更新進度"}).click();
+    await expect(notification.locator("time")).toHaveAttribute("datetime",first);
+    await expect(quote).toHaveCount(0);
+    await editor.getByRole("button",{name:"撤回通知"}).click();
+    await expect(editor.getByRole("status")).toHaveText("已撤回備妥時間通知。");
+    await page.getByRole("button",{name:"更新進度"}).click();
+    await expect(notification).toHaveCount(0);
+    await expect(quote).toBeVisible();
+    await minutes.fill("4");
+    await editor.getByRole("button",{name:"通知顧客"}).click();
+    await expect(editor.getByRole("status")).toHaveText("已更新顧客收據上的備妥時間。");
+    await page.getByRole("button",{name:"更新進度"}).click();
+    await expect(notification.locator("time")).toHaveAttribute("datetime",new Date(saved.readyAt).toISOString());
+    expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBe(360);
+    expect(await board.evaluate(()=>document.documentElement.scrollWidth)).toBe(360);
+    await card.getByRole("button",{name:"完成製作"}).click();
+    await expect(editor).toHaveCount(0);
+    await page.getByRole("button",{name:"更新進度"}).click();
+    await expect(page.getByText("餐點已完成，請出示取餐號碼。")).toBeVisible();
+    await expect(notification).toHaveCount(0);
+  }finally{
+    await staff.close();
+    await advance("preparing","ready");
+    await advance("ready","completed");
+  }
+});
+
 test("a phone can share a revocable pickup pass without sharing the receipt",async({page,browser,request})=>{
   const headers={Authorization:"Bearer local-test-kitchen"},token=randomUUID();
   const order=await request.post("/api/orders",{data:{token,mode:"pickup",note:"原訂餐人備註",items:[{id:"sencha",qty:1}]}});

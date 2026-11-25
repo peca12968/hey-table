@@ -14,6 +14,7 @@ import ReturnReceipt from "./return-receipt";
 import PaymentSnapshot from "./payment-snapshot";
 import Intake from "./intake";
 import CashCollection from "./cash-collection";
+import PickupDelayEditor from "./pickup-delay-editor";
 import {methods,paymentStates,environmentLabel,canPrepare,canCancel} from "../../lib/payments.mjs";
 const action={preparing:"接單製作",ready:"完成製作",completed:"完成交餐",cancelled:"取消訂單"};
 const overdueStage={pending:"待接單",preparing:"製作中",ready:"待交餐"};
@@ -117,6 +118,8 @@ function KitchenTicket({order,busy,update,movePickup,recordCash,refresh,today,st
     <div className="total"><span>合計</span><b>NT$ {total}</b></div>
     {paymentMethod==="cash"&&["ready","completed"].includes(status)&&
       <CashCollection order={order} disabled={busy} submit={recordCash} onChange={refresh}/>}
+    {!handoffOnly&&order.mode==="pickup"&&status==="preparing"&&canPrepare(order)&&
+      <PickupDelayEditor id={id} record={order.pickupDelay} staffKey={staffKey} disabled={busy} onChange={refresh}/>}
     <div className="actions">
       {["ready","completed"].includes(status)&&<a className="outline" href={"/kitchen/handoff?id="+numberOf(id)}>交餐小票</a>}
       {workingByStation&&<a className="primary" href="/kitchen/station-work">查看分站進度</a>}

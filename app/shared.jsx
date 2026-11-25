@@ -9,6 +9,11 @@ export function Mode({table,source}) {return <span className="mode">{table?<Uten
 export function PickupAppointment({start}){
   return start==null?null:<p className="pickupSlotTime">預約取餐 <time dateTime={new Date(start).toISOString()}>{datedPickupWindow(start)}</time></p>;
 }
+const taipeiPickupTime=new Intl.DateTimeFormat("zh-TW",{month:"numeric",day:"numeric",
+  hour:"2-digit",minute:"2-digit",hourCycle:"h23",timeZone:"Asia/Taipei"});
+export function PickupDelayTime({at}){
+  return <time dateTime={new Date(at).toISOString()}>{taipeiPickupTime.format(at)}</time>;
+}
 export function Footer(){return <footer className="shell bottom"><span>禾日食堂 · 點餐作品展示</span><div><a href="/tables">桌牌 QR</a><a href="/kitchen">店家後台</a></div></footer>;}
 export async function request(url,options) {
   const res=await fetch(url,{cache:"no-store",...options});

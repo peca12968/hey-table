@@ -1476,6 +1476,69 @@ test("pickup pass scopes access to one receipt and expires, rotates and revokes 
   assert.equal((await issue(closing,4)).status,409);
 });
 
+test("staff pickup delay changes are versioned, retain their estimate on replay and close on readiness",async t=>{
+  const customer=crypto.randomUUID(),unpaid=crypto.randomUUID(),pending=crypto.randomUUID(),table=crypto.randomUUID();
+  const db=database((tag,sqlite)=>{
+    if(tag!=="0034_pickup_delay_updates")return;
+    const add=sqlite.prepare(`INSERT INTO orders(token,mode,status,items,note,total,created,pickup_slot,payment_method)
+      VALUES (?,?,?,'[]','private receipt note',45,1,?,?)`);
+    add.run(customer,"pickup","preparing",120_000,"cash");
+    add.run(unpaid,"pickup","preparing",null,"line_pay");
+    add.run(pending,"pickup","pending",null,"cash");
+    add.run(table,"table","preparing",null,"cash");
+  });
+  t.after(()=>db.sqlite.close());
+  let now=60_000;
+  t.mock.method(Date,"now",()=>now);
+  const env={DB:db,STAFF_KEY:"fixture-staff"},staff={Authorization:"Bearer fixture-staff"};
+  const call=(path,options)=>api(new Request("https://order.example/api"+path,options),env);
+  const ticket=(token=customer)=>call("/ticket?progress=1",{headers:{"X-Ticket":token}});
+  const update=(input,headers=staff)=>call("/kitchen/pickup-delay",{method:"PATCH",
+    headers:{"Content-Type":"application/json",...headers},body:JSON.stringify(input)});
+  const id=(await (await ticket()).json()).id;
+  const make=(minutes,revision=0,target=id)=>({id:target,revision,operationId:crypto.randomUUID(),minutes});
+  for(const token of [unpaid,pending,table]){
+    const other=(await (await ticket(token)).json()).id;
+    assert.equal((await update(make(5,0,other))).status,409);
+  }
+  assert.equal((await update(make(5,0,99_999))).status,404);
+  assert.equal((await update(make(5),{"X-Ticket":customer})).status,403);
+  assert.equal((await update(make(5),{...staff,Origin:"https://other.example"})).status,403);
+  assert.equal((await update(make(null))).status,409);
+  assert.equal((await update(make(241))).status,400);
+  const attempts=[make(7),make(12)],replies=await Promise.all(attempts.map(attempt=>update(attempt)));
+  assert.deepEqual(replies.map(result=>result.status).sort(),[200,409]);
+  const winner=replies.findIndex(result=>result.ok),saved=await replies[winner].json(),request=attempts[winner];
+  assert.deepEqual(saved,{id,revision:1,readyAt:now+request.minutes*60_000,recordedAt:now});
+  const receipt=await ticket();
+  assert.equal(receipt.headers.get("Cache-Control"),"no-store");
+  const original=await receipt.json();
+  assert.deepEqual(original.pickupDelay,{readyAt:saved.readyAt,recordedAt:saved.recordedAt,passed:false});
+  assert.equal(original.pickupSlot,120_000);
+  const booking=await (await call("/kitchen/pickup-booking?id="+id,{headers:staff})).json();
+  const board=await (await call("/kitchen",{headers:staff})).json();
+  assert.deepEqual(booking,board.find(row=>row.id===id));
+  assert.deepEqual(booking.pickupDelay,{revision:1,readyAt:saved.readyAt,recordedAt:saved.recordedAt});
+  now=saved.readyAt;
+  assert.deepEqual(await (await update(request)).json(),saved);
+  assert.equal((await update({...request,minutes:request.minutes+1})).status,409);
+  assert.equal((await (await ticket()).json()).pickupDelay.passed,true);
+  const clear=make(null,1);
+  const cleared=await (await update(clear)).json();
+  assert.equal(cleared.readyAt,null);
+  assert.equal(Object.hasOwn(await (await ticket()).json(),"pickupDelay"),false);
+  assert.deepEqual(await (await update(clear)).json(),cleared);
+  const latest=make(3,2);
+  assert.equal((await update(latest)).status,200);
+  const prepare=await call("/kitchen/status",{method:"PATCH",headers:{...staff,"Content-Type":"application/json"},
+    body:JSON.stringify({id,from:"preparing",to:"ready"})});
+  assert.equal(prepare.status,200);
+  assert.equal((await update(make(6,3))).status,409);
+  assert.equal((await update(latest)).status,200);
+  assert.equal(Object.hasOwn(await (await ticket()).json(),"pickupDelay"),false);
+  assert.equal(db.sqlite.prepare("SELECT count(*) AS total FROM pickup_delay_updates").get().total,3);
+});
+
 test("a pickup delegate and receipt owner share the first arrival with staff",async t=>{
   const db=database();
   t.after(()=>db.sqlite.close());

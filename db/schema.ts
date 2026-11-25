@@ -51,6 +51,17 @@ export const pickupPasses = sqliteTable("pickup_passes", {
   check("pickup_pass_revision",sql`${t.revision}>0`),
   check("pickup_pass_expiration",sql`(${t.expiresAt} IS NULL)=(${t.tokenHash} IS NULL)`),
 ]);
+export const pickupDelayUpdates = sqliteTable("pickup_delay_updates", {
+  orderId: integer("order_id").notNull().references(()=>orders.id),
+  revision: integer("revision").notNull(),
+  operationId: text("operation_id").notNull().unique(),
+  readyAt: integer("ready_at"),
+  recordedAt: integer("recorded_at").notNull(),
+}, t => [
+  primaryKey({columns:[t.orderId,t.revision]}),
+  check("pickup_delay_revision",sql`${t.revision}>0`),
+  check("pickup_delay_future",sql`${t.readyAt} IS NULL OR ${t.readyAt}>${t.recordedAt}`),
+]);
 export const demoRefunds = sqliteTable("demo_refunds", {
   orderId: integer("order_id").primaryKey().notNull().references(()=>orders.id),
   attemptId: integer("attempt_id").notNull().unique().references(()=>paymentAttempts.id),

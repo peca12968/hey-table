@@ -16,6 +16,7 @@ import {canReschedulePickup,capacityAtPickupSlot,editablePickupSlots,orderPortio
   suggestPickupSlot,usedAtPickupSlot} from "./pickup-slots.mjs";
 import {pickupCalendar} from "./pickup-calendar.mjs";
 import {issuePickupPass,ownerPickupPass,readPickupPass,reportPickupPassArrival,revokePickupPass} from "./pickup-pass.mjs";
+import {pickupDelayColumn,updatePickupDelay} from "./pickup-delay.mjs";
 import {pickupRoster} from "./pickup-roster.mjs";
 import {pickupWeek} from "./pickup-week.mjs";
 import {cashCorrectionHistory,cashReceiptColumn,collectCash,correctCashReceipt,dailyCashReceipts} from "./cash-receipts.mjs";
@@ -29,7 +30,7 @@ const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{1
 import {latestState,payableForKitchen,paymentApi,checkKitchenPayment,refundDemoPayment} from "./payment-api.mjs";
 import {demoRefundReport,demoRefundReceiptColumn,demoRefundReceiptText} from "./demo-refund-report.mjs";
 import {settings} from "./tappay.mjs";
-import {methods} from "../lib/payments.mjs";
+import {canPrepare,methods} from "../lib/payments.mjs";
 import {estimate} from "@peca12968/pickup-window";
 import {activeKitchen,demoKitchen,importTiming,stationLabels,timingChanges} from "../lib/kitchen-timing.mjs";
 import {finishStation,remainingStationItems,stationQueue} from "./station-work.mjs";
@@ -37,7 +38,7 @@ const timingRows = "SELECT revision,config FROM kitchen_timing ORDER BY revision
 const fromTimingRow = row => ({revision:row?.revision??0, kitchen:activeKitchen(row ? JSON.parse(row.config) : null)});
 const orderColumns = `SELECT orders.*, ${latestState} AS payment_state, ${cashReceiptColumn} AS cash_receipt`;
 const selectOrders = orderColumns+" FROM orders";
-const ticketWithRefund=`${orderColumns},${demoRefundReceiptColumn} FROM orders WHERE token=?`;
+const ticketWithRefund=`${orderColumns},${demoRefundReceiptColumn},${pickupDelayColumn} FROM orders WHERE token=?`;
 const kitchenPayableAt=`, CASE WHEN orders.status='pending' AND orders.payment_method<>'cash'
   THEN (SELECT kitchen_payable_at FROM payment_attempts WHERE order_id=orders.id ORDER BY id DESC LIMIT 1) END AS kitchen_payable_at`;
 const intakeRows = "SELECT mode,accepting,revision FROM order_intake";
@@ -74,6 +75,7 @@ function kitchenOrder(row,capturedAt){
   const booked=order.status==="pending"&&order.pickupSlot!=null;
   const changes=booked?pickupChanges(row):[];
   return {...order,...(row.station_progress?{stationProgress:true}:{}),
+    ...(row.pickup_delay&&order.status==="preparing"&&canPrepare(order)?{pickupDelay:JSON.parse(row.pickup_delay)}:{}),
     ...(overdue?{overdue}:{}),
     ...(booked?{pickupRevision:changes.length,...(changes.length?{latestPickupChange:changes.at(-1)}:{}),
       ...(canReschedulePickup(row,capturedAt)?{pickupUpcoming:true}:{})}:{}),
@@ -620,7 +622,11 @@ export async function api(request, env) {
         saved.canReschedulePickup=canReschedulePickup(row,now);
       }
     }
-    if(withTiming&&row.status==="preparing"){
+    if(row.pickup_delay&&row.status==="preparing"&&canPrepare(saved)){
+      const {readyAt,recordedAt}=JSON.parse(row.pickup_delay);
+      if(readyAt!==null)saved.pickupDelay={readyAt,recordedAt,passed:readyAt<=now};
+    }
+    if(withTiming&&row.status==="preparing"&&!saved.pickupDelay){
       const quote=receiptTiming(row,queue,timing);
       if(quote)saved.kitchenQuote=quote;
     }
@@ -817,7 +823,7 @@ export async function api(request, env) {
     const id=collectionId(url);
     if(id===null)return fail("請輸入有效的取餐號碼");
     const capturedAt=Date.now();
-    const [,lookup]=await db.batch([expirePaymentHolds(db,capturedAt),db.prepare(`${orderColumns}${kitchenPayableAt}
+    const [,lookup]=await db.batch([expirePaymentHolds(db,capturedAt),db.prepare(`${orderColumns}${kitchenPayableAt},${pickupDelayColumn}
       FROM orders WHERE id=? AND mode='pickup' AND pickup_slot IS NOT NULL`).bind(id)]);
     const row=lookup.results[0];
     return row?json(kitchenOrder(row,capturedAt)):fail("找不到這張預約自取餐單。",404);
@@ -865,9 +871,9 @@ export async function api(request, env) {
   }
   if ((path === "/api/kitchen" || path === "/api/kitchen/stations") && method === "GET") {
     const forBoard=path==="/api/kitchen";
-    const payableAt=forBoard?kitchenPayableAt:"";
+    const extra=forBoard?`${kitchenPayableAt},${pickupDelayColumn}`:"";
     const capturedAt=Date.now();
-    const [,queue] = await db.batch([expirePaymentHolds(db,capturedAt),db.prepare(`${orderColumns}${payableAt} FROM orders WHERE status NOT IN ('completed','cancelled')
+    const [,queue] = await db.batch([expirePaymentHolds(db,capturedAt),db.prepare(`${orderColumns}${extra} FROM orders WHERE status NOT IN ('completed','cancelled')
         OR id IN (SELECT id FROM orders WHERE status IN ('completed','cancelled') ORDER BY id DESC LIMIT 20)
         ORDER BY id DESC`)]);
     const {results}=queue;
@@ -879,6 +885,15 @@ export async function api(request, env) {
         }))});
     }
     return json(results.map(row=>kitchenOrder(row,capturedAt)));
+  }
+  if(path==="/api/kitchen/pickup-delay"&&method==="PATCH"){
+    const {id,revision,operationId,minutes}=input;
+    if(!Number.isSafeInteger(id)||id<1||!Number.isSafeInteger(revision)||revision<0||revision>=Number.MAX_SAFE_INTEGER||
+      typeof operationId!=="string"||!uuid.test(operationId)||(minutes!==null&&(!Number.isInteger(minutes)||minutes<1||minutes>240)))
+      return fail("餐號、版次或預計分鐘數無效。");
+    const update=await updatePickupDelay(db,{id,revision,operationId:operationId.toLowerCase(),minutes},Date.now());
+    if(update===null)return fail("找不到餐單。",404);
+    return update?json(update):fail("餐單或備妥時間已更新，請核對接單台。",409);
   }
   if (path === "/api/kitchen/table" && method === "PATCH") {
     const {id,from,to,revision}=input;

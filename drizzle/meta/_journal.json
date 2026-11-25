@@ -239,6 +239,13 @@
       "when": 1795588735469,
       "tag": "0033_pickup_passes",
       "breakpoints": true
+    },
+    {
+      "idx": 34,
+      "version": "6",
+      "when": 1795592669624,
+      "tag": "0034_pickup_delay_updates",
+      "breakpoints": true
     }
   ]
 }
