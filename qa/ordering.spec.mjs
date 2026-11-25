@@ -324,6 +324,18 @@ test("staff can view a Taiwan-date summary and download the displayed snapshot o
   const tableOrder=await table.json();
   for(const [from,to] of [["pending","preparing"],["preparing","ready"],["ready","completed"]])
     expect((await request.patch("/api/kitchen/status",{headers,data:{id:tableOrder.id,from,to}})).ok()).toBe(true);
+  const onlineToken=randomUUID(),onlineProof={"X-Ticket":onlineToken};
+  const onlineOrder=await request.post("/api/orders",{data:{token:onlineToken,mode:"pickup",note:"",paymentMethod:"line_pay",
+    items:[{id:"sencha",qty:1}]}});
+  expect(onlineOrder.ok(),await onlineOrder.text()).toBe(true);
+  const {id:onlineId}=await onlineOrder.json();
+  const launch=await request.post("/api/payments/start",{headers:onlineProof,data:{}});
+  expect(launch.ok()).toBe(true);
+  const {attempt}=await launch.json();
+  const paid=await request.post("/api/payments/demo",{headers:onlineProof,data:{ref:attempt.ref,outcome:"paid"}});
+  expect(paid.ok()).toBe(true);
+  for(const [from,to] of [["pending","preparing"],["preparing","ready"],["ready","completed"]])
+    expect((await request.patch("/api/kitchen/status",{headers,data:{id:onlineId,from,to}})).ok()).toBe(true);
   await page.goto("/kitchen");
   await page.getByRole("link",{name:"每日訂單摘要"}).click();
   const date=page.getByLabel("餐單日期");
@@ -360,6 +372,13 @@ test("staff can view a Taiwan-date summary and download the displayed snapshot o
   const punctuality=page.getByRole("region",{name:"預約自取備妥準時率"});
   expect(report.pickupPunctuality.totals.bookings).toBeGreaterThanOrEqual(0);
   await expect(punctuality).toBeVisible();
+  const payments=page.getByRole("region",{name:"已交餐付款方式摘要"});
+  const cashGroup=payments.getByRole("article",{name:"現場付款",exact:true});
+  const demoGroup=payments.getByRole("article",{name:"LINE Pay · 示範模式",exact:true});
+  await expect(cashGroup.getByRole("list",{name:"待核對餐號"})).toContainText("#"+String(id).padStart(4,"0")+" · 未登記現金");
+  await expect(demoGroup.getByText("已付款",{exact:true})).toBeVisible();
+  expect(report.paymentSummary.groups.find(group=>group.method==="line_pay"&&group.environment==="demo").statuses.paid)
+    .toBeGreaterThanOrEqual(1);
   expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBe(360);
   const pending=page.waitForEvent("download");
   await download.click();
@@ -387,6 +406,8 @@ test("staff can view a Taiwan-date summary and download the displayed snapshot o
   await expect(timing).toBeVisible();
   await expect(arrival).toBeVisible();
   await expect(punctuality).toBeVisible();
+  await expect(payments).toBeVisible();
+  await expect(cashGroup).toBeVisible();
   await expect(teaRow).toBeVisible();
   await page.emulateMedia({media:"screen"});
   await date.fill("2001-03-05");
@@ -398,6 +419,7 @@ test("staff can view a Taiwan-date summary and download the displayed snapshot o
   await expect(timing.getByText("目前無可用時間紀錄")).toHaveCount(4);
   await expect(arrival.getByText("目前無可用時間紀錄")).toHaveCount(3);
   await expect(punctuality.getByText("這一天沒有自取預約。")).toBeVisible();
+  await expect(payments.getByText("這一天沒有已交餐單。")).toBeVisible();
 });
 
 test("mobile daily pickup report opens the exact delayed booking and prints the displayed snapshot",async({page})=>{

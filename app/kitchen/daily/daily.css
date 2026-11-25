@@ -27,6 +27,9 @@
 .dailyTiming dt{font-weight:650}
 .dailyTiming dd>*{display:block;font-variant-numeric:tabular-nums}
 .dailyTiming dd small{color:var(--muted)}
+.dailyPayment h3 small{font-weight:500;color:var(--muted)}
+.dailyPayment p{margin:8px 0;color:var(--muted);overflow-wrap:anywhere}
+.dailyPayment ul{padding:0;margin:8px 0 0;list-style:none;font-size:.9rem}
 .punctualityWindows{display:grid;gap:10px;margin-top:16px}
 .punctualityWindows article{border-top:1px solid var(--line);padding-top:10px}
 .punctualityWindows p{margin:6px 0;color:var(--muted)}

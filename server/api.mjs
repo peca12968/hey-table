@@ -8,6 +8,7 @@ import {changePortionLimit,copyPortionLimits,dailyLimits,exceededOrderPortions,e
   readRemaining,restockHistory,restockPortions,restorePortionLimit,supplyTime} from "./daily-limits.mjs";
 import {expirePaymentHolds,noBlockingPayment,paymentHoldMs} from "./payment-holds.mjs";
 import {arrivalTiming,arrivalTimingRows,dailyTiming,dailyTimingRows,pickupPunctuality,pickupPunctualityRows} from "./daily-timing.mjs";
+import {dailyPaymentRows,dailyPaymentSummary} from "./daily-payment-summary.mjs";
 import {kitchenOverdue} from "./kitchen-overdue.mjs";
 import {bookedPickupDate,pickupBookingDays,pickupCalendarStatus,pickupPrepLead,pickupSlotCapacity,pickupSlotsForDay} from "../lib/pickup-slots.mjs";
 import {canReschedulePickup,capacityAtPickupSlot,editablePickupSlots,orderPortions,pickupChanges,pickupSlotLimits,
@@ -783,6 +784,12 @@ export async function api(request, env) {
     const includeTiming=url.searchParams.get("timing")==="1";
     const includeItemChannels=url.searchParams.get("itemChannels")==="1";
     const includePickupPunctuality=url.searchParams.get("pickupPunctuality")==="1";
+    const includePaymentSummary=url.searchParams.get("paymentSummary")==="1";
+    const optional={
+      ...(includeTiming?{timing:dailyTimingRows(db,range),arrival:arrivalTimingRows(db,range)}:{}),
+      ...(includePickupPunctuality?{pickup:pickupPunctualityRows(db,range)}:{}),
+      ...(includePaymentSummary?{payment:dailyPaymentRows(db,range)}:{}),
+    };
     const [,counts,portions,...details] = await db.batch([
       expirePaymentHolds(db,Date.now()),
       db.prepare(`SELECT mode, COUNT(*) AS orders, SUM(status='pending') AS pending,
@@ -797,8 +804,7 @@ export async function api(request, env) {
         FROM orders JOIN json_each(orders.items) AS line
         WHERE created>=? AND created<? AND status='completed'
         GROUP BY json_extract(line.value,'$.id') ORDER BY qty DESC, id`).bind(...range),
-      ...(includeTiming?[dailyTimingRows(db,range),arrivalTimingRows(db,range)]:[]),
-      ...(includePickupPunctuality?[pickupPunctualityRows(db,range)]:[]),
+      ...Object.values(optional),
     ]);
     const empty={orders:0,pending:0,preparing:0,ready:0,completed:0,cancelled:0,completedTotal:0};
     const channels={pickup:empty,table:empty};
@@ -810,9 +816,11 @@ export async function api(request, env) {
       id,name:names.get(id)??name??id,qty,...(includeItemChannels?{pickupQty,tableQty}:{}),
     }));
     const capturedAt=Date.now();
+    const rows=Object.fromEntries(Object.keys(optional).map((key,index)=>[key,details[index].results]));
     return json({format:"hey-table.daily-operations.v1",date,timeZone:"Asia/Taipei",capturedAt,channels,items,
-      ...(includeTiming?{timing:dailyTiming(details[0].results,capturedAt),arrivalTiming:arrivalTiming(details[1].results,capturedAt)}:{}),
-      ...(includePickupPunctuality?{pickupPunctuality:pickupPunctuality(details.at(-1).results,capturedAt)}:{})});
+      ...(includeTiming?{timing:dailyTiming(rows.timing,capturedAt),arrivalTiming:arrivalTiming(rows.arrival,capturedAt)}:{}),
+      ...(includePickupPunctuality?{pickupPunctuality:pickupPunctuality(rows.pickup,capturedAt)}:{}),
+      ...(includePaymentSummary?{paymentSummary:dailyPaymentSummary(rows.payment)}:{})});
   }
   if (path === "/api/kitchen/handoff" && method === "GET") {
     const id = collectionId(url);

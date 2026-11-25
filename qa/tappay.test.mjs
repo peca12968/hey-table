@@ -1370,6 +1370,62 @@ test("staff pickup roster groups one Taipei day and excludes private receipt and
   }
 });
 
+test("daily payment summary groups delivered orders by stored method and environment",async t=>{
+  const db=database();
+  t.after(()=>db.sqlite.close());
+  const date="2026-11-25",start=Date.parse(date+"T00:00:00+08:00"),end=start+86_400_000;
+  t.mock.method(Date,"now",()=>end+60_000);
+  const env={DB:db,STAFF_KEY:"fixture-staff"},staff={Authorization:"Bearer fixture-staff"};
+  const call=(query="",headers=staff)=>api(new Request("https://order.example/api/kitchen/daily?date="+date+query,{headers}),env);
+  const insert=db.sqlite.prepare(`INSERT INTO orders(token,mode,status,items,note,total,created,payment_method,payment_env)
+    VALUES (?,?,?,'[]','private receipt note',?,?,?,?)`);
+  const add=({method="cash",environment="cash",created=start,mode="pickup",status="completed",total=45}={})=>
+    Number(insert.run(crypto.randomUUID(),mode,status,total,created,method,environment).lastInsertRowid);
+  const pay=db.sqlite.prepare(`INSERT INTO payment_attempts(order_id,reference,merchant,state,created)
+    VALUES (?,?,'private merchant',?,?)`);
+  const cash=add(),missing=add({mode:"table",total:90});
+  db.sqlite.prepare("INSERT INTO cash_receipts(order_id,operation_id,amount,tendered,collected_at) VALUES (?,?,?,?,?)")
+    .run(cash,crypto.randomUUID(),45,50,end+1000);
+  const wallet=(method,environment,options={})=>add({method,environment,...options});
+  const production=wallet("line_pay","production"),authorization=wallet("line_pay","production",{total:90,created:end-1});
+  const demo=wallet("line_pay","demo"),refunded=wallet("px_pay_plus","demo");
+  const unrecorded=wallet("card","sandbox");
+  const legacy=wallet("line_pay","obsolete");
+  const cancelled=wallet("line_pay","production",{status:"cancelled"});
+  const ready=wallet("line_pay","production",{status:"ready"});
+  for(const [id,states] of [[production,["pending","paid"]],[authorization,["failed","authorized"]],
+    [demo,["paid"]],[refunded,["paid","refunded"]],[legacy,["paid"]],[cancelled,["paid"]],[ready,["paid"]]]){
+    for(const state of states)pay.run(id,`private-${id}-${state}`,state,start+1000);
+  }
+  add({created:start-1,total:999});
+  add({created:end,total:999});
+  assert.equal((await call("&paymentSummary=1",{})).status,403);
+  assert.equal(Object.hasOwn(await (await call("&timing=1&pickupPunctuality=1")).json(),"paymentSummary"),false);
+  const response=await call("&timing=1&pickupPunctuality=1&paymentSummary=1");
+  assert.equal(response.status,200);
+  assert.equal(response.headers.get("Cache-Control"),"no-store");
+  const raw=await response.text();
+  assert.ok(!raw.includes("private"));
+  const report=JSON.parse(raw);
+  assert.deepEqual(report.pickupPunctuality.windows,[]);
+  const {completed,needsReview,groups}=report.paymentSummary;
+  assert.equal(completed,8);
+  assert.equal(needsReview,4);
+  const byKey=new Map(groups.map(group=>[group.method+":"+group.environment,group]));
+  const check=(method,environment,completedTotal,statuses,review=[])=>{
+    const orders=Object.values(statuses).reduce((sum,count)=>sum+count,0);
+    assert.deepEqual(byKey.get(method+":"+environment),{method,environment,completedTotal,statuses,review,orders});
+  };
+  check("cash","cash","135",{cashRecorded:1,cashMissing:1},[{id:missing,state:"cashMissing"}]);
+  check("line_pay","production","135",{paid:1,authorized:1},[{id:authorization,state:"authorized"}]);
+  check("line_pay","demo","45",{paid:1});
+  check("px_pay_plus","demo","45",{refunded:1});
+  check("card","sandbox","45",{unpaid:1},[{id:unrecorded,state:"unpaid"}]);
+  check("line_pay","unknown","45",{paid:1},[{id:legacy,state:"paid"}]);
+  assert.equal(groups.reduce((sum,group)=>sum+Number(group.completedTotal),0),
+    report.channels.pickup.completedTotal+report.channels.table.completedTotal);
+});
+
 test("daily pickup punctuality uses the current booked date, cutoff and recorded readiness",async t=>{
   const db=database();
   t.after(()=>db.sqlite.close());

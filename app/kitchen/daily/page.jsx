@@ -5,6 +5,7 @@ import {useBusinessToday} from "../../use-business-today.mjs";
 import {downloadCsv} from "../../../lib/download-csv.mjs";
 import {downloadJson} from "../../../lib/download-json.mjs";
 import {numberOf} from "../../../lib/menu.mjs";
+import {methods,paymentStates} from "../../../lib/payments.mjs";
 import {pickupWindow} from "../../../lib/pickup-slots.mjs";
 import "./daily.css";
 
@@ -30,6 +31,31 @@ function ChannelSummary({name,summary}) {
       {statusFields.map(([key,label])=><div key={key}><dt>{label}</dt><dd>{summary[key]} 張</dd></div>)}
       <div><dt>已交餐單金額</dt><dd>NT$ {summary.completedTotal.toLocaleString("zh-TW")}</dd></div>
     </dl>
+  </section>;
+}
+
+const environmentNames={production:"正式付款",sandbox:"測試環境",demo:"示範模式",unknown:"環境未記錄"};
+const paymentStateNames={...paymentStates,cashRecorded:"已登記現金",cashMissing:"未登記現金",unknown:"付款狀態未記錄"};
+
+function PaymentSummary({summary}){
+  return <section className="sheet dailyTiming" aria-labelledby="daily-payment-title">
+    <h2 id="daily-payment-title">已交餐付款方式摘要</h2>
+    {summary.completed===0?<p>這一天沒有已交餐單。</p>:<>
+      <p>依餐單成立日統計原成交金額。共 {summary.completed} 張，{summary.needsReview} 張需核對。</p>
+      <div className="dailyTimingGrid dailyPayment">
+        {summary.groups.map(group=>{
+          const name=methods[group.method]??"付款方式未記錄",environment=environmentNames[group.environment];
+          return <article key={group.method+":"+group.environment} aria-label={[name,environment].filter(Boolean).join(" · ")}>
+            <h3>{name}{environment&&<small> · {environment}</small>}</h3>
+            <p>{group.orders} 張 · 原成交金額 NT$ {BigInt(group.completedTotal).toLocaleString("zh-TW")}</p>
+            <dl>{Object.entries(group.statuses).map(([state,count])=>
+              <div key={state}><dt>{paymentStateNames[state]}</dt><dd>{count} 張</dd></div>)}</dl>
+            {group.review.length>0&&<ul aria-label="待核對餐號">{group.review.map(({id,state})=>
+              <li key={id}>#{numberOf(id)} · {paymentStateNames[state]}</li>)}</ul>}
+          </article>;
+        })}
+      </div>
+    </>}
   </section>;
 }
 
@@ -118,7 +144,7 @@ export default function DailyOperations() {
     if(!queryDate)return;
     const controller=new AbortController();
     const key=sessionStorage.getItem("he-ri-staff");
-    request("/api/kitchen/daily?date="+encodeURIComponent(queryDate)+"&timing=1&itemChannels=1&pickupPunctuality=1",{
+    request("/api/kitchen/daily?date="+encodeURIComponent(queryDate)+"&timing=1&itemChannels=1&pickupPunctuality=1&paymentSummary=1",{
       signal:AbortSignal.any([controller.signal,AbortSignal.timeout(10_000)]),
       headers:key?{Authorization:"Bearer "+key}:{},
     }).then(value=>{
@@ -166,6 +192,7 @@ export default function DailyOperations() {
         <ChannelSummary name="自取" summary={report.channels.pickup}/>
         <ChannelSummary name="掃碼內用" summary={report.channels.table}/>
       </div>
+      {report.paymentSummary&&<PaymentSummary summary={report.paymentSummary}/>}
       {report.timing&&<DurationSummary timing={report.timing}/>}
       {report.arrivalTiming&&<ArrivalSummary timing={report.arrivalTiming}/>}
       {report.pickupPunctuality&&<PickupPunctuality date={report.date} report={report.pickupPunctuality}/>}
