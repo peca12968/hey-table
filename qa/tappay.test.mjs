@@ -3129,6 +3129,56 @@ test("pickup delay history pages stable revisions and only exposes the requested
   assert.equal(older.nextBefore,null);
 });
 
+test("daily pickup delay reports use Taiwan event dates and one snapshot for acknowledgements and follow-up",async t=>{
+  const db=database();
+  t.after(()=>db.sqlite.close());
+  const date="2026-11-25",start=Date.parse(date+"T00:00:00+08:00"),tomorrow=start+86_400_000,now=tomorrow+10_000;
+  t.mock.method(Date,"now",()=>now);
+  const create=db.sqlite.prepare("INSERT INTO orders(token,mode,status,items,note,total,created,payment_method) VALUES (?,?,?,'[]','',45,?,?)");
+  const order=(status="preparing",method="cash",mode="pickup")=>
+    Number(create.run(crypto.randomUUID(),mode,status,start-100_000,method).lastInsertRowid);
+  const insert=db.sqlite.prepare("INSERT INTO pickup_delay_updates(order_id,revision,operation_id,ready_at,recorded_at) VALUES (?,?,?,?,?)");
+  const ack=db.sqlite.prepare("INSERT INTO pickup_delay_acknowledgements VALUES (?,?,?)");
+  function notice(id,revision,recordedAt,readyAt,acknowledgedAt=null){
+    insert.run(id,revision,crypto.randomUUID(),readyAt,recordedAt);
+    if(acknowledgedAt!==null)ack.run(id,revision,acknowledgedAt);
+  }
+  const continued=order();
+  notice(continued,1,start-1,start+100,start+100);
+  notice(continued,2,start,start+2000,start+2000);
+  notice(continued,3,start+3000,start+5000,tomorrow+1000);
+  notice(continued,4,tomorrow,tomorrow+120_000);
+  const atBoundary=order(),earlier=order();
+  notice(atBoundary,1,tomorrow-1000,now);
+  notice(earlier,1,start+1000,start+9000);
+  const withdrawnTomorrow=order(),withdrawnToday=order();
+  notice(withdrawnTomorrow,1,start+1000,start+9000);
+  notice(withdrawnTomorrow,2,tomorrow,null);
+  notice(withdrawnToday,1,start-1000,start+9000);
+  notice(withdrawnToday,2,start+1000,null);
+  notice(order("completed"),1,start+1000,start+9000);
+  notice(order("preparing","line_pay"),1,start+1000,start+9000);
+  notice(order("preparing","cash","table"),1,start+1000,start+9000);
+  notice(order(),1,now+1000,now+90_000);
+  const headers={Authorization:"Bearer fixture-staff"};
+  const read=(day,options="&pickupDelays=1",proof=headers)=>api(new Request(
+    "https://order.example/api/kitchen/daily?date="+day+options,{headers:proof}),{DB:db,STAFF_KEY:"fixture-staff"});
+  assert.equal((await read(date,"&pickupDelays=1",{})).status,403);
+  assert.equal(Object.hasOwn(await (await read(date,"")).json(),"pickupDelays"),false);
+  const report=await (await read(date,"&timing=1&pickupDelays=1")).json();
+  assert.equal(report.capturedAt,now);
+  assert.deepEqual(report.pickupDelays,{
+    affectedOrders:6,notices:7,withdrawals:1,acknowledged:2,acknowledgedAfterEstimate:1,
+    overdueOrders:[{id:earlier,revision:1,readyAt:start+9000},{id:atBoundary,revision:1,readyAt:now}],
+  });
+  assert.deepEqual((await (await read("2026-11-26")).json()).pickupDelays,{
+    affectedOrders:1,notices:1,withdrawals:1,acknowledged:0,acknowledgedAfterEstimate:0,overdueOrders:[],
+  });
+  assert.deepEqual((await (await read("2026-11-27")).json()).pickupDelays,{
+    affectedOrders:0,notices:0,withdrawals:0,acknowledged:0,acknowledgedAfterEstimate:0,overdueOrders:[],
+  });
+});
+
 test("a pickup delegate and receipt owner share the first arrival with staff",async t=>{
   const db=database();
   t.after(()=>db.sqlite.close());

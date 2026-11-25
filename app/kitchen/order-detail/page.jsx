@@ -6,6 +6,7 @@ import {ItemNote} from "../../item-notes";
 import OrderProgress,{ProgressTime} from "../../order-progress";
 import CashReceipt from "../../cash-receipt";
 import {labels,numberOf} from "../../../lib/menu.mjs";
+import {businessDayRange} from "../../../lib/business-day.mjs";
 import {environmentLabel,methods,paymentStates} from "../../../lib/payments.mjs";
 import {pickupChangeWindows} from "../../../lib/pickup-slots.mjs";
 import {stationLabels} from "../../../lib/kitchen-timing.mjs";
@@ -95,6 +96,9 @@ export default function KitchenOrderDetail(){
   const historyReturn=from?.startsWith("/kitchen/station-history?")?from:null;
   const paymentReturn=from==="/kitchen/payment-attention"||from?.startsWith("/kitchen/payment-attention?")?from:null;
   const delayReturn=from==="/kitchen?view=pickup-delay"?from:null;
+  const delayReportDate=from?.match(/^\/kitchen\/daily\?date=(\d{4}-\d{2}-\d{2})#pickup-delay-report$/)?.[1];
+  const delayReportReturn=businessDayRange(delayReportDate)?from:null;
+  const returnPath=historyReturn||paymentReturn||delayReturn||delayReportReturn;
   const current=view?.number===number&&view.revision===revision?view:null;
   useEffect(()=>{
     if(!number)return;
@@ -117,11 +121,12 @@ export default function KitchenOrderDetail(){
       {historyReturn&&<a className="textLink" href={historyReturn}>返回分站批次紀錄</a>}
       {paymentReturn&&<a className="textLink" href={paymentReturn}>返回待核對付款</a>}
       {delayReturn&&<a className="textLink" href={delayReturn}>返回待確認延誤</a>}
+      {delayReportReturn&&<a className="textLink" href={delayReportReturn}>返回延誤通知交班</a>}
     </div>
     <h1>查詢餐單紀錄</h1>
     <form className="actions dailyDate" action={pagePath} key={number}>
       <label>餐號<input name="id" type="text" required inputMode="numeric" pattern="[0-9]+" maxLength={16} defaultValue={number}/></label>
-      {(historyReturn||paymentReturn||delayReturn)&&<input type="hidden" name="from" value={historyReturn||paymentReturn||delayReturn}/>}
+      {returnPath&&<input type="hidden" name="from" value={returnPath}/>}
       <button className="primary">查詢餐單</button>
     </form>
     {number&&!current&&<p role="status">正在查詢餐單…</p>}

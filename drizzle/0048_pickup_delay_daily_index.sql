@@ -1,0 +1,1 @@
+CREATE INDEX `pickup_delay_recorded_at` ON `pickup_delay_updates` (`recorded_at`);

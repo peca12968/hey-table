@@ -1,0 +1,2036 @@
+{
+  "version": "6",
+  "dialect": "sqlite",
+  "id": "15ced30c-2e56-4328-8722-4abc47d1128a",
+  "prevId": "5ebbb07c-f5ef-4c63-80d5-a79cafda501f",
+  "tables": {
+    "cash_close_versions": {
+      "name": "cash_close_versions",
+      "columns": {
+        "date": {
+          "name": "date",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "revision": {
+          "name": "revision",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "operation_id": {
+          "name": "operation_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "saved_at": {
+          "name": "saved_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "snapshot": {
+          "name": "snapshot",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "cash_close_versions_operation_id_unique": {
+          "name": "cash_close_versions_operation_id_unique",
+          "columns": [
+            "operation_id"
+          ],
+          "isUnique": true
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {
+        "cash_close_versions_date_revision_pk": {
+          "columns": [
+            "date",
+            "revision"
+          ],
+          "name": "cash_close_versions_date_revision_pk"
+        }
+      },
+      "uniqueConstraints": {},
+      "checkConstraints": {
+        "cash_close_revision": {
+          "name": "cash_close_revision",
+          "value": "\"cash_close_versions\".\"revision\" > 0"
+        }
+      }
+    },
+    "cash_receipt_corrections": {
+      "name": "cash_receipt_corrections",
+      "columns": {
+        "order_id": {
+          "name": "order_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "revision": {
+          "name": "revision",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "operation_id": {
+          "name": "operation_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "previous_tendered": {
+          "name": "previous_tendered",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "tendered": {
+          "name": "tendered",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "reason": {
+          "name": "reason",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "corrected_at": {
+          "name": "corrected_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "cash_receipt_corrections_operation_id_unique": {
+          "name": "cash_receipt_corrections_operation_id_unique",
+          "columns": [
+            "operation_id"
+          ],
+          "isUnique": true
+        },
+        "cash_receipt_corrections_corrected_at": {
+          "name": "cash_receipt_corrections_corrected_at",
+          "columns": [
+            "corrected_at",
+            "order_id",
+            "revision"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {
+        "cash_receipt_corrections_order_id_cash_receipts_order_id_fk": {
+          "name": "cash_receipt_corrections_order_id_cash_receipts_order_id_fk",
+          "tableFrom": "cash_receipt_corrections",
+          "tableTo": "cash_receipts",
+          "columnsFrom": [
+            "order_id"
+          ],
+          "columnsTo": [
+            "order_id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "cash_receipt_corrections_order_id_revision_pk": {
+          "columns": [
+            "order_id",
+            "revision"
+          ],
+          "name": "cash_receipt_corrections_order_id_revision_pk"
+        }
+      },
+      "uniqueConstraints": {},
+      "checkConstraints": {
+        "cash_correction_revision": {
+          "name": "cash_correction_revision",
+          "value": "\"cash_receipt_corrections\".\"revision\" > 0"
+        },
+        "cash_correction_amount": {
+          "name": "cash_correction_amount",
+          "value": "\"cash_receipt_corrections\".\"previous_tendered\" >= 0 AND \"cash_receipt_corrections\".\"tendered\" >= 0 AND \"cash_receipt_corrections\".\"previous_tendered\" <> \"cash_receipt_corrections\".\"tendered\""
+        }
+      }
+    },
+    "cash_receipts": {
+      "name": "cash_receipts",
+      "columns": {
+        "order_id": {
+          "name": "order_id",
+          "type": "integer",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "operation_id": {
+          "name": "operation_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "amount": {
+          "name": "amount",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "tendered": {
+          "name": "tendered",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "collected_at": {
+          "name": "collected_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "cash_receipts_operation_id_unique": {
+          "name": "cash_receipts_operation_id_unique",
+          "columns": [
+            "operation_id"
+          ],
+          "isUnique": true
+        },
+        "cash_receipts_collected_at": {
+          "name": "cash_receipts_collected_at",
+          "columns": [
+            "collected_at",
+            "order_id"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {
+        "cash_receipts_order_id_orders_id_fk": {
+          "name": "cash_receipts_order_id_orders_id_fk",
+          "tableFrom": "cash_receipts",
+          "tableTo": "orders",
+          "columnsFrom": [
+            "order_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {
+        "cash_receipt_amount": {
+          "name": "cash_receipt_amount",
+          "value": "\"cash_receipts\".\"amount\" >= 0 AND \"cash_receipts\".\"tendered\" >= \"cash_receipts\".\"amount\""
+        }
+      }
+    },
+    "daily_portion_limit_changes": {
+      "name": "daily_portion_limit_changes",
+      "columns": {
+        "date": {
+          "name": "date",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "dish": {
+          "name": "dish",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "revision": {
+          "name": "revision",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "action_id": {
+          "name": "action_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "kind": {
+          "name": "kind",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "previous_capacity": {
+          "name": "previous_capacity",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "capacity": {
+          "name": "capacity",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "source_date": {
+          "name": "source_date",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "restored_from_revision": {
+          "name": "restored_from_revision",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "changed_at": {
+          "name": "changed_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "daily_portion_changes_action": {
+          "name": "daily_portion_changes_action",
+          "columns": [
+            "action_id"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {
+        "daily_portion_limit_changes_date_dish_revision_pk": {
+          "columns": [
+            "date",
+            "dish",
+            "revision"
+          ],
+          "name": "daily_portion_limit_changes_date_dish_revision_pk"
+        }
+      },
+      "uniqueConstraints": {},
+      "checkConstraints": {
+        "daily_portion_changes_kind": {
+          "name": "daily_portion_changes_kind",
+          "value": "(\"daily_portion_limit_changes\".\"kind\"='manual' AND \"daily_portion_limit_changes\".\"source_date\" IS NULL) OR\n    (\"daily_portion_limit_changes\".\"kind\"='copy' AND \"daily_portion_limit_changes\".\"source_date\" IS NOT NULL AND \"daily_portion_limit_changes\".\"source_date\"<>\"daily_portion_limit_changes\".\"date\")"
+        }
+      }
+    },
+    "daily_portion_limits": {
+      "name": "daily_portion_limits",
+      "columns": {
+        "date": {
+          "name": "date",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "dish": {
+          "name": "dish",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "capacity": {
+          "name": "capacity",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "revision": {
+          "name": "revision",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {
+        "daily_portion_limits_date_dish_pk": {
+          "columns": [
+            "date",
+            "dish"
+          ],
+          "name": "daily_portion_limits_date_dish_pk"
+        }
+      },
+      "uniqueConstraints": {},
+      "checkConstraints": {
+        "daily_portion_capacity": {
+          "name": "daily_portion_capacity",
+          "value": "\"daily_portion_limits\".\"capacity\" IS NULL OR \"daily_portion_limits\".\"capacity\" >= 0"
+        },
+        "daily_portion_revision": {
+          "name": "daily_portion_revision",
+          "value": "\"daily_portion_limits\".\"revision\" > 0"
+        }
+      }
+    },
+    "daily_portion_restocks": {
+      "name": "daily_portion_restocks",
+      "columns": {
+        "date": {
+          "name": "date",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "dish": {
+          "name": "dish",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "revision": {
+          "name": "revision",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "operation_id": {
+          "name": "operation_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "quantity": {
+          "name": "quantity",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "previous_capacity": {
+          "name": "previous_capacity",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "used": {
+          "name": "used",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "capacity": {
+          "name": "capacity",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "restocked_at": {
+          "name": "restocked_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "daily_portion_restocks_operation_id_unique": {
+          "name": "daily_portion_restocks_operation_id_unique",
+          "columns": [
+            "operation_id"
+          ],
+          "isUnique": true
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {
+        "daily_portion_restocks_date_dish_revision_pk": {
+          "columns": [
+            "date",
+            "dish",
+            "revision"
+          ],
+          "name": "daily_portion_restocks_date_dish_revision_pk"
+        }
+      },
+      "uniqueConstraints": {},
+      "checkConstraints": {
+        "daily_restock_revision": {
+          "name": "daily_restock_revision",
+          "value": "\"daily_portion_restocks\".\"revision\" > 1"
+        },
+        "daily_restock_quantity": {
+          "name": "daily_restock_quantity",
+          "value": "\"daily_portion_restocks\".\"quantity\" > 0 AND \"daily_portion_restocks\".\"previous_capacity\" >= 0 AND \"daily_portion_restocks\".\"used\" >= 0\n    AND \"daily_portion_restocks\".\"capacity\" = MAX(\"daily_portion_restocks\".\"previous_capacity\",\"daily_portion_restocks\".\"used\") + \"daily_portion_restocks\".\"quantity\" AND \"daily_portion_restocks\".\"capacity\" <= 9007199254740991"
+        }
+      }
+    },
+    "demo_refunds": {
+      "name": "demo_refunds",
+      "columns": {
+        "order_id": {
+          "name": "order_id",
+          "type": "integer",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "attempt_id": {
+          "name": "attempt_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "amount": {
+          "name": "amount",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "previous_status": {
+          "name": "previous_status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "refunded_at": {
+          "name": "refunded_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "demo_refunds_attempt_id_unique": {
+          "name": "demo_refunds_attempt_id_unique",
+          "columns": [
+            "attempt_id"
+          ],
+          "isUnique": true
+        },
+        "demo_refunds_time": {
+          "name": "demo_refunds_time",
+          "columns": [
+            "refunded_at",
+            "order_id"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {
+        "demo_refunds_order_id_orders_id_fk": {
+          "name": "demo_refunds_order_id_orders_id_fk",
+          "tableFrom": "demo_refunds",
+          "tableTo": "orders",
+          "columnsFrom": [
+            "order_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "demo_refunds_attempt_id_payment_attempts_id_fk": {
+          "name": "demo_refunds_attempt_id_payment_attempts_id_fk",
+          "tableFrom": "demo_refunds",
+          "tableTo": "payment_attempts",
+          "columnsFrom": [
+            "attempt_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {
+        "demo_refunds_amount": {
+          "name": "demo_refunds_amount",
+          "value": "\"demo_refunds\".\"amount\" > 0"
+        },
+        "demo_refunds_status": {
+          "name": "demo_refunds_status",
+          "value": "\"demo_refunds\".\"previous_status\" IN ('pending','preparing','ready','completed','cancelled')"
+        }
+      }
+    },
+    "kitchen_timing": {
+      "name": "kitchen_timing",
+      "columns": {
+        "revision": {
+          "name": "revision",
+          "type": "integer",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "config": {
+          "name": "config",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "order_intake": {
+      "name": "order_intake",
+      "columns": {
+        "mode": {
+          "name": "mode",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "accepting": {
+          "name": "accepting",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "revision": {
+          "name": "revision",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {
+        "order_intake_mode": {
+          "name": "order_intake_mode",
+          "value": "\"order_intake\".\"mode\" IN ('pickup','table')"
+        },
+        "order_intake_accepting": {
+          "name": "order_intake_accepting",
+          "value": "\"order_intake\".\"accepting\" IN (0,1)"
+        },
+        "order_intake_revision": {
+          "name": "order_intake_revision",
+          "value": "\"order_intake\".\"revision\" > 0"
+        }
+      }
+    },
+    "orders": {
+      "name": "orders",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "integer",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": true
+        },
+        "token": {
+          "name": "token",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "mode": {
+          "name": "mode",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "source": {
+          "name": "source",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "pickup_slot": {
+          "name": "pickup_slot",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "pickup_changes": {
+          "name": "pickup_changes",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "pickup_arrived_at": {
+          "name": "pickup_arrived_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "table_no": {
+          "name": "table_no",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "table_moves": {
+          "name": "table_moves",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "note": {
+          "name": "note",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "items": {
+          "name": "items",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "payment_method": {
+          "name": "payment_method",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "'cash'"
+        },
+        "payment_env": {
+          "name": "payment_env",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "'cash'"
+        },
+        "payment_due_at": {
+          "name": "payment_due_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "cash_payment_change": {
+          "name": "cash_payment_change",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "combo_quote": {
+          "name": "combo_quote",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "total": {
+          "name": "total",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "status": {
+          "name": "status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "'pending'"
+        },
+        "status_history": {
+          "name": "status_history",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "station_progress": {
+          "name": "station_progress",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "created": {
+          "name": "created",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "orders_token_unique": {
+          "name": "orders_token_unique",
+          "columns": [
+            "token"
+          ],
+          "isUnique": true
+        },
+        "orders_status_id": {
+          "name": "orders_status_id",
+          "columns": [
+            "status",
+            "id"
+          ],
+          "isUnique": false
+        },
+        "orders_created": {
+          "name": "orders_created",
+          "columns": [
+            "created"
+          ],
+          "isUnique": false
+        },
+        "orders_supply_time": {
+          "name": "orders_supply_time",
+          "columns": [
+            "COALESCE(\"pickup_slot\",\"created\")"
+          ],
+          "isUnique": false
+        },
+        "orders_pickup_slot": {
+          "name": "orders_pickup_slot",
+          "columns": [
+            "pickup_slot"
+          ],
+          "isUnique": false,
+          "where": "\"orders\".\"pickup_slot\" IS NOT NULL"
+        },
+        "orders_pickup_arrival": {
+          "name": "orders_pickup_arrival",
+          "columns": [
+            "pickup_arrived_at"
+          ],
+          "isUnique": false,
+          "where": "\"orders\".\"pickup_arrived_at\" IS NOT NULL"
+        },
+        "orders_pending_payment_due": {
+          "name": "orders_pending_payment_due",
+          "columns": [
+            "payment_due_at"
+          ],
+          "isUnique": false,
+          "where": "\"orders\".\"status\"='pending' AND \"orders\".\"payment_due_at\" IS NOT NULL"
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "payment_attempts": {
+      "name": "payment_attempts",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "integer",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": true
+        },
+        "order_id": {
+          "name": "order_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "reference": {
+          "name": "reference",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "merchant": {
+          "name": "merchant",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "state": {
+          "name": "state",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "'pending'"
+        },
+        "trade_id": {
+          "name": "trade_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "redirect_url": {
+          "name": "redirect_url",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "created": {
+          "name": "created",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "kitchen_payable_at": {
+          "name": "kitchen_payable_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "checked": {
+          "name": "checked",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": 0
+        }
+      },
+      "indexes": {
+        "payment_attempts_reference_unique": {
+          "name": "payment_attempts_reference_unique",
+          "columns": [
+            "reference"
+          ],
+          "isUnique": true
+        },
+        "payment_attempts_trade_id_unique": {
+          "name": "payment_attempts_trade_id_unique",
+          "columns": [
+            "trade_id"
+          ],
+          "isUnique": true
+        },
+        "attempt_order": {
+          "name": "attempt_order",
+          "columns": [
+            "order_id",
+            "id"
+          ],
+          "isUnique": false
+        },
+        "payment_attempts_attention_age": {
+          "name": "payment_attempts_attention_age",
+          "columns": [
+            "created",
+            "order_id"
+          ],
+          "isUnique": false,
+          "where": "\"payment_attempts\".\"state\" IN ('pending','authorized')"
+        }
+      },
+      "foreignKeys": {
+        "payment_attempts_order_id_orders_id_fk": {
+          "name": "payment_attempts_order_id_orders_id_fk",
+          "tableFrom": "payment_attempts",
+          "tableTo": "orders",
+          "columnsFrom": [
+            "order_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "payment_attention_notes": {
+      "name": "payment_attention_notes",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "integer",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": true
+        },
+        "attempt_id": {
+          "name": "attempt_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "operation_id": {
+          "name": "operation_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "state": {
+          "name": "state",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "note": {
+          "name": "note",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "recorded_at": {
+          "name": "recorded_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "payment_attention_notes_operation_id_unique": {
+          "name": "payment_attention_notes_operation_id_unique",
+          "columns": [
+            "operation_id"
+          ],
+          "isUnique": true
+        },
+        "payment_attention_notes_attempt": {
+          "name": "payment_attention_notes_attempt",
+          "columns": [
+            "attempt_id",
+            "id"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {
+        "payment_attention_notes_attempt_id_payment_attempts_id_fk": {
+          "name": "payment_attention_notes_attempt_id_payment_attempts_id_fk",
+          "tableFrom": "payment_attention_notes",
+          "tableTo": "payment_attempts",
+          "columnsFrom": [
+            "attempt_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {
+        "payment_attention_note_state": {
+          "name": "payment_attention_note_state",
+          "value": "\"payment_attention_notes\".\"state\" IN ('pending','authorized')"
+        }
+      }
+    },
+    "pickup_day_intake": {
+      "name": "pickup_day_intake",
+      "columns": {
+        "date": {
+          "name": "date",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "accepting": {
+          "name": "accepting",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "revision": {
+          "name": "revision",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {
+        "pickup_day_accepting": {
+          "name": "pickup_day_accepting",
+          "value": "\"pickup_day_intake\".\"accepting\" IN (0,1)"
+        },
+        "pickup_day_revision": {
+          "name": "pickup_day_revision",
+          "value": "\"pickup_day_intake\".\"revision\" > 0"
+        }
+      }
+    },
+    "pickup_delay_acknowledgements": {
+      "name": "pickup_delay_acknowledgements",
+      "columns": {
+        "order_id": {
+          "name": "order_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "revision": {
+          "name": "revision",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "acknowledged_at": {
+          "name": "acknowledged_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "pickup_delay_acknowledgements_order_id_revision_pickup_delay_updates_order_id_revision_fk": {
+          "name": "pickup_delay_acknowledgements_order_id_revision_pickup_delay_updates_order_id_revision_fk",
+          "tableFrom": "pickup_delay_acknowledgements",
+          "tableTo": "pickup_delay_updates",
+          "columnsFrom": [
+            "order_id",
+            "revision"
+          ],
+          "columnsTo": [
+            "order_id",
+            "revision"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "pickup_delay_acknowledgements_order_id_revision_pk": {
+          "columns": [
+            "order_id",
+            "revision"
+          ],
+          "name": "pickup_delay_acknowledgements_order_id_revision_pk"
+        }
+      },
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "pickup_delay_updates": {
+      "name": "pickup_delay_updates",
+      "columns": {
+        "order_id": {
+          "name": "order_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "revision": {
+          "name": "revision",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "operation_id": {
+          "name": "operation_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "ready_at": {
+          "name": "ready_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "recorded_at": {
+          "name": "recorded_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "pickup_delay_updates_operation_id_unique": {
+          "name": "pickup_delay_updates_operation_id_unique",
+          "columns": [
+            "operation_id"
+          ],
+          "isUnique": true
+        },
+        "pickup_delay_recorded_at": {
+          "name": "pickup_delay_recorded_at",
+          "columns": [
+            "recorded_at"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {
+        "pickup_delay_updates_order_id_orders_id_fk": {
+          "name": "pickup_delay_updates_order_id_orders_id_fk",
+          "tableFrom": "pickup_delay_updates",
+          "tableTo": "orders",
+          "columnsFrom": [
+            "order_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "pickup_delay_updates_order_id_revision_pk": {
+          "columns": [
+            "order_id",
+            "revision"
+          ],
+          "name": "pickup_delay_updates_order_id_revision_pk"
+        }
+      },
+      "uniqueConstraints": {},
+      "checkConstraints": {
+        "pickup_delay_revision": {
+          "name": "pickup_delay_revision",
+          "value": "\"pickup_delay_updates\".\"revision\">0"
+        },
+        "pickup_delay_future": {
+          "name": "pickup_delay_future",
+          "value": "\"pickup_delay_updates\".\"ready_at\" IS NULL OR \"pickup_delay_updates\".\"ready_at\">\"pickup_delay_updates\".\"recorded_at\""
+        }
+      }
+    },
+    "pickup_limit_events": {
+      "name": "pickup_limit_events",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "integer",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": true
+        },
+        "operation_id": {
+          "name": "operation_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "date": {
+          "name": "date",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "changed_at": {
+          "name": "changed_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "kind": {
+          "name": "kind",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "changes": {
+          "name": "changes",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "restored_from_id": {
+          "name": "restored_from_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "source_date": {
+          "name": "source_date",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "pickup_limit_events_operation_id_unique": {
+          "name": "pickup_limit_events_operation_id_unique",
+          "columns": [
+            "operation_id"
+          ],
+          "isUnique": true
+        },
+        "pickup_limit_events_date": {
+          "name": "pickup_limit_events_date",
+          "columns": [
+            "date",
+            "id"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {
+        "pickup_limit_event_kind": {
+          "name": "pickup_limit_event_kind",
+          "value": "\"pickup_limit_events\".\"kind\" IN ('slot','batch','day')"
+        }
+      }
+    },
+    "pickup_passes": {
+      "name": "pickup_passes",
+      "columns": {
+        "order_id": {
+          "name": "order_id",
+          "type": "integer",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "token_hash": {
+          "name": "token_hash",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "expires_at": {
+          "name": "expires_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "revision": {
+          "name": "revision",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "pickup_passes_token_hash_unique": {
+          "name": "pickup_passes_token_hash_unique",
+          "columns": [
+            "token_hash"
+          ],
+          "isUnique": true
+        }
+      },
+      "foreignKeys": {
+        "pickup_passes_order_id_orders_id_fk": {
+          "name": "pickup_passes_order_id_orders_id_fk",
+          "tableFrom": "pickup_passes",
+          "tableTo": "orders",
+          "columnsFrom": [
+            "order_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {
+        "pickup_pass_revision": {
+          "name": "pickup_pass_revision",
+          "value": "\"pickup_passes\".\"revision\">0"
+        },
+        "pickup_pass_expiration": {
+          "name": "pickup_pass_expiration",
+          "value": "(\"pickup_passes\".\"expires_at\" IS NULL)=(\"pickup_passes\".\"token_hash\" IS NULL)"
+        }
+      }
+    },
+    "pickup_slot_limits": {
+      "name": "pickup_slot_limits",
+      "columns": {
+        "start": {
+          "name": "start",
+          "type": "integer",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "capacity": {
+          "name": "capacity",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "revision": {
+          "name": "revision",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {
+        "pickup_slot_limit_capacity": {
+          "name": "pickup_slot_limit_capacity",
+          "value": "\"pickup_slot_limits\".\"capacity\" IS NULL OR \"pickup_slot_limits\".\"capacity\" >= 0"
+        },
+        "pickup_slot_limit_revision": {
+          "name": "pickup_slot_limit_revision",
+          "value": "\"pickup_slot_limits\".\"revision\" > 0"
+        }
+      }
+    },
+    "return_ledger_review_events": {
+      "name": "return_ledger_review_events",
+      "columns": {
+        "date": {
+          "name": "date",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "fingerprint": {
+          "name": "fingerprint",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "order_id": {
+          "name": "order_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "revision": {
+          "name": "revision",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "recorded_at": {
+          "name": "recorded_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "kind": {
+          "name": "kind",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "amount": {
+          "name": "amount",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "target_revision": {
+          "name": "target_revision",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "reason": {
+          "name": "reason",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "return_ledger_review_events_date_fingerprint_return_ledger_reviews_date_fingerprint_fk": {
+          "name": "return_ledger_review_events_date_fingerprint_return_ledger_reviews_date_fingerprint_fk",
+          "tableFrom": "return_ledger_review_events",
+          "tableTo": "return_ledger_reviews",
+          "columnsFrom": [
+            "date",
+            "fingerprint"
+          ],
+          "columnsTo": [
+            "date",
+            "fingerprint"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "return_ledger_review_events_date_fingerprint_order_id_revision_pk": {
+          "columns": [
+            "date",
+            "fingerprint",
+            "order_id",
+            "revision"
+          ],
+          "name": "return_ledger_review_events_date_fingerprint_order_id_revision_pk"
+        }
+      },
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "return_ledger_reviews": {
+      "name": "return_ledger_reviews",
+      "columns": {
+        "date": {
+          "name": "date",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "fingerprint": {
+          "name": "fingerprint",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "event_count": {
+          "name": "event_count",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "net_amount": {
+          "name": "net_amount",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "reviewed_at": {
+          "name": "reviewed_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "note": {
+          "name": "note",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "captured_at": {
+          "name": "captured_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "return_ledger_reviews_by_day": {
+          "name": "return_ledger_reviews_by_day",
+          "columns": [
+            "date",
+            "event_count",
+            "reviewed_at",
+            "fingerprint"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {
+        "return_ledger_reviews_date_fingerprint_pk": {
+          "columns": [
+            "date",
+            "fingerprint"
+          ],
+          "name": "return_ledger_reviews_date_fingerprint_pk"
+        }
+      },
+      "uniqueConstraints": {},
+      "checkConstraints": {
+        "return_review_event_count": {
+          "name": "return_review_event_count",
+          "value": "\"return_ledger_reviews\".\"event_count\" >= 0"
+        }
+      }
+    },
+    "return_quote_entries": {
+      "name": "return_quote_entries",
+      "columns": {
+        "order_id": {
+          "name": "order_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "revision": {
+          "name": "revision",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "operation_id": {
+          "name": "operation_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "selection": {
+          "name": "selection",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "quote": {
+          "name": "quote",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "recorded_at": {
+          "name": "recorded_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "return_quote_entries_operation_id_unique": {
+          "name": "return_quote_entries_operation_id_unique",
+          "columns": [
+            "operation_id"
+          ],
+          "isUnique": true
+        },
+        "return_quote_entries_by_day": {
+          "name": "return_quote_entries_by_day",
+          "columns": [
+            "recorded_at",
+            "order_id",
+            "revision"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {
+        "return_quote_entries_order_id_orders_id_fk": {
+          "name": "return_quote_entries_order_id_orders_id_fk",
+          "tableFrom": "return_quote_entries",
+          "tableTo": "orders",
+          "columnsFrom": [
+            "order_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "return_quote_entries_order_id_revision_pk": {
+          "columns": [
+            "order_id",
+            "revision"
+          ],
+          "name": "return_quote_entries_order_id_revision_pk"
+        }
+      },
+      "uniqueConstraints": {},
+      "checkConstraints": {
+        "return_quote_revision": {
+          "name": "return_quote_revision",
+          "value": "\"return_quote_entries\".\"revision\" > 0"
+        }
+      }
+    },
+    "return_quote_voids": {
+      "name": "return_quote_voids",
+      "columns": {
+        "order_id": {
+          "name": "order_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "revision": {
+          "name": "revision",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "target_revision": {
+          "name": "target_revision",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "operation_id": {
+          "name": "operation_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "reason": {
+          "name": "reason",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "restored_amount": {
+          "name": "restored_amount",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "remaining_value": {
+          "name": "remaining_value",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "recorded_at": {
+          "name": "recorded_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "return_quote_voids_operation_id_unique": {
+          "name": "return_quote_voids_operation_id_unique",
+          "columns": [
+            "operation_id"
+          ],
+          "isUnique": true
+        },
+        "return_quote_void_target": {
+          "name": "return_quote_void_target",
+          "columns": [
+            "order_id",
+            "target_revision"
+          ],
+          "isUnique": true
+        },
+        "return_quote_voids_by_day": {
+          "name": "return_quote_voids_by_day",
+          "columns": [
+            "recorded_at",
+            "order_id",
+            "revision"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {
+        "return_quote_voids_order_id_target_revision_return_quote_entries_order_id_revision_fk": {
+          "name": "return_quote_voids_order_id_target_revision_return_quote_entries_order_id_revision_fk",
+          "tableFrom": "return_quote_voids",
+          "tableTo": "return_quote_entries",
+          "columnsFrom": [
+            "order_id",
+            "target_revision"
+          ],
+          "columnsTo": [
+            "order_id",
+            "revision"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "return_quote_voids_order_id_revision_pk": {
+          "columns": [
+            "order_id",
+            "revision"
+          ],
+          "name": "return_quote_voids_order_id_revision_pk"
+        }
+      },
+      "uniqueConstraints": {},
+      "checkConstraints": {
+        "return_quote_void_values": {
+          "name": "return_quote_void_values",
+          "value": "\"return_quote_voids\".\"target_revision\" > 0 AND \"return_quote_voids\".\"revision\" > \"return_quote_voids\".\"target_revision\"\n    AND \"return_quote_voids\".\"restored_amount\" >= 0 AND \"return_quote_voids\".\"remaining_value\" >= 0"
+        }
+      }
+    },
+    "station_batch_receipts": {
+      "name": "station_batch_receipts",
+      "columns": {
+        "operation_id": {
+          "name": "operation_id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "write_id": {
+          "name": "write_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "station": {
+          "name": "station",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "fingerprint": {
+          "name": "fingerprint",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "order_ids": {
+          "name": "order_ids",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "recorded_at": {
+          "name": "recorded_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "station_batch_receipts_day": {
+          "name": "station_batch_receipts_day",
+          "columns": [
+            "recorded_at",
+            "operation_id"
+          ],
+          "isUnique": false
+        },
+        "station_batch_receipts_station_day": {
+          "name": "station_batch_receipts_station_day",
+          "columns": [
+            "station",
+            "recorded_at",
+            "operation_id"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "table_intake": {
+      "name": "table_intake",
+      "columns": {
+        "table_no": {
+          "name": "table_no",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "accepting": {
+          "name": "accepting",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "revision": {
+          "name": "revision",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {
+        "table_intake_accepting": {
+          "name": "table_intake_accepting",
+          "value": "\"table_intake\".\"accepting\" IN (0,1)"
+        },
+        "table_intake_revision": {
+          "name": "table_intake_revision",
+          "value": "\"table_intake\".\"revision\" > 0"
+        }
+      }
+    },
+    "unavailable": {
+      "name": "unavailable",
+      "columns": {
+        "dish": {
+          "name": "dish",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    }
+  },
+  "views": {},
+  "enums": {},
+  "_meta": {
+    "schemas": {},
+    "tables": {},
+    "columns": {}
+  },
+  "internal": {
+    "indexes": {
+      "orders_supply_time": {
+        "columns": {
+          "COALESCE(\"pickup_slot\",\"created\")": {
+            "isExpression": true
+          }
+        }
+      }
+    }
+  }
+}

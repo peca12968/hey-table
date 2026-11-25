@@ -142,6 +142,42 @@ function PickupPunctuality({date,report}){
   </section>;
 }
 
+function PickupDelays({date,report}){
+  const {affectedOrders,notices,withdrawals,acknowledged,acknowledgedAfterEstimate,overdueOrders}=report;
+  const returnTo="/kitchen/daily?date="+date+"#pickup-delay-report";
+  return <section id="pickup-delay-report" className="sheet dailyTiming" aria-labelledby="pickup-delay-report-title">
+    <h2 id="pickup-delay-report-title">自取延誤通知交班</h2>
+    <p>依台灣通知發布或撤回日期統計。確認狀態以這次擷取為準。</p>
+    {notices===0&&withdrawals===0?<p>這一天沒有發布或撤回自取延誤通知。</p>:<>
+      <div className="dailyTimingGrid">
+        <article aria-label="通知與確認數">
+          <dl>
+            <div><dt>發過通知的自取單</dt><dd>{affectedOrders} 張</dd></div>
+            <div><dt>發布通知</dt><dd>{notices} 則</dd></div>
+            <div><dt>撤回通知</dt><dd>{withdrawals} 則</dd></div>
+          </dl>
+        </article>
+        <article aria-label="顧客確認情況">
+          <dl>
+            <div><dt>已確認通知</dt><dd>{acknowledged} 則</dd></div>
+            <div><dt>其中在預計時間後確認</dt><dd>{acknowledgedAfterEstimate} 則</dd></div>
+            <div><dt>已到預計時間，仍待確認</dt><dd>{overdueOrders.length} 張</dd></div>
+          </dl>
+        </article>
+      </div>
+      {overdueOrders.length>0&&<div className="punctualityWindows">
+        <h3>需跟進的餐單</h3>
+        <ul role="list" aria-label="需跟進的延誤餐單">{overdueOrders.map(({id,revision,readyAt})=><li key={id}>
+          <a className="textLink" href={"/kitchen/order-detail?"+new URLSearchParams({
+            id:numberOf(id),delays:"1",from:returnTo,
+          })+"#pickup-delay-history"}>#{numberOf(id)}</a>
+          <span>第 {revision} 版 · 預計 <time dateTime={new Date(readyAt).toISOString()}>{captureTime.format(readyAt)}</time> 備妥</span>
+        </li>)}</ul>
+      </div>}
+    </>}
+  </section>;
+}
+
 export default function DailyOperations() {
   const today=useBusinessToday();
   const searchQuery=useSyncExternalStore(subscribeToLocation,browserSearch,serverSearch);
@@ -155,7 +191,7 @@ export default function DailyOperations() {
     if(!queryDate)return;
     const controller=new AbortController();
     const key=sessionStorage.getItem("he-ri-staff");
-    request("/api/kitchen/daily?date="+encodeURIComponent(queryDate)+"&timing=1&itemChannels=1&pickupPunctuality=1&paymentSummary=1",{
+    request("/api/kitchen/daily?date="+encodeURIComponent(queryDate)+"&timing=1&itemChannels=1&pickupPunctuality=1&paymentSummary=1&pickupDelays=1",{
       signal:AbortSignal.any([controller.signal,AbortSignal.timeout(10_000)]),
       headers:key?{Authorization:"Bearer "+key}:{},
     }).then(value=>{
@@ -207,6 +243,7 @@ export default function DailyOperations() {
       {report.timing&&<DurationSummary timing={report.timing}/>}
       {report.arrivalTiming&&<ArrivalSummary timing={report.arrivalTiming}/>}
       {report.pickupPunctuality&&<PickupPunctuality date={report.date} report={report.pickupPunctuality}/>}
+      {report.pickupDelays&&<PickupDelays date={report.date} report={report.pickupDelays}/>}
       <section className="sheet dailyDishes">
         <div className="actions dailyDishesHeader">
           <h2>已交餐品項</h2>

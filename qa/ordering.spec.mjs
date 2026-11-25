@@ -484,6 +484,50 @@ test("mobile daily pickup report opens the exact delayed booking and prints the 
   await expect(page.getByRole("link",{name:"返回自取預約清單"})).toHaveAttribute("href","/kitchen/pickup-roster?date="+date+"&slot="+start);
 });
 
+test("daily pickup delay handoff downloads the shown snapshot and opens the exact notice history",async({page})=>{
+  await page.setViewportSize({width:360,height:780});
+  await page.addInitScript(()=>sessionStorage.setItem("he-ri-staff","local-test-kitchen"));
+  const date="2026-11-25",capturedAt=Date.parse("2026-11-26T00:03:00+08:00"),readyAt=capturedAt-60_000,id=23;
+  const counts={orders:0,pending:0,preparing:0,ready:0,completed:0,cancelled:0,completedTotal:0};
+  const pickupDelays={affectedOrders:2,notices:3,withdrawals:1,acknowledged:1,acknowledgedAfterEstimate:1,
+    overdueOrders:[{id,revision:2,readyAt}]};
+  const report={date,capturedAt,channels:{pickup:counts,table:counts},items:[],pickupDelays};
+  await page.route("**/api/kitchen/daily?*",route=>{
+    const query=new URL(route.request().url()).searchParams;
+    expect(query.get("date")).toBe(date);
+    expect(query.get("pickupDelays")).toBe("1");
+    return route.fulfill({json:report});
+  });
+  await page.route("**/api/kitchen/order-detail?*",route=>{
+    expect(Number(new URL(route.request().url()).searchParams.get("id"))).toBe(id);
+    return route.fulfill({json:{id,mode:"pickup",table:null,status:"preparing",created:readyAt-600_000,note:"",
+      items:[],paymentMethod:"cash",paymentState:"unpaid",total:45,statusHistory:[],tableMoves:[],pickupChanges:[],stations:[]}});
+  });
+  await page.route("**/api/kitchen/pickup-delay-history?*",route=>{
+    expect(Number(new URL(route.request().url()).searchParams.get("id"))).toBe(id);
+    return route.fulfill({json:{id,updates:[{revision:2,readyAt,recordedAt:readyAt-60_000,acknowledgedAt:null,latest:true}],nextBefore:null}});
+  });
+  await page.goto("/kitchen/daily?date="+date);
+  const summary=page.getByRole("region",{name:"自取延誤通知交班"});
+  await expect(summary.locator("dl > div").filter({hasText:"發布通知"}).locator("dd")).toHaveText("3 則");
+  await expect(summary.locator("dl > div").filter({hasText:"其中在預計時間後確認"}).locator("dd")).toHaveText("1 則");
+  const list=summary.getByRole("list",{name:"需跟進的延誤餐單"}),link=list.getByRole("link",{name:"#0023"});
+  await expect(list.locator("time")).toHaveAttribute("datetime",new Date(readyAt).toISOString());
+  const download=page.waitForEvent("download");
+  await page.getByRole("button",{name:"下載摘要 JSON"}).click();
+  expect(JSON.parse(await readFile(await (await download).path(),"utf8")).pickupDelays).toEqual(pickupDelays);
+  await page.emulateMedia({media:"print"});
+  await expect(summary).toBeVisible();
+  await expect(link).toBeVisible();
+  await page.emulateMedia({media:"screen"});
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBe(360);
+  await link.click();
+  await expect(page.getByRole("list",{name:"延誤通知歷程"}).getByText("第 2 版 · 發布通知",{exact:true})).toBeVisible();
+  await page.getByRole("link",{name:"返回延誤通知交班"}).click();
+  await expect(page).toHaveURL(/\/kitchen\/daily\?date=2026-11-25#pickup-delay-report$/);
+  await expect(summary).toBeVisible();
+});
+
 test("daily summary rolls over at Taipei midnight and keeps an explicitly selected date",async({page})=>{
   await page.clock.install({time:new Date("2026-11-25T15:59:20Z")});
   const dates=[];

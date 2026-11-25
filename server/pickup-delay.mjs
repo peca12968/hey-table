@@ -42,6 +42,25 @@ export async function readPickupDelayHistory(db,id,before){
   return {id,updates,nextBefore:page.results.length>size?updates.at(-1).revision:null};
 }
 
+export function pickupDelayReportRows(db,range,capturedAt){
+  const scope="delay.recorded_at>=? AND delay.recorded_at<? AND delay.recorded_at<=? AND orders.mode='pickup'";
+  const acknowledgementJoin=`LEFT JOIN pickup_delay_acknowledgements AS ack ON ack.order_id=delay.order_id
+    AND ack.revision=delay.revision AND ack.acknowledged_at<=?`;
+  const source=`FROM pickup_delay_updates AS delay JOIN orders ON orders.id=delay.order_id ${acknowledgementJoin}
+    WHERE ${scope}`;
+  return {
+    delayTotals:db.prepare(`SELECT COUNT(DISTINCT CASE WHEN delay.ready_at IS NOT NULL THEN delay.order_id END) AS affectedOrders,
+      COUNT(delay.ready_at) AS notices, COUNT(CASE WHEN delay.ready_at IS NULL THEN 1 END) AS withdrawals,
+      COUNT(CASE WHEN delay.ready_at IS NOT NULL THEN ack.acknowledged_at END) AS acknowledged,
+      COUNT(CASE WHEN ack.acknowledged_at>delay.ready_at THEN 1 END) AS acknowledgedAfterEstimate ${source}`)
+      .bind(capturedAt,...range,capturedAt),
+    overdueDelayOrders:db.prepare(`SELECT delay.order_id AS id,delay.revision,delay.ready_at AS readyAt
+      ${source} AND orders.status='preparing' AND ${payableForKitchen} AND delay.ready_at<=?
+      AND ack.acknowledged_at IS NULL AND delay.revision=(SELECT revision ${byRevision})
+      ORDER BY delay.ready_at,delay.order_id`).bind(capturedAt,...range,capturedAt,capturedAt),
+  };
+}
+
 export async function updatePickupDelay(db,{id,revision,operationId,minutes},now){
   const readyAt=minutes===null?null:now+minutes*60_000;
   const [,saved,order]=await db.batch([

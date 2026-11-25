@@ -18,7 +18,7 @@ import {canReschedulePickup,capacityAtPickupSlot,editablePickupSlots,orderPortio
 import {pickupCalendar} from "./pickup-calendar.mjs";
 import {orderDetailsText,ticketTextAttachment} from "./ticket-document.mjs";
 import {issuePickupPass,ownerPickupPass,readPickupPass,reportPickupPassArrival,revokePickupPass} from "./pickup-pass.mjs";
-import {acknowledgePickupDelay,pickupDelayColumn,readPickupDelayHistory,updatePickupDelay} from "./pickup-delay.mjs";
+import {acknowledgePickupDelay,pickupDelayColumn,pickupDelayReportRows,readPickupDelayHistory,updatePickupDelay} from "./pickup-delay.mjs";
 import {pickupRoster} from "./pickup-roster.mjs";
 import {pickupWeek} from "./pickup-week.mjs";
 import {cashCorrectionHistory,cashReceiptColumn,collectCash,correctCashReceipt,dailyCashReceipts} from "./cash-receipts.mjs";
@@ -879,17 +879,20 @@ export async function api(request, env) {
     const [date] = dates;
     const range = dates.length === 1 ? businessDayRange(date) : null;
     if (!range) return fail("請選擇有效的餐單日期");
+    const capturedAt=Date.now();
     const includeTiming=url.searchParams.get("timing")==="1";
     const includeItemChannels=url.searchParams.get("itemChannels")==="1";
     const includePickupPunctuality=url.searchParams.get("pickupPunctuality")==="1";
     const includePaymentSummary=url.searchParams.get("paymentSummary")==="1";
+    const includePickupDelays=url.searchParams.get("pickupDelays")==="1";
     const optional={
       ...(includeTiming?{timing:dailyTimingRows(db,range),arrival:arrivalTimingRows(db,range)}:{}),
       ...(includePickupPunctuality?{pickup:pickupPunctualityRows(db,range)}:{}),
       ...(includePaymentSummary?{payment:dailyPaymentRows(db,range)}:{}),
+      ...(includePickupDelays?pickupDelayReportRows(db,range,capturedAt):{}),
     };
     const [,counts,portions,...details] = await db.batch([
-      expirePaymentHolds(db,Date.now()),
+      expirePaymentHolds(db,capturedAt),
       db.prepare(`SELECT mode, COUNT(*) AS orders, SUM(status='pending') AS pending,
         SUM(status='preparing') AS preparing, SUM(status='ready') AS ready,
         SUM(status='completed') AS completed, SUM(status='cancelled') AS cancelled,
@@ -913,11 +916,11 @@ export async function api(request, env) {
     const items=portions.results.map(({id,name,qty,pickupQty,tableQty})=>({
       id,name:names.get(id)??name??id,qty,...(includeItemChannels?{pickupQty,tableQty}:{}),
     }));
-    const capturedAt=Date.now();
     const rows=Object.fromEntries(Object.keys(optional).map((key,index)=>[key,details[index].results]));
     return json({format:"hey-table.daily-operations.v1",date,timeZone:"Asia/Taipei",capturedAt,channels,items,
       ...(includeTiming?{timing:dailyTiming(rows.timing,capturedAt),arrivalTiming:arrivalTiming(rows.arrival,capturedAt)}:{}),
       ...(includePickupPunctuality?{pickupPunctuality:pickupPunctuality(rows.pickup,capturedAt)}:{}),
+      ...(includePickupDelays?{pickupDelays:{...rows.delayTotals[0],overdueOrders:rows.overdueDelayOrders}}:{}),
       ...(includePaymentSummary?{paymentSummary:dailyPaymentSummary(rows.payment)}:{})});
   }
   if (path === "/api/kitchen/handoff" && method === "GET") {

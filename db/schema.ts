@@ -74,6 +74,7 @@ export const pickupDelayUpdates = sqliteTable("pickup_delay_updates", {
   recordedAt: integer("recorded_at").notNull(),
 }, t => [
   primaryKey({columns:[t.orderId,t.revision]}),
+  index("pickup_delay_recorded_at").on(t.recordedAt),
   check("pickup_delay_revision",sql`${t.revision}>0`),
   check("pickup_delay_future",sql`${t.readyAt} IS NULL OR ${t.readyAt}>${t.recordedAt}`),
 ]);
