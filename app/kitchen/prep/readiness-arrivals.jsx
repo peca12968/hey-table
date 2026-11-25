@@ -21,7 +21,7 @@ export function ArrivalComparison({comparison,exchange}){
   </section>;
 }
 
-export default function ReadinessArrivals({planner,base,includePreparing}){
+export default function ReadinessArrivals({planner,base,orders,includePreparing}){
   const [rows,setRows]=useState(()=>[newRow(0)]);
   const [result,setResult]=useState(null);
   const nextId=useRef(1);
@@ -40,10 +40,11 @@ export default function ReadinessArrivals({planner,base,includePreparing}){
       const arrivals=rows.map(({component,quantity})=>({
         component,quantity:/^[0-9]+$/.test(quantity)?Number(quantity):NaN,
       }));
-      const {orders}=planner.forecast(base.source.orders,includePreparing,arrivals);
-      const byOrder=new Map(orders.map(({order_id,status,missing,prep})=>[order_id,{status,missing,prep}]));
+      const result=planner.forecast(orders,includePreparing,arrivals);
+      const byOrder=new Map(result.orders.map(({order_id,status,missing,prep})=>[order_id,{status,missing,prep}]));
       const exchange={
         format:prepArrivalReportFormat,source:base.source,includePreparing,
+        ...(base.issuedOrderIds?{issuedOrderIds:base.issuedOrderIds}:{}),
         arrivals:arrivals.map(({component,quantity})=>({...known.get(component),quantity})),
         orders:base.orders.map(({order_id,portions,status,missing,prep})=>({
           order_id,portions,before:{status,missing,prep},after:byOrder.get(order_id),

@@ -68,7 +68,11 @@ node kitchen-demo.mjs ../..
 python ../pantry-freight/purchase.py prep-purchase.json ../pantry-freight/examples/suppliers.json
 ```
 
-以原始盤點庫存算出的報告適合核對當下缺口。另有已開單的預計到貨時，可使用下方的帳本模式扣除未收數量。
+如果要一併扣除已下單的在途量，可從帳本匯出採購快照。將這個檔案選入備料頁的「庫存 JSON」。可重複指定不同採購單，快照會在同一個 SQLite 讀取交易取得現貨、待收包數和已領料餐單。備料試算依現貨判斷可做餐單，採購缺口則扣除在途量。已領料餐單會依完整餐單核對後排除，包含從分站或未完成品項查看時。
+
+```sh
+python receiving.py --db kitchen.db --recipes examples/recipes.json procurement --incoming LUNCH > procurement.json
+```
 
 從店家接單台開啟備料單，再下載訂單 JSON。在 `modules/prep-sheet` 執行以下指令，將 `examples/orders.json` 換成下載的檔案，並提供符合實際菜單的食譜與供應商資料。
 

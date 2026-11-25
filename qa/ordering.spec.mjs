@@ -1481,6 +1481,90 @@ test("pickup, retries, price authority, sold-out race and stale state transition
   expect((await request.post("/api/orders",{data:{...data,mode:"table",table:"Z99",token:randomUUID()}})).status()).toBe(400);
 });
 
+test("kitchen procurement uses in-transit stock for purchases and checks issued whole orders across stations",async({page})=>{
+  const issued={id:881,created:Date.now()-60000,status:"pending",items:[{id:"edamame",qty:2},{id:"sencha",qty:1}]};
+  const waiting={id:882,created:issued.created+1,status:"pending",items:[{id:"edamame",qty:4}]};
+  const cwd=fileURLToPath(new URL("../modules/prep-sheet/",import.meta.url));
+  const script=[
+    "import json, subprocess, sys, tempfile",
+    "from pathlib import Path",
+    "from ledger import initialize, post, read_json",
+    "from receiving import accept, open_order",
+    'recipe = Path("examples/recipes.json")',
+    "book = read_json(recipe)",
+    "with tempfile.TemporaryDirectory() as folder:",
+    '    db = Path(folder) / "stock.db"',
+    "    initialize(db)",
+    '    post(db,book,"receive","opening",{"beans":100,"tea":4,"water":220})',
+    '    line = dict(sku="bean-crate",component="beans",unit="g",pack=200,packs=2)',
+    '    open_order(db,book,"WEEK",dict(status="ok",orders=[dict(supplier="market",lines=[line])]))',
+    '    accept(db,book,"WEEK","market","first",{"bean-crate":1})',
+    "    issued = json.load(sys.stdin)",
+    '    post(db,book,"issue",str(issued["id"]),issued)',
+    '    command = [sys.executable,"-B","receiving.py","--db",str(db),"--recipes",str(recipe)]',
+    '    print(subprocess.check_output(command+["procurement","--incoming","WEEK","--incoming","WEEK"],encoding="utf-8"))',
+  ].join("\n");
+  const exported=spawnSync("python",["-B","-c",script],{
+    cwd,input:JSON.stringify(issued),encoding:"utf8",env:{...process.env,PYTHONUTF8:"1"},
+  });
+  expect(exported.status,exported.stderr).toBe(0);
+  expect(JSON.parse(exported.stdout)).toMatchObject({format:"prep-sheet.procurement.v1",purchase_orders:["WEEK"],
+    stock:{beans:100},incoming:{beans:200},units:{beans:"g"},
+    issued:[{id:issued.id,created:issued.created,items:[["edamame",2],["sencha",1]]}]});
+  await page.setViewportSize({width:360,height:780});
+  let changed=false;
+  await page.route("**/api/kitchen/prep?*",route=>{
+    const cold=[{...issued,items:[issued.items[0]]},waiting];
+    const full={...issued,items:[issued.items[0],{id:"sencha",qty:changed?2:1}]};
+    const stationOrders=Object.fromEntries(["hot","cold","bar","other"]
+      .map(key=>[key,{orders:key==="cold"?cold:[],remainingOrders:[]}]));
+    return route.fulfill({json:{date:new URL(route.request().url()).searchParams.get("date"),capturedAt:Date.now(),
+      orders:[full,waiting],remainingOrders:[],stationOrders}});
+  });
+  await page.goto("/kitchen/prep");
+  await page.getByRole("button",{name:/冷台/}).click();
+  const review=page.getByRole("region",{name:"備料試算報告"});
+  await review.getByLabel("食譜 JSON",{exact:true}).setInputFiles(join(cwd,"examples","recipes.json"));
+  const stock=review.getByLabel("庫存 JSON",{exact:true});
+  const incorrectUnit=JSON.parse(exported.stdout);
+  incorrectUnit.units.beans="kg";
+  await stock.setInputFiles({name:"procurement.json",mimeType:"application/json",buffer:Buffer.from(JSON.stringify(incorrectUnit))});
+  await review.getByRole("button",{name:"開始試算"}).click();
+  await expect(review.getByRole("alert")).toContainText("毛豆 的帳本單位與食譜不同");
+  await stock.setInputFiles({name:"procurement.json",mimeType:"application/json",buffer:Buffer.from(exported.stdout)});
+  await review.getByRole("button",{name:"開始試算"}).click();
+  const readiness=review.getByRole("region",{name:"備料試算結果"});
+  await expect(readiness.getByText("已領料排除 1 張")).toBeVisible();
+  await expect(readiness.getByText("缺 毛豆 300 g")).toBeVisible();
+  const purchase=review.getByRole("region",{name:"採購缺口"});
+  await purchase.getByRole("button",{name:"計算採購缺口"}).click();
+  await expect(purchase.getByText("計入在途採購單 WEEK")).toBeVisible();
+  await expect(purchase.getByText("毛豆 · 缺 100 g")).toBeVisible();
+  await expect(purchase.getByText("總需求 400 g · 盤點庫存 100 g · 在途 200 g")).toBeVisible();
+  const download=page.waitForEvent("download");
+  await purchase.getByRole("button",{name:"下載 Pantry Freight 採購資料"}).click();
+  const path=await (await download).path();
+  expect(JSON.parse(await readFile(path,"utf8"))).toMatchObject({orderCount:1,purchaseOrders:["WEEK"],
+    lines:[{component:"beans",needed:400,on_hand:100,incoming:200,available:300}]});
+  const pantry=join(cwd,"..","pantry-freight");
+  const purchased=spawnSync("python",[join(pantry,"purchase.py"),path,join(pantry,"examples","suppliers.json")],
+    {encoding:"utf8",env:{...process.env,PYTHONUTF8:"1"}});
+  expect(purchased.status,purchased.stderr).toBe(3);
+  expect(JSON.parse(purchased.stdout).shortages[0].uncovered).toBe(100);
+  const arrivals=review.getByRole("region",{name:"預計到貨試算"});
+  await arrivals.getByRole("combobox",{name:"食材 1",exact:true}).selectOption("beans");
+  await arrivals.getByLabel("數量 1 (g)",{exact:true}).fill("300");
+  await arrivals.getByRole("button",{name:"比較到貨前後"}).click();
+  await expect(arrivals.getByRole("status")).toContainText("轉為可做 1 張");
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBe(360);
+  changed=true;
+  await page.getByRole("button",{name:"重新擷取"}).click();
+  await expect(review.getByRole("alert")).toContainText("報告與目前");
+  await expect(readiness).toHaveCount(0);
+  await review.getByRole("button",{name:"開始試算"}).click();
+  await expect(review.getByRole("alert")).toContainText("與帳本的領料收據不同");
+});
+
 test("kitchen receiving drafts use real purchase statuses and post through SQLite",async({page})=>{
   const root=process.env.PREP_PROJECT||fileURLToPath(new URL("../modules/prep-sheet/",import.meta.url));
   const script=[

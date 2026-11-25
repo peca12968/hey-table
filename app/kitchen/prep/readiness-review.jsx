@@ -2,6 +2,7 @@
 import {useMemo,useRef,useState} from "react";
 import {downloadJson} from "../../../lib/download-json.mjs";
 import {prepReadinessPlanner} from "../../../lib/prep-readiness.mjs";
+import {procurementFormat,readProcurementSnapshot,unissuedPrepOrders} from "../../../lib/prep-procurement.mjs";
 import {matchesPrepOrderSource,prepArrivalReportFormat,prepOrderSource,prepOrdersFormat,prepReportFormat,
   readPrepArrivalReport,readPrepReadinessReport} from "../../../lib/prep-readiness-report.mjs";
 import ReadinessArrivals,{ArrivalComparison} from "./readiness-arrivals.jsx";
@@ -28,7 +29,14 @@ export default function ReadinessReview({snapshot,orders,station,scope,clock}){
     catch{return null;}
   },[snapshot,orders,station,scope]);
   const report=fileState?.report;
-  const matches=report&&source&&matchesPrepOrderSource(source,report.source);
+  const coveredOrdersMatch=useMemo(()=>{
+    if(!source||!fileState?.ledger)return true;
+    try{
+      const {excluded}=unissuedPrepOrders(source.orders,snapshot.orders,fileState.ledger.issued,includePreparing);
+      return JSON.stringify(excluded)===JSON.stringify(fileState.exchange.issuedOrderIds??[]);
+    }catch{return false;}
+  },[source,snapshot,fileState,includePreparing]);
+  const matches=report&&source&&coveredOrdersMatch&&matchesPrepOrderSource(source,report.source);
 
   async function readFile(event){
     const input=event.currentTarget,file=input.files[0];
@@ -45,7 +53,7 @@ export default function ReadinessReview({snapshot,orders,station,scope,clock}){
       if(version!==operation.current)return;
       if(value?.format===prepArrivalReportFormat){
         const comparison=readPrepArrivalReport(value);
-        setFileState({report:{source:comparison.source,orders:comparison.before},comparison});
+        setFileState({report:{source:comparison.source,orders:comparison.before,issuedOrderIds:comparison.issuedOrderIds},comparison});
       }else setFileState({report:readPrepReadinessReport(value)});
     }catch{
       if(version===operation.current)setFileState({error:"無法讀取備料試算報告。請選擇備料頁或 Prep Sheet 產生的 JSON。"});
@@ -57,10 +65,19 @@ export default function ReadinessReview({snapshot,orders,station,scope,clock}){
     try{
       const [recipes,stock]=await Promise.all([readJson(recipeFile,"食譜"),readJson(stockFile,"庫存")]);
       if(version!==operation.current)return;
-      const planner=prepReadinessPlanner(recipes,stock);
-      const result=planner.forecast(source.orders,includePreparing);
-      const exchange={format:prepReportFormat,source,orders:result.orders};
-      setFileState({report:readPrepReadinessReport(exchange),exchange,planner});
+      const ledger=stock?.format===procurementFormat?readProcurementSnapshot(stock):null;
+      const {orders,excluded}=ledger?unissuedPrepOrders(source.orders,snapshot.orders,ledger.issued,includePreparing):
+        {orders:source.orders,excluded:[]};
+      const planner=prepReadinessPlanner(recipes,ledger?.stock??stock,ledger?.incoming);
+      if(ledger){
+        for(const {component,name,unit} of planner.components){
+          if(ledger.units.has(component)&&ledger.units.get(component)!==unit)
+            throw new Error(name+" 的帳本單位與食譜不同。");
+        }
+      }
+      const result=planner.forecast(orders,includePreparing);
+      const exchange={format:prepReportFormat,source,orders:result.orders,...(excluded.length?{issuedOrderIds:excluded}:{})};
+      setFileState({report:readPrepReadinessReport(exchange),exchange,planner,orders,ledger});
     }catch(error){
       if(version===operation.current)setFileState({error:error.message});
     }
@@ -81,6 +98,7 @@ export default function ReadinessReview({snapshot,orders,station,scope,clock}){
     <p>食譜、庫存與報告均在此瀏覽器內讀取。</p>
     <fieldset className="prepReadinessFiles" disabled={Boolean(fileState?.loading)}>
       <legend>依目前餐單試算</legend>
+      <p>庫存可使用盤點 JSON 或 SQLite 採購快照。快照內的在途量用於採購試算。</p>
       <div className="actions prepReadinessActions">
         <label>食譜 JSON<input type="file" accept=".json,application/json"
           onChange={event=>changeInput(setRecipeFile,event.currentTarget.files[0]??null)}/></label>
@@ -106,6 +124,7 @@ export default function ReadinessReview({snapshot,orders,station,scope,clock}){
     {report&&!matches&&<p className="error" role="alert">報告與目前的備料日期、分站、範圍或餐單不同。請切回原範圍，或用目前餐單重新試算。</p>}
     {matches&&<section className="prepReadinessResult" aria-label="備料試算結果">
       <p role="status">可先做 {ready} 張 · 缺料暫緩 {report.orders.length-ready} 張 · 試算 {report.orders.length}／{source.orders.length} 張</p>
+      {report.issuedOrderIds?.length>0&&<p>已領料排除 {report.issuedOrderIds.length} 張</p>}
       <p>報告使用的餐單擷取時間 <time dateTime={new Date(report.source.capturedAt).toISOString()}>
         {clock.format(report.source.capturedAt)}</time></p>
       {fileState.exchange&&<button className="outline" type="button" onClick={()=>
@@ -115,9 +134,10 @@ export default function ReadinessReview({snapshot,orders,station,scope,clock}){
       <ReadinessOrders orders={report.orders}/>
     </section>}
     {matches&&fileState.planner&&report.orders.length>0&&
-      <ReadinessArrivals planner={fileState.planner} base={fileState.exchange} includePreparing={includePreparing}/>}
+      <ReadinessArrivals planner={fileState.planner} base={fileState.exchange} orders={fileState.orders} includePreparing={includePreparing}/>}
     {matches&&fileState.planner&&report.orders.length>0&&
-      <ReadinessPurchase planner={fileState.planner} source={report.source} includePreparing={includePreparing}/>}
+      <ReadinessPurchase planner={fileState.planner} source={report.source} orders={fileState.orders}
+        ledger={fileState.ledger} includePreparing={includePreparing}/>}
     {matches&&fileState.comparison&&<div className="prepReadinessResult prepReadinessFollowup">
       <h3>已匯入的到貨試算</h3>
       <ArrivalComparison comparison={fileState.comparison}/>

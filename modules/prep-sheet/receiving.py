@@ -238,6 +238,7 @@ def main():
     opening.add_argument("order_id")
     opening.add_argument("report", type=Path)
     commands.add_parser("accept-draft").add_argument("draft", type=Path)
+    commands.add_parser("procurement").add_argument("--incoming", action="append", default=[], metavar="PURCHASE_ORDER")
     for name in ("accept", "cancel"):
         operation = commands.add_parser(name)
         operation.add_argument("order_id")
@@ -255,12 +256,20 @@ def main():
             result = cancel(args.db, args.order_id, args.supplier, args.reference, read_json(args.packs))
         else:
             if not args.recipes:
-                parser.error("open, accept and accept-draft require --recipes")
+                parser.error("open, accept, accept-draft and procurement require --recipes")
             book = read_json(args.recipes)
             if args.command == "open":
                 result = open_order(args.db, book, args.order_id, read_json(args.report))
             elif args.command == "accept-draft":
                 result = accept_draft(args.db, book, read_json(args.draft))
+            elif args.command == "procurement":
+                purchase_orders = list(dict.fromkeys(args.incoming))
+                stock, issued, incoming = procurement_snapshot(args.db, book, purchase_orders)
+                result = {"format": "prep-sheet.procurement.v1", "stock": stock, "incoming": incoming,
+                          "units": {component: book["components"][component]["unit"]
+                                    for component in sorted(stock.keys() | incoming.keys())},
+                          "purchase_orders": purchase_orders,
+                          "issued": [{"id": key, **identity} for key, identity in sorted(issued.items())]}
             else:
                 result = accept(args.db, book, args.order_id, args.supplier, args.reference, read_json(args.packs))
         print(json.dumps(result, ensure_ascii=False, indent=2))
