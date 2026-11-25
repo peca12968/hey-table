@@ -47,6 +47,19 @@ python demo.py ../stockroom-reservations --execute-plan
 
 整合演練在 Stockroom 寫入 B 單後模擬回覆中斷。重新執行會取回 B 單原收據並交運 C 單，共確認 7 件，B 單只送出一次。D 單隨後因服務端已到裝車截止遭拒，兩件庫存保留待重排。[交運演練（私人預覽）](https://peca-github-demo.peca12968.chatgpt.site/?demo=dispatchExecution#demos)
 
+## 接續下一車
+
+將原始的完整 `work` 箱單和新車時窗交給 `replan.py`。新時窗檔必須提供 Unix 毫秒 `cutoff_ms`，可選填 `start_ms`、`stations`、`station_ready_ms` 與 `station_pauses`。省略開始時間就從 Stockroom 快照時間起算。指定開始時間時須等於或晚於快照，裝車截止則須晚於開始時間。
+
+```sh
+python replan.py packing-work.json next-truck.json --stockroom http://127.0.0.1:8000 > next-plan.json
+python execute.py next-plan.json
+```
+
+重排會從同一份即時快照讀回所有保留單和既有箱號。原箱單仍提供各箱件數、工時和允許的台別，已登記箱子會列入 `already_dispatched`，件數不同的箱號列入 `shipment_conflicts`。已到期的單會標記為 `hold_closed`，仍保留的剩餘箱可依新時窗重排。輸出的 `captured_at_ms` 可供交班核對，包完後可用上一節的確認指令交運。
+
+演練切到「下一車重排」時，A 單已到期，B、C 已出貨，D 的 2 件安排到第二台。確認交運後，在第一車的報告也能用同一批號查回 D 的收據。
+
 ## 排程規則
 
 最多安排 17 張單，優先最大化出貨件數，再最大化完成訂單數，最後比較工作完成時間。每張單只能由同一個工作站連續包裝。完成時間須早於保留期限與裝車截止時間，符合 Stockroom 到期時刻即釋回的行為。工時可包含預留的裝車和服務提交時間。

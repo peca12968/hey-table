@@ -286,5 +286,181 @@
     "sku": "KIT-01",
     "capacity": 13,
     "available": 11
+  },
+  "next_truck": {
+    "plan": {
+      "start_ms": 112000,
+      "cutoff_ms": 116000,
+      "ship_units": 2,
+      "scheduled": [
+        {
+          "reservation_id": "D",
+          "pack_start_ms": 112000,
+          "dispatch_ms": 113000,
+          "deadline_ms": 116000,
+          "units": 2,
+          "dispatch": {
+            "boxes": [
+              {
+                "reservation_id": "D",
+                "shipment_id": "D1",
+                "quantity": 2
+              }
+            ]
+          },
+          "station": 2
+        }
+      ],
+      "omitted": [
+        {
+          "reservation_id": "A",
+          "reason": "hold_closed"
+        },
+        {
+          "reservation_id": "B",
+          "reason": "already_dispatched"
+        },
+        {
+          "reservation_id": "C",
+          "reason": "already_dispatched"
+        }
+      ],
+      "already_dispatched": [
+        {
+          "reservation_id": "B",
+          "shipment_id": "B1",
+          "quantity": 2
+        },
+        {
+          "reservation_id": "B",
+          "shipment_id": "B2",
+          "quantity": 2
+        },
+        {
+          "reservation_id": "C",
+          "shipment_id": "C1",
+          "quantity": 3
+        }
+      ],
+      "shipment_conflicts": [],
+      "stations": 2,
+      "station_pauses": [
+        [
+          {
+            "start_ms": 112000,
+            "end_ms": 115000
+          }
+        ],
+        []
+      ],
+      "captured_at_ms": 112000
+    },
+    "execution": {
+      "captured_at_ms": 113000,
+      "confirmed_units": 2,
+      "results": [
+        {
+          "reservation_id": "D",
+          "batch_id": "dispatch-f560671a9063d5d08e2efd330cb116f16f000d07730ee791bd5bdddd8817d3cf",
+          "units": 2,
+          "window": {
+            "not_before_ms": 113000,
+            "before_ms": 116000
+          },
+          "state": "dispatched",
+          "receipt": {
+            "batch_id": "dispatch-f560671a9063d5d08e2efd330cb116f16f000d07730ee791bd5bdddd8817d3cf",
+            "boxes": [
+              {
+                "reservation_id": "D",
+                "shipment_id": "D1",
+                "quantity": 2,
+                "held_after": 0
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "first_truck_review": {
+      "captured_at_ms": 113000,
+      "confirmed_units": 9,
+      "results": [
+        {
+          "reservation_id": "B",
+          "batch_id": "dispatch-6ffb1008c4e044d6fc9c06f10ba4a6d3b3d913e60ea0775b01e52e5bb97673e1",
+          "units": 4,
+          "window": {
+            "not_before_ms": 107000,
+            "before_ms": 108000
+          },
+          "state": "recovered",
+          "receipt": {
+            "batch_id": "dispatch-6ffb1008c4e044d6fc9c06f10ba4a6d3b3d913e60ea0775b01e52e5bb97673e1",
+            "boxes": [
+              {
+                "reservation_id": "B",
+                "shipment_id": "B1",
+                "quantity": 2,
+                "held_after": 2
+              },
+              {
+                "reservation_id": "B",
+                "shipment_id": "B2",
+                "quantity": 2,
+                "held_after": 0
+              }
+            ]
+          }
+        },
+        {
+          "reservation_id": "C",
+          "batch_id": "dispatch-b3aa67e43ec24e46689a4dfa9275b3a2a0dbc897dd4f883859643f593baf9de0",
+          "units": 3,
+          "window": {
+            "not_before_ms": 109000,
+            "before_ms": 110000
+          },
+          "state": "recovered",
+          "receipt": {
+            "batch_id": "dispatch-b3aa67e43ec24e46689a4dfa9275b3a2a0dbc897dd4f883859643f593baf9de0",
+            "boxes": [
+              {
+                "reservation_id": "C",
+                "shipment_id": "C1",
+                "quantity": 3,
+                "held_after": 0
+              }
+            ]
+          }
+        },
+        {
+          "reservation_id": "D",
+          "batch_id": "dispatch-f560671a9063d5d08e2efd330cb116f16f000d07730ee791bd5bdddd8817d3cf",
+          "units": 2,
+          "window": {
+            "not_before_ms": 110000,
+            "before_ms": 111000
+          },
+          "state": "recovered",
+          "receipt": {
+            "batch_id": "dispatch-f560671a9063d5d08e2efd330cb116f16f000d07730ee791bd5bdddd8817d3cf",
+            "boxes": [
+              {
+                "reservation_id": "D",
+                "shipment_id": "D1",
+                "quantity": 2,
+                "held_after": 0
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "inventory_after": {
+      "sku": "KIT-01",
+      "capacity": 11,
+      "available": 11
+    }
   }
 }

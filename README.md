@@ -12,7 +12,7 @@ Stockroom 支援在一筆交易內保留多個 SKU。若其中一項缺貨，該
 
 出貨排程也可將整張訂單分派到兩座包裝台並行處理。每台可指定開工與暫停時段，訂單也可限制在有專用設備的台面包裝。排程會核對開工、保養和交運期限，並列出無法出貨的原因。[雙包裝台排程](modules/dispatch-window/README.md#兩座包裝台同時作業)
 
-包裝完成後可選定訂單，將到時的箱件交運。Stockroom 會在寫入時核對交運時窗，回覆中斷後可核回原批次收據。[交運與收據重試](modules/dispatch-window/README.md#確認包裝後交運與查回收據)
+包裝完成後可選定訂單，將到時的箱件交運。Stockroom 會在寫入時核對交運時窗，回覆中斷後可查回原批次收據。錯過第一車時，可用最新庫存快照與下一車時窗重排未出貨的箱件。[交運與收據重試](modules/dispatch-window/README.md#確認包裝後交運與查回收據) · [接續下一車](modules/dispatch-window/README.md#接續下一車)
 
 交班可按 SKU 查已到期的保留單，核對部分出貨或減量後的釋回件數，以及實際回收時間。[到期回收紀錄](modules/stockroom-reservations/README.md#查閱已到期的庫存回收)
 

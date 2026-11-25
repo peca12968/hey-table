@@ -12,12 +12,13 @@ from tempfile import TemporaryDirectory
 from fastapi.testclient import TestClient
 
 from execute import execute
+from replan import replan
 
 
 ROOT = Path(__file__).resolve().parent
 
 
-def execution_demo(client, clock, report):
+def execution_demo(client, clock, report, manifest):
     attempts = []
 
     def request(path, body=None, headers=None):
@@ -25,15 +26,16 @@ def execution_demo(client, clock, report):
             response = client.get(path)
         else:
             response = client.post(path, json=body, headers=headers)
-            reservation = body["boxes"][0]["reservation_id"]
-            attempts.append({"reservation_id": reservation, "http_status": response.status_code})
-            if reservation == "B" and response.status_code == 201:
-                raise TimeoutError("simulated lost response after successful commit")
+            if path == "/dispatch-batches":
+                reservation = body["boxes"][0]["reservation_id"]
+                attempts.append({"reservation_id": reservation, "http_status": response.status_code})
+                if reservation == "B" and response.status_code == 201:
+                    raise TimeoutError("simulated lost response after successful commit")
         return response.status_code, response.json()
 
-    def execute_at(server_ms, client_ms=None):
+    def execute_at(server_ms, client_ms=None, *, chosen=report):
         clock[0] = server_ms / 1000
-        return execute(report, request, clock=lambda: server_ms if client_ms is None else client_ms)
+        return execute(chosen, request, clock=lambda: server_ms if client_ms is None else client_ms)
 
     waiting = execute_at(100000)
     assert not attempts
@@ -58,8 +60,37 @@ def execution_demo(client, clock, report):
     assert client.get("/reservations/D").json()["state"] == "held"
     with_inventory = client.get("/inventory").json()
     assert with_inventory == [{"sku": "KIT-01", "capacity": 13, "available": 11}]
+    first_attempts = attempts.copy()
+    clock[0] = 112.0
+    next_plan = replan(manifest, {
+        "cutoff_ms": 116000, "stations": 2,
+        "station_pauses": [[{"start_ms": 112000, "end_ms": 115000}], []],
+    }, request)
+    assert next_plan["captured_at_ms"] == next_plan["start_ms"] == 112000
+    assert next_plan["shipment_conflicts"] == []
+    assert next_plan["omitted"] == [
+        {"reservation_id": "A", "reason": "hold_closed"},
+        {"reservation_id": "B", "reason": "already_dispatched"},
+        {"reservation_id": "C", "reason": "already_dispatched"},
+    ]
+    [job] = next_plan["scheduled"]
+    assert (job["reservation_id"], job["station"], job["dispatch_ms"], job["units"]) == ("D", 2, 113000, 2)
+    assert next_plan["ship_units"] == 2
+    sent = execute_at(job["dispatch_ms"], chosen=next_plan)
+    assert sent["confirmed_units"] == 2
+    assert sent["results"][0]["state"] == "dispatched"
+    old_plan = execute_at(job["dispatch_ms"])
+    assert [row["state"] for row in old_plan["results"]] == ["recovered", "recovered", "recovered"]
+    assert old_plan["confirmed_units"] == 9
+    assert old_plan["results"][-1]["receipt"] == sent["results"][0]["receipt"]
+    assert attempts == [*first_attempts, {"reservation_id": "D", "http_status": 201}]
+    assert client.get("/reservations/D").json()["state"] == "fulfilled"
+    final_inventory = client.get("/inventory").json()
+    assert final_inventory == [{"sku": "KIT-01", "capacity": 11, "available": 11}]
     return {"format": "dispatch-window.execution-demo.v1", "start_ms": report["start_ms"],
-            "stages": stages, "attempts": attempts, "inventory_after": with_inventory[0]}
+            "stages": stages, "attempts": first_attempts, "inventory_after": with_inventory[0],
+            "next_truck": {"plan": next_plan, "execution": sent, "first_truck_review": old_plan,
+                           "inventory_after": final_inventory[0]}}
 
 
 def demo(stockroom, stations=1, delayed=False, *, paused=False, restricted=False, execute_plan=False):
@@ -119,7 +150,7 @@ def demo(stockroom, stations=1, delayed=False, *, paused=False, restricted=False
             ])
             chosen = json.loads(output)
             if execute_plan:
-                return execution_demo(client, clock, chosen)
+                return execution_demo(client, clock, chosen, document)
             skips_a = stations == 1 or delayed
             assert chosen["ship_units"] == 10 - int(skips_a) - (3 if restricted else 0)
             assert [row["reservation_id"] for row in chosen["scheduled"]] == [
