@@ -585,9 +585,9 @@
       "sku": "KIT-01",
       "capacity": 20,
       "available": 14,
-      "captured_at_ms": 800000,
       "held": 6,
-      "revision": 0
+      "revision": 0,
+      "captured_at_ms": 800000
     },
     "blocked_count": 5,
     "blocked_status": 409,
@@ -608,5 +608,80 @@
     "stale_status": 409,
     "replay_status": 200,
     "same_receipt": true
+  },
+  "stock_count_batch": {
+    "basis": {
+      "captured_at_ms": 900000,
+      "products": [
+        {
+          "sku": "KIT-01",
+          "capacity": 20,
+          "available": 14,
+          "held": 6,
+          "revision": 0
+        },
+        {
+          "sku": "WRAP-01",
+          "capacity": 5,
+          "available": 2,
+          "held": 3,
+          "revision": 0
+        }
+      ]
+    },
+    "after_blocked": {
+      "captured_at_ms": 900000,
+      "products": [
+        {
+          "sku": "KIT-01",
+          "capacity": 20,
+          "available": 14,
+          "held": 6,
+          "revision": 0
+        },
+        {
+          "sku": "WRAP-01",
+          "capacity": 5,
+          "available": 2,
+          "held": 3,
+          "revision": 0
+        }
+      ]
+    },
+    "blocked_sku": "WRAP-01",
+    "blocked_count": 2,
+    "blocked_status": 409,
+    "accepted_status": 201,
+    "replay_status": 200,
+    "same_receipt": true,
+    "receipt": {
+      "batch_id": "joint-cycle",
+      "items": [
+        {
+          "sku": "KIT-01",
+          "count_session": "joint-shift",
+          "reason": "\u8907\u9ede\u5f8c\u6574\u6279\u5165\u5e33",
+          "recorded_at_ms": 901000,
+          "previous_revision": 0,
+          "previous_capacity": 20,
+          "previous_available": 14,
+          "counted": 18,
+          "available": 12,
+          "revision": 1
+        },
+        {
+          "sku": "WRAP-01",
+          "count_session": "joint-shift",
+          "reason": "\u8907\u9ede\u5f8c\u6574\u6279\u5165\u5e33",
+          "recorded_at_ms": 901000,
+          "previous_revision": 0,
+          "previous_capacity": 5,
+          "previous_available": 2,
+          "counted": 4,
+          "available": 1,
+          "revision": 1
+        }
+      ]
+    }
   }
 }

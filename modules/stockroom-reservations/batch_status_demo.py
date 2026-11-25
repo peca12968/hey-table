@@ -105,7 +105,8 @@ def capture(db):
             "replacement": capture_replacement(db), "batch_replacement": capture_batch_replacement(db),
             "dispatch_preview": capture_dispatch_preview(db),
             "expiry_history": capture_expiry_history(db.with_name("expiry-history.db")),
-            "stock_count": capture_stock_count(db.with_name("stock-count.db"))}
+            "stock_count": capture_stock_count(db.with_name("stock-count.db")),
+            "stock_count_batch": capture_stock_count_batch(db.with_name("stock-count-batch.db"))}
 
 
 def capture_release_batch(api):
@@ -330,6 +331,36 @@ def capture_stock_count(db):
         return {"basis": basis, "blocked_count": 5, "blocked_status": blocked.status_code,
                 "saved_status": saved.status_code, "receipt": receipt, "stale_status": stale.status_code,
                 "replay_status": replay.status_code, "same_receipt": receipt == replay.json() == retrieved}
+
+
+def capture_stock_count_batch(db):
+    now = 900
+    with TestClient(create_app(db, clock=lambda: now)) as api:
+        with closing(sqlite3.connect(db)) as conn, conn:
+            conn.execute("INSERT INTO products VALUES ('WRAP-01',5,5)")
+        for key, sku, quantity in (("kit-cart", "KIT-01", 6), ("wrap-cart", "WRAP-01", 3)):
+            api.post("/reservations", headers={"Idempotency-Key": key},
+                     json={"sku": sku, "quantity": quantity}).raise_for_status()
+        scope = {"skus": ["WRAP-01", "KIT-01"]}
+        path = "/stock-count-batches"
+        headers = {"Idempotency-Key": "joint-cycle"}
+        basis = api.post("/stock-count-basis", json=scope).raise_for_status().json()
+        kit = {"sku": "KIT-01", "counted": 18, "expected_revision": 0}
+        wrap = {"sku": "WRAP-01", "counted": 4, "expected_revision": 0}
+        request = {"items": [wrap, kit], "count_session": "joint-shift", "reason": "複點後整批入帳"}
+        invalid = {**request, "items": [{**wrap, "counted": 2}, kit]}
+        blocked = api.post(path, headers=headers, json=invalid)
+        after_blocked = api.post("/stock-count-basis", json=scope).raise_for_status().json()
+        now = 901
+        accepted = api.post(path, headers=headers, json=request)
+        receipt = accepted.raise_for_status().json()
+        now = 902
+        replay = api.post(path, headers=headers, json={**request, "items": request["items"][::-1]})
+        same_receipt = api.get(path + "/" + receipt["batch_id"]).raise_for_status().json() == replay.json() == receipt
+        display = {**receipt, "items": [{k: v for k, v in row.items() if k != "id"} for row in receipt["items"]]}
+        return {"basis": basis, "after_blocked": after_blocked, "blocked_sku": "WRAP-01", "blocked_count": 2,
+                "blocked_status": blocked.status_code, "accepted_status": accepted.status_code,
+                "replay_status": replay.status_code, "same_receipt": same_receipt, "receipt": display}
 
 
 if __name__ == "__main__":

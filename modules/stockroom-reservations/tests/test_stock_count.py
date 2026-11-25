@@ -8,11 +8,13 @@ from fastapi.testclient import TestClient
 
 from stockroom.api import create_app
 from stockroom.reconcile import reconcile
+from stockroom.store import Store
 
 
 PRODUCT = "/inventory/KIT-01"
 BASIS = PRODUCT + "/count-basis"
 ADJUSTMENTS = PRODUCT + "/count-adjustments"
+BATCH = "/stock-count-batches"
 
 
 def adjust(client, key, revision, counted, reason="Final recount"):
@@ -125,3 +127,91 @@ def test_count_upgrades_a_legacy_database_and_rolls_back_a_failed_receipt(tmp_pa
         assert adjust(client, "retry", 0, 17).raise_for_status().json()["available"] == 10
         assert adjust(client, "bad", 1, True).status_code == 422
         assert adjust(client, "bad", 1, 18, " ").status_code == 422
+
+
+def batch_count(client, key, items, reason="Joint recount"):
+    return client.post(BATCH, headers={"Idempotency-Key": key},
+                       json={"items": items, "count_session": "shift-count", "reason": reason})
+
+
+def count_item(sku, counted, revision=0):
+    return {"sku": sku, "counted": counted, "expected_revision": revision}
+
+
+def test_count_batch_rolls_back_and_replays_all_receipts_after_restart(tmp_path):
+    path = tmp_path / "batch-count.db"
+    items = [count_item("WRAP-01", 4), count_item("KIT-01", 18)]
+    with TestClient(create_app(path, clock=lambda: 100)) as api:
+        with Store(path).transaction() as conn:
+            conn.execute("INSERT INTO products VALUES ('WRAP-01',5,5)")
+        hold(api, 6)
+        api.post("/reservations", headers={"Idempotency-Key": "wrap-cart"},
+                 json={"sku": "WRAP-01", "quantity": 3}).raise_for_status()
+        scope = {"skus": ["WRAP-01", "KIT-01"]}
+        basis = api.post("/stock-count-basis", json=scope).raise_for_status()
+        assert basis.headers["Cache-Control"] == "no-store"
+        assert basis.json() == {"captured_at_ms": 100_000, "products": [
+            {"sku": "KIT-01", "capacity": 20, "available": 14, "held": 6, "revision": 0},
+            {"sku": "WRAP-01", "capacity": 5, "available": 2, "held": 3, "revision": 0},
+        ]}
+        for rejected, code in [([count_item("WRAP-01", 2), items[1]], 409),
+                               ([count_item("Z-MISSING", 2), items[1]], 404),
+                               ([count_item("WRAP-01", 4, 1), items[1]], 409)]:
+            reply = batch_count(api, "cycle", rejected)
+            assert reply.status_code == code
+            assert reply.json()["detail"].startswith(rejected[0]["sku"])
+            assert api.post("/stock-count-basis", json=scope).json() == basis.json()
+            assert api.get(BATCH + "/cycle").status_code == 404
+        assert batch_count(api, "cycle", [items[0], items[0]]).status_code == 422
+        assert api.post("/stock-count-basis", json={"skus": ["KIT-01", "KIT-01"]}).status_code == 422
+        assert api.post("/stock-count-basis", json={"skus": ["KIT-01", "Z-MISSING"]}).status_code == 404
+        with Store(path).transaction() as conn:
+            conn.execute("""CREATE TRIGGER fail_count_link BEFORE INSERT ON stock_count_batch_items
+                            WHEN (SELECT sku FROM stock_count_adjustments WHERE id=NEW.adjustment_id)='WRAP-01'
+                            BEGIN SELECT RAISE(ABORT, 'fixture incomplete batch'); END""")
+        with pytest.raises(sqlite3.IntegrityError, match="fixture incomplete batch"):
+            batch_count(api, "cycle", items)
+        with Store(path).transaction() as conn:
+            assert conn.execute("SELECT COUNT(*) FROM stock_count_adjustments").fetchone()[0] == 0
+            conn.execute("DROP TRIGGER fail_count_link")
+        assert api.post("/stock-count-basis", json=scope).json() == basis.json()
+        accepted = batch_count(api, "cycle", items)
+        assert accepted.status_code == 201
+        receipt = accepted.json()
+        assert receipt["batch_id"] == "cycle"
+        assert [(line["sku"], line["counted"], line["available"], line["revision"], line["recorded_at_ms"])
+                for line in receipt["items"]] == [("KIT-01", 18, 12, 1, 100_000), ("WRAP-01", 4, 1, 1, 100_000)]
+        for line in receipt["items"]:
+            assert api.get(f"/inventory/{line['sku']}/count-adjustments/{line['id']}").json() == line
+    with TestClient(create_app(path, clock=lambda: 1000)) as restarted:
+        assert restarted.get(BATCH + "/cycle").json() == receipt
+        repeated = batch_count(restarted, "cycle", items[::-1])
+        assert (repeated.status_code, repeated.json()) == (200, receipt)
+        assert batch_count(restarted, "cycle", items, reason="Changed reason").status_code == 409
+        assert batch_count(restarted, "cycle", items[:1]).status_code == 409
+
+
+def test_one_stock_revision_serializes_a_single_and_a_batch_adjustment(tmp_path):
+    path = tmp_path / "competing-counts.db"
+    with TestClient(create_app(path)) as single, TestClient(create_app(path)) as batch:
+        with Store(path).transaction() as conn:
+            conn.execute("INSERT INTO products VALUES ('AUX',5,5)")
+        gate = Barrier(2, timeout=5)
+
+        def one():
+            gate.wait()
+            return adjust(single, "one", 0, 19)
+
+        def many():
+            gate.wait()
+            return batch_count(batch, "all", [count_item("KIT-01", 18), count_item("AUX", 4)])
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            single_write = pool.submit(one)
+            batch_write = pool.submit(many)
+            first, second = single_write.result(timeout=10), batch_write.result(timeout=10)
+        assert sorted([first.status_code, second.status_code]) == [201, 409]
+        products = batch.post("/stock-count-basis", json={"skus": ["AUX", "KIT-01"]}).json()["products"]
+        expected = [(4, 1), (18, 1)] if second.status_code == 201 else [(5, 0), (19, 1)]
+        assert [(product["capacity"], product["revision"]) for product in products] == expected
+        assert batch.get(BATCH + "/all").status_code == (200 if second.status_code == 201 else 404)

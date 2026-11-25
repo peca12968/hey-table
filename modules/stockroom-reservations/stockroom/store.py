@@ -50,6 +50,11 @@ CREATE TABLE IF NOT EXISTS stock_count_adjustments (
     CHECK (counted - available = previous_capacity - previous_available),
     CHECK (revision = previous_revision + (counted <> previous_capacity))
 );
+CREATE TABLE IF NOT EXISTS stock_count_batch_items (
+    batch_id TEXT NOT NULL,
+    adjustment_id TEXT NOT NULL UNIQUE REFERENCES stock_count_adjustments(id),
+    PRIMARY KEY (batch_id, adjustment_id)
+);
 CREATE TABLE IF NOT EXISTS reservations (
     id TEXT PRIMARY KEY,
     sku TEXT NOT NULL REFERENCES products(sku),
@@ -260,8 +265,15 @@ class Store:
 
     def stock_count_basis(self, sku):
         with self.current_inventory() as (conn, now):
-            product = self.stock_count_product(conn, sku)
-            return {**product, "captured_at_ms": now, "held": product["capacity"] - product["available"]}
+            return {**self.count_basis_row(conn, sku), "captured_at_ms": now}
+
+    def count_basis_row(self, conn, sku):
+        row = self.stock_count_product(conn, sku)
+        return {**row, "held": row["capacity"] - row["available"]}
+
+    def stock_count_bases(self, skus):
+        with self.current_inventory() as (conn, now):
+            return {"captured_at_ms": now, "products": [self.count_basis_row(conn, sku) for sku in sorted(skus)]}
 
     @staticmethod
     def stock_count_row(conn, key):
@@ -275,21 +287,23 @@ class Store:
                 if original != (sku, expected_revision, counted, count_session, reason):
                     raise Conflict("Adjustment key already used with different input")
                 return dict(prior), False
-            product = self.stock_count_product(conn, sku)
-            if product["revision"] != expected_revision:
-                raise Conflict("Physical stock changed since the count basis")
-            held = product["capacity"] - product["available"]
-            if counted < held:
-                raise Conflict("Count is below the units still reserved")
-            available = counted - held
-            conn.execute("UPDATE products SET capacity=?, available=? WHERE sku=?", (counted, available, sku))
-            revision = self.stock_count_product(conn, sku)["revision"]
-            conn.execute("""INSERT INTO stock_count_adjustments
-                (id,sku,count_session,reason,recorded_at_ms,previous_revision,previous_capacity,previous_available,counted,available,revision)
-                VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
-                         (key, sku, count_session, reason, now, expected_revision, product["capacity"], product["available"],
-                          counted, available, revision))
-            return dict(self.stock_count_row(conn, key)), True
+            return self.record_stock_count(conn, now, key, sku, expected_revision, counted, count_session, reason), True
+
+    def record_stock_count(self, conn, now, key, sku, expected_revision, counted, count_session, reason):
+        product = self.count_basis_row(conn, sku)
+        if product["revision"] != expected_revision:
+            raise Conflict("Physical stock changed since the count basis")
+        if counted < product["held"]:
+            raise Conflict("Count is below the units still reserved")
+        available = counted - product["held"]
+        conn.execute("UPDATE products SET capacity=?, available=? WHERE sku=?", (counted, available, sku))
+        revision = self.stock_count_product(conn, sku)["revision"]
+        conn.execute("""INSERT INTO stock_count_adjustments
+            (id,sku,count_session,reason,recorded_at_ms,previous_revision,previous_capacity,previous_available,counted,available,revision)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+                     (key, sku, count_session, reason, now, expected_revision, product["capacity"], product["available"],
+                      counted, available, revision))
+        return dict(self.stock_count_row(conn, key))
 
     def stock_count_adjustment(self, sku, key):
         with closing(self.connect()) as conn:
@@ -297,6 +311,40 @@ class Store:
             if row is None or row["sku"] != sku:
                 raise Missing("Unknown stock count adjustment")
             return dict(row)
+
+    @staticmethod
+    def stock_count_batch_rows(conn, batch_id):
+        return [dict(row) for row in conn.execute("""
+            SELECT a.* FROM stock_count_batch_items AS b
+            JOIN stock_count_adjustments AS a ON a.id=b.adjustment_id
+            WHERE b.batch_id=? ORDER BY a.sku
+        """, (batch_id,))]
+
+    def adjust_stock_count_batch(self, batch_id, items, count_session, reason):
+        ordered = sorted(items)
+        with self.current_inventory() as (conn, now):
+            receipts = self.stock_count_batch_rows(conn, batch_id)
+            if receipts:
+                prior = [(r["sku"], r["previous_revision"], r["counted"]) for r in receipts]
+                if prior != ordered or (receipts[0]["count_session"], receipts[0]["reason"]) != (count_session, reason):
+                    raise Conflict("Stock count batch key already used with different input")
+                return {"batch_id": batch_id, "items": receipts}, False
+            for sku, revision, counted in ordered:
+                key = uuid4().hex
+                try:
+                    receipt = self.record_stock_count(conn, now, key, sku, revision, counted, count_session, reason)
+                except (Missing, Conflict) as error:
+                    raise type(error)(f"{sku}: {error}") from error
+                conn.execute("INSERT INTO stock_count_batch_items VALUES (?, ?)", (batch_id, key))
+                receipts.append(receipt)
+            return {"batch_id": batch_id, "items": receipts}, True
+
+    def stock_count_batch(self, batch_id):
+        with closing(self.connect()) as conn:
+            receipts = self.stock_count_batch_rows(conn, batch_id)
+            if not receipts:
+                raise Missing("Unknown stock count batch")
+            return {"batch_id": batch_id, "items": receipts}
 
     def expiring_reservations(self, within_seconds, limit, sku, through_ms, after):
         with self.current_inventory() as (conn, now):

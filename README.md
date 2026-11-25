@@ -10,6 +10,8 @@ Stockroom 支援在一筆交易內保留多個 SKU。若其中一項缺貨，該
 
 倉庫可按實點結果調整庫存，保留已占用件數與調整前後紀錄。盤點期間若出貨或入庫改變庫存版次，須重新核對。[實點調整與稽核](modules/stockroom-reservations/README.md#核對實點後調整庫存)
 
+同一場盤點的多個 SKU 可一起核對並入帳，任一品項不符會整批退回。[多品項盤點](modules/stockroom-reservations/README.md#一起保存多品項盤點)
+
 若出貨需要延後，可選取清單中的多張單一起續期。任一筆期限已變更時整批退回，成功後可按批號取得原續期收據。[批次續期與回滾測試](modules/stockroom-reservations/README.md#將多張保留單一起續期)
 
 交班時可依保留編號查單張及批次續期的原期限、新期限與收據識別碼。保留到期後仍可核對歷程。[續期紀錄與續頁](modules/stockroom-reservations/README.md#按保留單查續期紀錄)

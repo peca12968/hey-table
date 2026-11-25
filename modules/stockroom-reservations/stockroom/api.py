@@ -116,18 +116,64 @@ class InventorySnapshot(BaseModel):
     products: list[Product]
 
 
-class StockCountBasis(Product):
-    captured_at_ms: int
+class StockCountBasisProduct(Product):
     held: int
     revision: int
 
 
-class StockCountAdjustment(BaseModel):
+class StockCountBasis(StockCountBasisProduct):
+    captured_at_ms: int
+
+
+StockCountSKU = Annotated[str, Field(min_length=1, max_length=80)]
+
+
+class StockCountBasisScope(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    skus: list[StockCountSKU] = Field(min_length=1, max_length=100)
+
+    @field_validator("skus")
+    @classmethod
+    def distinct_skus(cls, skus):
+        if len(skus) != len(set(skus)):
+            raise ValueError("Repeat SKU in stock count basis")
+        return skus
+
+
+class StockCountBasisBatch(BaseModel):
+    captured_at_ms: int
+    products: list[StockCountBasisProduct]
+
+
+class StockCountValue(BaseModel):
     model_config = ConfigDict(extra="forbid")
     expected_revision: int = Field(strict=True, ge=0, le=2**63 - 1)
     counted: int = Field(strict=True, ge=0, le=2**63 - 1)
+
+
+class StockCountMetadata(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     count_session: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=80)]
     reason: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=240)]
+
+
+class StockCountAdjustment(StockCountMetadata, StockCountValue):
+    pass
+
+
+class StockCountLine(StockCountValue):
+    sku: StockCountSKU
+
+
+class StockCountBatch(StockCountMetadata):
+    items: list[StockCountLine] = Field(min_length=1, max_length=100)
+
+    @field_validator("items")
+    @classmethod
+    def distinct_skus(cls, items):
+        if len(items) != len({item.sku for item in items}):
+            raise ValueError("Repeat SKU in stock count batch")
+        return items
 
 
 class StockCountReceipt(BaseModel):
@@ -142,6 +188,11 @@ class StockCountReceipt(BaseModel):
     counted: int
     available: int
     revision: int
+
+
+class StockCountBatchReceipt(BaseModel):
+    batch_id: str
+    items: list[StockCountReceipt]
 
 
 class ExpiringReservation(BaseModel):
@@ -476,6 +527,26 @@ def create_app(path: Path, *, ttl_seconds=900, clock=time.time):
     def stock_count_receipt(sku: str, adjustment_id: BoxKey, response: Response):
         response.headers["Cache-Control"] = "no-store"
         return store.stock_count_adjustment(sku, adjustment_id)
+
+    @app.post("/stock-count-basis", response_model=StockCountBasisBatch)
+    def stock_count_bases(scope: StockCountBasisScope, response: Response):
+        response.headers["Cache-Control"] = "no-store"
+        return store.stock_count_bases(scope.skus)
+
+    @app.post("/stock-count-batches", response_model=StockCountBatchReceipt, status_code=201,
+              responses={200: {"model": StockCountBatchReceipt, "description": "Original stock count batch receipt"}})
+    def adjust_stock_count_batch(batch: StockCountBatch, response: Response, idempotency_key: RequestKey):
+        items = [(item.sku, item.expected_revision, item.counted) for item in batch.items]
+        receipt, created = store.adjust_stock_count_batch(idempotency_key, items, batch.count_session, batch.reason)
+        response.headers["Cache-Control"] = "no-store"
+        if not created:
+            response.status_code = 200
+        return receipt
+
+    @app.get("/stock-count-batches/{batch_id}", response_model=StockCountBatchReceipt)
+    def stock_count_batch_receipt(batch_id: BoxKey, response: Response):
+        response.headers["Cache-Control"] = "no-store"
+        return store.stock_count_batch(batch_id)
 
     @app.get("/expiring-reservations", response_model=ExpiryQueue)
     def expiring_reservations(
