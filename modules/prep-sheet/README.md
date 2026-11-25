@@ -74,6 +74,8 @@ python lunch.py --orders examples/orders.json --recipes examples/recipes.json --
 
 完成本機試算後，在「預計到貨試算」填入一項或多項預計到貨的食材和數量。每次比較都從原始庫存依同一批餐單的成立順序重算。如果較早的餐單獲得缺料、開始占用原有食材，較晚的餐單可能反而出現缺料。頁面會標出兩種變化，原始庫存和原報告可繼續查閱。
 
+「下載到貨試算報告」會保存預計到貨的食材、數量、餐單快照與前後結果。接班店員可在「備料試算報告 JSON」選取該檔案，查看原盤點和預計到貨兩種結果。檔案只包含試算明細，交班時可把食譜與庫存檔留在原裝置。匯入時會核對應有的餐單與份數，並在目前日期、分站、範圍及餐單內容一致時顯示結果。
+
 `python prep.py --orders orders.json --recipes examples/recipes.json --ledger kitchen.db --readiness` 會依成立時間逐單試算，同時成立的餐單依餐號排序。可改用 `--stock stock.json` 提供盤點數量。每張可做餐單會附上實際的備料順序，例如先做高湯，再做用到高湯的丼飯醬。餘量可供後續餐單使用。缺料會列出該單輪到時所缺的原料與數量。
 
 暫緩的餐單會保留所有模擬庫存給後續餐單。輸出的餘額是試算結果，領料與備料仍依店家的帳本操作。帳本模式會核對並跳過已登記領料的餐單。加上 `--include-preparing` 可納入製作中餐單。執行 `python readiness_demo.py` 可重建補入 280 g 雞肉前後的報告。[試玩現有庫存備料（私人預覽）](https://peca-github-demo.peca12968.chatgpt.site/?demo=prepReadiness#demos) · [範例資料](examples/readiness-demo.json)

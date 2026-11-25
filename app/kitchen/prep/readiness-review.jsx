@@ -2,8 +2,9 @@
 import {useMemo,useRef,useState} from "react";
 import {downloadJson} from "../../../lib/download-json.mjs";
 import {prepReadinessPlanner} from "../../../lib/prep-readiness.mjs";
-import {matchesPrepOrderSource,prepOrderSource,prepOrdersFormat,prepReportFormat,readPrepReadinessReport} from "../../../lib/prep-readiness-report.mjs";
-import ReadinessArrivals from "./readiness-arrivals.jsx";
+import {matchesPrepOrderSource,prepArrivalReportFormat,prepOrderSource,prepOrdersFormat,prepReportFormat,
+  readPrepArrivalReport,readPrepReadinessReport} from "../../../lib/prep-readiness-report.mjs";
+import ReadinessArrivals,{ArrivalComparison} from "./readiness-arrivals.jsx";
 import ReadinessOrders from "./readiness-orders.jsx";
 
 const jsonLimit=4*1024*1024;
@@ -39,10 +40,14 @@ export default function ReadinessReview({snapshot,orders,station,scope,clock}){
     }
     setFileState({loading:"正在讀取報告…"});
     try{
-      const report=readPrepReadinessReport(JSON.parse(await file.text()));
-      if(version===operation.current)setFileState({report});
+      const value=JSON.parse(await file.text());
+      if(version!==operation.current)return;
+      if(value?.format===prepArrivalReportFormat){
+        const comparison=readPrepArrivalReport(value);
+        setFileState({report:{source:comparison.source,orders:comparison.before},comparison});
+      }else setFileState({report:readPrepReadinessReport(value)});
     }catch{
-      if(version===operation.current)setFileState({error:"無法讀取備料試算報告。請選擇 Prep Sheet 產生的 JSON。"});
+      if(version===operation.current)setFileState({error:"無法讀取備料試算報告。請選擇備料頁或 Prep Sheet 產生的 JSON。"});
     }
   }
   async function calculate(){
@@ -109,6 +114,10 @@ export default function ReadinessReview({snapshot,orders,station,scope,clock}){
       <ReadinessOrders orders={report.orders}/>
     </section>}
     {matches&&fileState.planner&&report.orders.length>0&&
-      <ReadinessArrivals planner={fileState.planner} report={report} includePreparing={includePreparing}/>}
+      <ReadinessArrivals planner={fileState.planner} base={fileState.exchange} includePreparing={includePreparing}/>}
+    {matches&&fileState.comparison&&<div className="prepReadinessResult prepReadinessArrivals">
+      <h3>已匯入的到貨試算</h3>
+      <ArrivalComparison comparison={fileState.comparison}/>
+    </div>}
   </section>;
 }

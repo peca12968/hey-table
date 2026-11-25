@@ -1562,6 +1562,13 @@ test("printable kitchen snapshot exports the displayed orders to Prep Sheet",asy
   await expect(after.getByRole("status")).toHaveText("可先做 2 張 · 轉為可做 2 張 · 轉為缺料 0 張");
   await expect(reported).toContainText("缺 毛豆 400 g");
   expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBe(360);
+  const handoffDownload=page.waitForEvent("download");
+  await after.getByRole("button",{name:"下載到貨試算報告"}).click();
+  const handoff=await readFile(await (await handoffDownload).path(),"utf8");
+  const comparison=JSON.parse(handoff);
+  expect(comparison).toMatchObject({format:"hey-table.prep-arrivals.v1",includePreparing:true,
+    arrivals:[{component:"beans",name:"毛豆",unit:"g",quantity:600}]});
+  expect(Object.keys(comparison).sort()).toEqual(["arrivals","format","includePreparing","orders","source"]);
   await page.getByLabel("未完成品項",{exact:true}).check();
   await expect(arrivals).toHaveCount(0);
   await page.getByLabel("完整餐單",{exact:true}).check();
@@ -1571,6 +1578,24 @@ test("printable kitchen snapshot exports the displayed orders to Prep Sheet",asy
   await results.getByRole("button",{name:"下載備料試算報告"}).click();
   const browserReport=await readFile(await (await browserDownload).path(),"utf8");
   expect(JSON.parse(browserReport)).toEqual(JSON.parse(forecast.stdout));
+  await page.reload();
+  await importReport(handoff);
+  const imported=review.getByRole("region",{name:"到貨試算結果"});
+  await expect(review.getByRole("heading",{name:"已匯入的到貨試算"})).toBeVisible();
+  await expect(imported.getByText("預計到貨 毛豆 600 g")).toBeVisible();
+  await expect(imported.getByRole("status")).toHaveText("可先做 2 張 · 轉為可做 2 張 · 轉為缺料 0 張");
+  await expect(reported).toContainText("缺 毛豆 400 g");
+  await expect(review.getByLabel("納入製作中餐單")).not.toBeChecked();
+  await page.getByLabel("未完成品項",{exact:true}).check();
+  await expect(review.getByRole("alert")).toContainText("報告與目前");
+  await expect(imported).toHaveCount(0);
+  await page.getByLabel("完整餐單",{exact:true}).check();
+  await expect(imported.getByRole("status")).toContainText("轉為可做 2 張");
+  const incomplete=structuredClone(comparison);
+  incomplete.orders.pop();
+  await importReport(JSON.stringify(incomplete));
+  await expect(review.getByRole("alert")).toContainText("無法讀取");
+  await expect(imported).toHaveCount(0);
   await review.getByRole("button",{name:"清除報告"}).click();
   await importReport(browserReport);
   await expect(reported).toContainText("缺 毛豆 400 g");

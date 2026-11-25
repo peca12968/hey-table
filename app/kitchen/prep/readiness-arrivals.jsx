@@ -1,14 +1,31 @@
 import {useRef,useState} from "react";
+import {downloadJson} from "../../../lib/download-json.mjs";
+import {prepArrivalReportFormat,readPrepArrivalReport} from "../../../lib/prep-readiness-report.mjs";
 import ReadinessOrders from "./readiness-orders.jsx";
 
 const newRow=id=>({id,component:"",quantity:""});
 
-export default function ReadinessArrivals({planner,report,includePreparing}){
+export function ArrivalComparison({comparison,exchange}){
+  const {source,arrivals,before,after}=comparison;
+  const baseline=new Map(before.map(order=>[order.order_id,order.status]));
+  const ready=after.filter(order=>order.status==="ready").length;
+  const newlyReady=after.filter(order=>order.status==="ready"&&baseline.get(order.order_id)==="shortage").length;
+  const newlyShort=after.filter(order=>order.status==="shortage"&&baseline.get(order.order_id)==="ready").length;
+  const affected=after.filter(order=>order.status==="shortage"||baseline.get(order.order_id)!==order.status);
+  return <section aria-label="到貨試算結果">
+    <p role="status">可先做 {ready} 張 · 轉為可做 {newlyReady} 張 · 轉為缺料 {newlyShort} 張</p>
+    <p>預計到貨 {arrivals.map(item=>item.name+" "+item.quantity+" "+item.unit).join("、")}</p>
+    {exchange&&<button type="button" className="outline" onClick={()=>
+      downloadJson("hey-table-prep-arrivals-",source.capturedAt,exchange)}>下載到貨試算報告</button>}
+    <ReadinessOrders orders={affected} baseline={baseline}/>
+  </section>;
+}
+
+export default function ReadinessArrivals({planner,base,includePreparing}){
   const [rows,setRows]=useState(()=>[newRow(0)]);
   const [result,setResult]=useState(null);
   const nextId=useRef(1);
   const known=new Map(planner.components.map(item=>[item.component,item]));
-  const baseline=new Map(report.orders.map(order=>[order.order_id,order.status]));
 
   function changeRows(value){
     setRows(value);
@@ -23,16 +40,19 @@ export default function ReadinessArrivals({planner,report,includePreparing}){
       const arrivals=rows.map(({component,quantity})=>({
         component,quantity:/^[0-9]+$/.test(quantity)?Number(quantity):NaN,
       }));
-      const {orders}=planner.forecast(report.source.orders,includePreparing,arrivals);
-      setResult({orders});
+      const {orders}=planner.forecast(base.source.orders,includePreparing,arrivals);
+      const byOrder=new Map(orders.map(({order_id,status,missing,prep})=>[order_id,{status,missing,prep}]));
+      const exchange={
+        format:prepArrivalReportFormat,source:base.source,includePreparing,
+        arrivals:arrivals.map(({component,quantity})=>({...known.get(component),quantity})),
+        orders:base.orders.map(({order_id,portions,status,missing,prep})=>({
+          order_id,portions,before:{status,missing,prep},after:byOrder.get(order_id),
+        })),
+      };
+      setResult({comparison:readPrepArrivalReport(exchange),exchange});
     }catch(error){setResult({error:error.message});}
   }
 
-  const orders=result?.orders??[];
-  const ready=orders.filter(order=>order.status==="ready").length;
-  const newlyReady=orders.filter(order=>order.status==="ready"&&baseline.get(order.order_id)==="shortage");
-  const newlyShort=orders.filter(order=>order.status==="shortage"&&baseline.get(order.order_id)==="ready");
-  const affected=orders.filter(order=>order.status==="shortage"||baseline.get(order.order_id)!==order.status);
   return <section className="prepReadinessResult prepReadinessArrivals" aria-labelledby="prep-arrivals-title">
     <h3 id="prep-arrivals-title">預計到貨試算</h3>
     <p>以原盤點庫存和同一批餐單試算，預計到貨只用於本次比較。</p>
@@ -58,9 +78,6 @@ export default function ReadinessArrivals({planner,report,includePreparing}){
       </div>
     </form>
     {result?.error&&<p className="error" role="alert">{result.error}</p>}
-    {result?.orders&&<section aria-label="到貨試算結果">
-      <p role="status">可先做 {ready} 張 · 轉為可做 {newlyReady.length} 張 · 轉為缺料 {newlyShort.length} 張</p>
-      <ReadinessOrders orders={affected} baseline={baseline}/>
-    </section>}
+    {result?.comparison&&<ArrivalComparison comparison={result.comparison} exchange={result.exchange}/>}
   </section>;
 }

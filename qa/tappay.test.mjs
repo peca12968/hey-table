@@ -11,7 +11,8 @@ import {settings,lookup} from "../server/tappay.mjs";
 import {paymentPrime,openPaymentUrl} from "../lib/tappay-client.mjs";
 import {comparePaymentHandoffSummaries,readPaymentHandoffSummary} from "../lib/payment-handoff-compare.mjs";
 import {planSupplyReview,supplyReviewRows} from "../lib/supply-review.mjs";
-import {matchesPrepOrderSource,prepOrderSource,readPrepReadinessReport} from "../lib/prep-readiness-report.mjs";
+import {matchesPrepOrderSource,prepArrivalReportFormat,prepOrderSource,readPrepArrivalReport,
+  readPrepReadinessReport} from "../lib/prep-readiness-report.mjs";
 import {forecastPrepReadiness,prepReadinessPlanner} from "../lib/prep-readiness.mjs";
 import {dishes} from "../lib/menu.mjs";
 import {sqliteD1} from "../scripts/sqlite-d1.mjs";
@@ -664,6 +665,38 @@ test("forecast delivery trials rerun FIFO from the same physical stock and expos
     /現有庫存加到貨量/);
   assert.deepEqual(planner.forecast(orders,true),baseline);
   assert.deepEqual(stock,{rice:200});
+});
+
+test("arrival handoff validates both results against one complete scoped order set",()=>{
+  const order=(id,status)=>({id,status,created:1000,items:[{id:"edamame",qty:1}]});
+  const source=prepOrderSource({date:"2026-11-26",capturedAt:1500,station:"cold",scope:"remaining",
+    orders:[order(4,"preparing"),order(2,"pending")]});
+  const missing={component:"beans",name:"毛豆",unit:"g",quantity:100};
+  const short={status:"shortage",missing:[missing],prep:[]},ready={status:"ready",missing:[],prep:[]};
+  const row=(order_id,before,after)=>({order_id,portions:[{dish:"edamame",from_ms:0,quantity:1}],before,after});
+  const input={format:prepArrivalReportFormat,source,includePreparing:true,arrivals:[missing],
+    orders:[row(4,ready,short),row(2,short,ready)]};
+  const report=readPrepArrivalReport(structuredClone(input));
+  assert.deepEqual(report.arrivals,[missing]);
+  assert.deepEqual(report.before.map(({order_id,status})=>[order_id,status]),[[2,"shortage"],[4,"ready"]]);
+  assert.deepEqual(report.after.map(({order_id,status})=>[order_id,status]),[[2,"ready"],[4,"shortage"]]);
+  assert.ok(matchesPrepOrderSource({...source,capturedAt:2000},report.source));
+  assert.ok(!matchesPrepOrderSource({...source,station:"all"},report.source));
+  for(const modify of [
+    value=>value.orders.pop(),
+    value=>value.orders.push(value.orders[0]),
+    value=>{value.includePreparing=false;},
+    value=>{value.arrivals=[];},
+    value=>{value.arrivals.push(value.arrivals[0]);},
+    value=>{value.arrivals[0].quantity=Number.MAX_SAFE_INTEGER+1;},
+    value=>{value.orders[0].portions[0].quantity=2;},
+    value=>{value.orders[0].after.status="ready";},
+    value=>{delete value.orders[0].after;},
+  ]){
+    const changed=structuredClone(input);
+    modify(changed);
+    assert.throws(()=>readPrepArrivalReport(changed),/無法讀取/);
+  }
 });
 
 test("prep report compares date, station and source quantities independently of capture time or item order",()=>{
