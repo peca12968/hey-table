@@ -1040,6 +1040,46 @@ test("printable kitchen snapshot exports the displayed orders to Prep Sheet",asy
   await expect(row.getByRole("cell")).toHaveText(["0","2"]);
 });
 
+test("mobile prep can print and export the remaining items from one station snapshot",async({page,request})=>{
+  await page.setViewportSize({width:360,height:780});
+  await page.addInitScript(()=>sessionStorage.setItem("he-ri-staff","local-test-kitchen"));
+  const headers={Authorization:"Bearer local-test-kitchen"};
+  const res=await request.post("/api/orders",{data:{mode:"pickup",token:randomUUID(),note:"廚房備註",
+    items:[{id:"katsudon",qty:1},{id:"sencha",qty:2}]}});
+  expect(res.ok(),await res.text()).toBe(true);
+  const {id}=await res.json();
+  const station=station=>request.patch("/api/kitchen/station-work",{headers,data:{id,station}});
+  expect((await request.patch("/api/kitchen/status",{headers,data:{id,from:"pending",to:"preparing"}})).ok()).toBe(true);
+  expect((await station("hot")).ok()).toBe(true);
+  const prepResponse=()=>page.waitForResponse(response=>new URL(response.url()).pathname==="/api/kitchen/prep");
+  const initial=prepResponse();
+  await page.goto("/kitchen/prep");
+  const snapshot=await (await initial).json();
+  const full=snapshot.orders.find(order=>order.id===id);
+  expect(full.items).toEqual(expect.arrayContaining([{id:"katsudon",qty:1},{id:"sencha",qty:2}]));
+  expect(snapshot.remainingOrders.find(order=>order.id===id)).toEqual({...full,items:[{id:"sencha",qty:2}]});
+  await expect(page.getByRole("radio",{name:"完整餐單"})).toBeChecked();
+  const capture=page.locator("main time");
+  await expect(capture).toHaveAttribute("datetime",new Date(snapshot.capturedAt).toISOString());
+  await page.getByRole("radio",{name:"未完成品項"}).check();
+  await expect(page.getByRole("table",{name:/未完成品項/})).toBeVisible();
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBe(360);
+  await page.emulateMedia({media:"print"});
+  await expect(page.getByRole("radio",{name:"未完成品項"})).toBeHidden();
+  await expect(page.getByRole("table",{name:/未完成品項/})).toBeVisible();
+  await page.emulateMedia({media:"screen"});
+  expect((await station("bar")).ok()).toBe(true);
+  const [file]=await Promise.all([page.waitForEvent("download"),page.getByRole("button",{name:"下載訂單 JSON"}).click()]);
+  expect(file.suggestedFilename()).toMatch(/^hey-table-prep-remaining-/);
+  expect(JSON.parse(await readFile(await file.path(),"utf8"))).toEqual(snapshot.remainingOrders);
+  await expect(capture).toHaveAttribute("datetime",new Date(snapshot.capturedAt).toISOString());
+  const next=prepResponse();
+  await page.getByRole("button",{name:"重新擷取"}).click();
+  const refreshed=await (await next).json();
+  expect(refreshed.remainingOrders.some(order=>order.id===id)).toBe(false);
+  await expect(page.getByRole("radio",{name:"未完成品項"})).toBeChecked();
+});
+
 test("mobile diners split a receipt locally, restore edits and switch between receipts",async({page,request})=>{
   async function order(items){
     const token=randomUUID();

@@ -278,7 +278,7 @@ test("daily timings use visible samples and keep cross-midnight orders on their 
   assert.deepEqual(following.timing.table.preparation,{eligible:0,samples:0,medianMs:null,p90Ms:null});
   assert.equal(following.timing.pickup.preparation.medianMs,1000000);
 });
-test("receipt timing drops completed station work and legacy items still reach the board",async t=>{
+test("receipt timing and remaining prep use completed station work while legacy items still reach the board",async t=>{
   const db=database();
   t.after(()=>db.sqlite.close());
   const token=crypto.randomUUID();
@@ -294,9 +294,22 @@ test("receipt timing drops completed station work and legacy items still reach t
   const read=async()=>api(new Request("https://order.example/api/ticket?timing=1",{
     headers:{"X-Ticket":token},
   }),runtime).then(response=>response.json());
+  const prep=async(query="")=>api(new Request("https://order.example/api/kitchen/prep"+query,{
+    headers:{Authorization:"Bearer local-test-key"},
+  }),runtime).then(response=>response.json());
+  const orderItems=response=>response.orders.find(order=>order.id===id).items;
+  const allItems=[{id:"katsudon",qty:1},{id:"sencha",qty:2}];
+  const before=await prep("?stationProgress=1");
+  assert.deepEqual(before.orders,before.remainingOrders);
   assert.deepEqual((await read()).kitchenQuote.seconds,[300,420]);
   assert.equal((await cook(id,"hot")).status,200);
   assert.deepEqual((await read()).kitchenQuote.seconds,[60,90]);
+  const partial=await prep("?stationProgress=1");
+  assert.deepEqual(orderItems(partial),allItems);
+  assert.deepEqual(partial.remainingOrders,[{...partial.orders[0],items:[{id:"sencha",qty:2}]}]);
+  const standard=await prep();
+  assert.equal(standard.remainingOrders,undefined);
+  assert.deepEqual(orderItems(standard),allItems);
   assert.equal((await cook(id,"bar")).status,200);
   assert.equal((await read()).status,"ready");
   assert.equal((await read()).kitchenQuote,undefined);
@@ -307,7 +320,10 @@ test("receipt timing drops completed station work and legacy items still reach t
   }),runtime);
   assert.deepEqual((await board.json()).orders,[{id:older,table:null,note:"",created:1,
     items:[{id:"old-tofu",name:"舊菜單豆腐",qty:1}],doneAt:null,doneStations:0,stations:1}]);
+  const legacy=await prep("?stationProgress=1");
+  assert.deepEqual(legacy.remainingOrders,[{id:older,created:1,status:"preparing",items:[{id:"old-tofu",qty:1}]}]);
   assert.equal((await (await cook(older,"other")).json()).status,"ready");
+  assert.deepEqual((await prep("?stationProgress=1")).remainingOrders,[]);
 });
 test("pickup display omits refunded orders even if their kitchen status is still ready",async t=>{
   const db=database();

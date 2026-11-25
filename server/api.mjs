@@ -528,15 +528,21 @@ export async function api(request, env) {
   if (path === "/api/kitchen/prep" && method === "GET") {
     const now=Date.now(),today=businessDate(now),date=url.searchParams.get("date")??today;
     if(!pickupBookingDays(now).includes(date))return fail("請選擇七天內的備料日期。");
+    const includeRemaining=url.searchParams.get("stationProgress")==="1";
     const [start,end]=businessDayRange(date);
     const from=date===today?"":` AND ${supplyTime}>=?`;
-    const {results} = await db.prepare(`SELECT id, created, status, items FROM orders
+    const {results} = await db.prepare(`SELECT id, created, status, items${includeRemaining?", station_progress":""} FROM orders
       WHERE status IN ('pending','preparing') AND ${payableForKitchen}
       AND ${supplyTime}<?${from} ORDER BY id`).bind(end,...(from?[start]:[])).all();
-    const orders = results.map(row => ({
-      ...row, items: JSON.parse(row.items).map(({id, qty}) => ({id, qty}))
-    }));
-    return json({capturedAt:now,date,orders});
+    const portions=items=>items.map(({id,qty})=>({id,qty}));
+    const orders=results.map(({id,created,status,items})=>({id,created,status,items:portions(JSON.parse(items))}));
+    const remainingOrders=includeRemaining?results.flatMap((row,index)=>{
+      const order=orders[index];
+      if(row.status!=="preparing"||!row.station_progress)return [order];
+      const items=portions(remainingStationItems(row));
+      return items.length?[{...order,items}]:[];
+    }):undefined;
+    return json({capturedAt:now,date,orders,...(includeRemaining?{remainingOrders}:{})});
   }
   if(path==="/api/kitchen/station-work"&&method==="GET"){
     const station=url.searchParams.get("station");
