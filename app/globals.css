@@ -65,6 +65,8 @@
 .pickupPassShare input{width:100%;min-width:0}
 .pickupDelay label{display:grid;gap:4px;margin-top:8px}
 .pickupDelayNotice{background:#f1f5e9;border:1px solid var(--line);border-radius:8px;padding:10px 12px;color:var(--green)}
+.ticketTextDownload{margin-block:10px}
+.ticketTextDownload button{min-height:44px}
 .pickupArrival{margin:12px 0}.pickupArrival button{min-height:44px}
 .pickupArrival [role=status],.pickupArrived{color:var(--green);font-weight:700}
 .receiptHistory{margin:12px 0;border:1px solid var(--line);border-radius:8px;padding:10px 12px;background:var(--pale)}

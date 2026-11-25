@@ -1088,6 +1088,65 @@ test("D1 records cash once, returns the original result on replay and protects t
   assert.equal((await receipt(online.token)).cashReceipt,undefined);
 });
 
+test("customer order details are scoped to the receipt and reflect committed money and expiry",async t=>{
+  const db=database();
+  t.after(()=>db.sqlite.close());
+  const now=Date.parse("2026-11-25T12:02:00+08:00");
+  t.mock.method(Date,"now",()=>now);
+  const env={DB:db,STAFF_KEY:"fixture-staff"},staff={Authorization:"Bearer fixture-staff"};
+  const call=(path,options)=>api(new Request("https://order.example/api"+path,options),env);
+  const write=(path,input,method="POST")=>call(path,{method,body:JSON.stringify(input),
+    headers:{...staff,"Content-Type":"application/json"}});
+  const details=(token)=>call("/ticket/order-details",token?{headers:{"X-Ticket":token}}:undefined);
+  const introduce=db.sqlite.prepare(`INSERT INTO orders(token,mode,table_no,items,note,total,status,created,pickup_slot,
+    payment_method,payment_env,payment_due_at,combo_quote) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`);
+  const add=({table=null,status="ready",method="cash",environment="cash",deadline=null,total=90,slot=null,combo=null}={})=>{
+    const token=crypto.randomUUID(),items=[{id:"sencha",name:"日式熱煎茶",qty:2,price:45,note:"private line note"}];
+    const id=Number(introduce.run(token,table?"table":"pickup",table,JSON.stringify(items),"private order note",
+      total,status,now-600_000,slot,method,environment,deadline,combo&&JSON.stringify(combo)).lastInsertRowid);
+    return {id,token};
+  };
+  const slot=Date.parse("2026-11-25T12:00:00+08:00"),cash=add({slot});
+  const receiptNo=String(cash.id).padStart(4,"0");
+  for(const unauthorized of [undefined,"malformed",crypto.randomUUID()])assert.equal((await details(unauthorized)).status,404);
+  assert.equal((await call("/ticket/order-details?token="+cash.token)).status,404);
+  assert.equal((await call("/ticket/order-details",{headers:{"X-Pickup-Pass":cash.token}})).status,404);
+  const before=await details(cash.token);
+  assert.equal(before.headers.get("Content-Disposition"),`attachment; filename="hey-table-order-${receiptNo}.txt"`);
+  assert.equal(before.headers.get("Cache-Control"),"private, no-store");
+  assert.equal(before.headers.get("Content-Type"),"text/plain; charset=utf-8");
+  assert.match(await before.text(),/付款狀態 未登記現金收款/);
+  const operationId=crypto.randomUUID();
+  assert.equal((await write("/kitchen/cash-receipt",{id:cash.id,operationId,expectedTotal:90,tendered:100})).status,200);
+  assert.equal((await write("/kitchen/cash-corrections",{id:cash.id,revision:0,operationId:crypto.randomUUID(),
+    tendered:120,reason:"private correction reason"})).status,200);
+  const bytes=Buffer.from(await (await details(cash.token)).arrayBuffer());
+  assert.equal(bytes.subarray(0,3).toString("hex"),"efbbbf");
+  const text=bytes.toString("utf8");
+  for(const line of [`取餐號碼 ${receiptNo}`,"預約取餐 11/25 12:00～12:15","日式熱煎茶 × 2 · 單價 NT$ 45 · 小計 NT$ 90",
+    "付款狀態 已登記現金收款","原餐單金額 NT$ 90","現金實收 NT$ 120 · 找零 NT$ 30"])
+    assert.ok(text.includes(line+"\r\n"),line);
+  for(const excluded of [cash.token,operationId,"private order note","private line note","private correction reason","現金實收 NT$ 100"])
+    assert.ok(!text.includes(excluded));
+
+  const unpaid=add({status:"pending",method:"line_pay",environment:"demo",deadline:now});
+  const expired=await (await details(unpaid.token)).text();
+  assert.match(expired,/餐單狀態 已取消/);
+  assert.match(expired,/付款狀態 待付款/);
+  const online=add({table:"A03",method:"px_pay_plus",environment:"demo",total:80,combo:{quote:{subtotal:90,discount:10}}});
+  db.sqlite.prepare(`INSERT INTO payment_attempts(order_id,reference,merchant,state,created)
+    VALUES (?,'private-ref','fixture','paid',?)`).run(online.id,now-1000);
+  const paid=await (await details(online.token)).text();
+  for(const line of ["用餐方式 A03 桌內用","付款方式 全支付","付款狀態 已付款","餐點原價 NT$ 90","套餐折抵 NT$ 10","原餐單金額 NT$ 80"])
+    assert.ok(paid.includes(line+"\r\n"),line);
+  assert.equal((await write("/kitchen/demo-refund",{id:online.id,expectedStatus:"ready",expectedTotal:80},"PATCH")).status,200);
+  const refunded=await (await details(online.token)).text();
+  assert.match(refunded,/付款狀態 已退款/);
+  assert.match(refunded,/示範退款金額 NT\$ 80/);
+  assert.match(refunded,/退款時間（台灣） /);
+  assert.ok(!refunded.includes("private-ref")&&!refunded.includes(online.token));
+});
+
 test("cash close uses Taipei registration dates and returns exact totals from the same ledger rows",async t=>{
   const db=database();
   t.after(()=>db.sqlite.close());

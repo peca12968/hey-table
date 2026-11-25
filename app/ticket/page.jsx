@@ -16,6 +16,7 @@ import PickupCalendar from "./pickup-calendar";
 import PickupArrival from "../pickup-arrival";
 import PickupCode from "../pickup-code";
 import PickupPassShare from "./pickup-pass-share";
+import TextDownload from "./text-download";
 import CashReceipt from "../cash-receipt";
 import {pickupCalendarStatus,pickupChangeWindows} from "../../lib/pickup-slots.mjs";
 const progressLabels={
@@ -154,6 +155,7 @@ export default function Ticket(){
     {order.combo&&<p>餐點原價 NT$ {order.combo.quote.subtotal} · 套餐折抵 NT$ {order.combo.quote.discount}</p>}
     {order.note&&<p>備註　{order.note}</p>}<div className="total"><span>{methods[order.paymentMethod]}</span><b>NT$ {order.total}</b></div>
     {order.cashReceipt&&<CashReceipt record={order.cashReceipt}/>}
+    <TextDownload key={"order-details-"+route.token} kind="order" token={route.token} id={order.id}/>
     {order.paymentMethod!=="cash"&&!closedBeforePayment&&<Payment key={"payment-"+route.token} order={order} token={route.token} onChange={refreshReceipt}/>}
     {canCustomerCancel(order)&&<CancelReceipt key={route.token} token={route.token} onChange={refreshReceipt}/>}
     <button className="outline" onClick={()=>setRefresh(v=>v+1)}><RefreshCw size={16}/> 更新進度</button></>}

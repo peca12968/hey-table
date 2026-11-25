@@ -15,6 +15,7 @@ import {canReschedulePickup,capacityAtPickupSlot,editablePickupSlots,orderPortio
   savePickupSlotLimits,suggestCartPickupSlot,
   suggestPickupSlot,usedAtPickupSlot} from "./pickup-slots.mjs";
 import {pickupCalendar} from "./pickup-calendar.mjs";
+import {orderDetailsText,ticketTextAttachment} from "./ticket-document.mjs";
 import {issuePickupPass,ownerPickupPass,readPickupPass,reportPickupPassArrival,revokePickupPass} from "./pickup-pass.mjs";
 import {pickupDelayColumn,updatePickupDelay} from "./pickup-delay.mjs";
 import {pickupRoster} from "./pickup-roster.mjs";
@@ -582,8 +583,18 @@ export async function api(request, env) {
     if(!row)return fail("找不到訂單",404);
     if(!row.demo_refund_receipt)return fail("這張餐單目前沒有示範退款收據。",409);
     const file=demoRefundReceiptText({id:row.id,paymentMethod:row.payment_method},JSON.parse(row.demo_refund_receipt));
-    return new Response("\uFEFF"+file,{headers:{"Content-Type":"text/plain; charset=utf-8","Cache-Control":"private, no-store",
-      "Content-Disposition":`attachment; filename="hey-table-refund-${numberOf(row.id)}.txt"`,"X-Content-Type-Options":"nosniff"}});
+    return ticketTextAttachment(file,"refund",row.id);
+  }
+  if(path==="/api/ticket/order-details"&&method==="GET"){
+    const token=request.headers.get("X-Ticket");
+    if(!uuid.test(token))return fail("找不到訂單",404);
+    const capturedAt=Date.now();
+    const [,lookup]=await db.batch([expirePaymentHolds(db,capturedAt,token),db.prepare(ticketWithRefund).bind(token)]);
+    const row=lookup.results[0];
+    if(!row)return fail("找不到訂單",404);
+    const order=receipt(row);
+    if(row.demo_refund_receipt)order.demoRefund=JSON.parse(row.demo_refund_receipt);
+    return ticketTextAttachment(orderDetailsText(order,capturedAt),"order",order.id);
   }
   if (path === "/api/ticket" && method === "GET") {
     const token = request.headers.get("X-Ticket");

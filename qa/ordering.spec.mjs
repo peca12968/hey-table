@@ -613,6 +613,49 @@ test("a ready pickup QR opens the exact staff order without sharing the customer
   }finally{await staff.close();}
 });
 
+test("a phone downloads private order details and retries a lost download",async({page,request})=>{
+  await page.setViewportSize({width:360,height:780});
+  const token=randomUUID(),headers={Authorization:"Bearer local-test-kitchen"};
+  const order=await request.post("/api/orders",{data:{token,mode:"pickup",note:"私人餐單備註",
+    items:[{id:"sencha",qty:2,note:"私人品項備註"}]}});
+  expect(order.ok()).toBe(true);
+  const {id}=await order.json(),number=String(id).padStart(4,"0");
+  const advance=(from,to)=>request.patch("/api/kitchen/status",{headers,data:{id,from,to}});
+  expect((await advance("pending","preparing")).ok()).toBe(true);
+  expect((await advance("preparing","ready")).ok()).toBe(true);
+  try{
+    await page.goto("/ticket#"+token);
+    const button=page.getByRole("button",{name:"下載餐單明細"});
+    await expect(button).toBeVisible();
+    let requests=0;
+    await page.route("**/api/ticket/order-details",async route=>{
+      expect(route.request().headers()["x-ticket"]).toBe(token);
+      if(++requests===1)await route.abort();
+      else await route.continue();
+    });
+    await button.click();
+    const error=page.getByRole("alert").filter({hasText:"暫時無法下載餐單明細"});
+    await expect(error).toBeVisible();
+    const collected=await request.post("/api/kitchen/cash-receipt",{headers,
+      data:{id,expectedTotal:90,tendered:100,operationId:randomUUID()}});
+    expect(collected.ok()).toBe(true);
+    const downloaded=page.waitForEvent("download");
+    await button.click();
+    const file=await downloaded;
+    expect(file.suggestedFilename()).toBe("hey-table-order-"+number+".txt");
+    const text=await readFile(await file.path(),"utf8");
+    expect(text.charCodeAt(0)).toBe(0xfeff);
+    expect(text).toContain("取餐號碼 "+number);
+    expect(text).toContain("日式熱煎茶 × 2 · 單價 NT$ 45 · 小計 NT$ 90");
+    expect(text).toContain("付款狀態 已登記現金收款");
+    expect(text).toContain("現金實收 NT$ 100 · 找零 NT$ 10");
+    for(const privateValue of ["私人餐單備註","私人品項備註",token])expect(text).not.toContain(privateValue);
+    await expect(error).toHaveCount(0);
+    expect(requests).toBe(2);
+    expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBe(360);
+  }finally{await advance("ready","completed");}
+});
+
 test("a staff phone updates the pickup estimate while the customer follows the original receipt",async({page,browser,request})=>{
   const headers={Authorization:"Bearer local-test-kitchen"},token=randomUUID();
   const response=await request.post("/api/orders",{data:{token,mode:"pickup",note:"",items:[{id:"sencha",qty:1}]}});
