@@ -1024,15 +1024,17 @@ class Store:
             return {"captured_at_ms": now, "can_dispatch": all(x["status"] == "ready" for x in results),
                     "boxes": results}
 
-    def dispatch_batch(self, batch_id, boxes):
+    def dispatch_batch(self, batch_id, boxes, *, window=None):
         ordered = sorted(boxes)
-        with self.current_inventory() as (conn, _):
+        with self.current_inventory() as (conn, now):
             receipts = self.batch_receipts(conn, batch_id)
             if receipts:
                 prior = [(r["reservation_id"], r["shipment_id"], r["quantity"]) for r in receipts]
                 if prior != ordered:
                     raise Conflict("Dispatch batch key already used with different boxes")
                 return {"batch_id": batch_id, "boxes": receipts}, False
+            if window is not None and not window[0] <= now < window[1]:
+                raise Conflict("Outside the scheduled dispatch window")
             for key, shipment_id, quantity in ordered:
                 try:
                     receipt, created = self.record_shipment(conn, key, shipment_id, quantity)

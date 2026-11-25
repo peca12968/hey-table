@@ -8,7 +8,7 @@ from typing import Annotated, Literal
 
 from fastapi import FastAPI, Header, HTTPException, Query, Response
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, ConfigDict, Field, StringConstraints, field_validator
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints, field_validator, model_validator
 from prometheus_client import CollectorRegistry, Counter, generate_latest, CONTENT_TYPE_LATEST
 
 from .metrics import RequestMetrics
@@ -317,6 +317,22 @@ class DispatchBatch(BaseModel):
 
     def shipment_requests(self):
         return [(box.reservation_id, box.shipment_id, box.quantity) for box in self.boxes]
+
+
+class DispatchWindow(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    not_before_ms: int = Field(strict=True, ge=0, le=2**53 - 1)
+    before_ms: int = Field(strict=True, ge=1, le=2**53 - 1)
+
+    @model_validator(mode="after")
+    def ordered_bounds(self):
+        if self.before_ms <= self.not_before_ms:
+            raise ValueError("before_ms must follow not_before_ms")
+        return self
+
+
+class ScheduledDispatchBatch(DispatchBatch):
+    window: DispatchWindow | None = None
 
 
 class DispatchPreviewBox(BaseModel):
@@ -653,8 +669,9 @@ def create_app(path: Path, *, ttl_seconds=900, clock=time.time):
 
     @app.post("/dispatch-batches", response_model=BatchReceipt, status_code=201,
               responses={200: {"model": BatchReceipt, "description": "Original dispatch batch receipt"}})
-    def dispatch_batch(batch: DispatchBatch, response: Response, idempotency_key: RequestKey):
-        receipt, created = store.dispatch_batch(idempotency_key, batch.shipment_requests())
+    def dispatch_batch(batch: ScheduledDispatchBatch, response: Response, idempotency_key: RequestKey):
+        window = (batch.window.not_before_ms, batch.window.before_ms) if batch.window else None
+        receipt, created = store.dispatch_batch(idempotency_key, batch.shipment_requests(), window=window)
         if not created:
             response.status_code = 200
         return receipt

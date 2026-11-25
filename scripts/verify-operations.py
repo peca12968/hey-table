@@ -67,6 +67,7 @@ def kitchen_and_fulfillment():
     ]:
         run(module, PYTHON, demo, *(MODULES / dependency for dependency in dependencies))
     run("dispatch-window", PYTHON, "demo.py", MODULES / "stockroom-reservations", "--compare-stations")
+    run("dispatch-window", PYTHON, "demo.py", MODULES / "stockroom-reservations", "--execute-plan")
 
 
 def cashier():

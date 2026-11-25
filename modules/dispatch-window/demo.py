@@ -11,11 +11,58 @@ from tempfile import TemporaryDirectory
 
 from fastapi.testclient import TestClient
 
+from execute import execute
+
 
 ROOT = Path(__file__).resolve().parent
 
 
-def demo(stockroom, stations=1, delayed=False, *, paused=False, restricted=False):
+def execution_demo(client, clock, report):
+    attempts = []
+
+    def request(path, body=None, headers=None):
+        if body is None:
+            response = client.get(path)
+        else:
+            response = client.post(path, json=body, headers=headers)
+            reservation = body["boxes"][0]["reservation_id"]
+            attempts.append({"reservation_id": reservation, "http_status": response.status_code})
+            if reservation == "B" and response.status_code == 201:
+                raise TimeoutError("simulated lost response after successful commit")
+        return response.status_code, response.json()
+
+    def execute_at(server_ms, client_ms=None):
+        clock[0] = server_ms / 1000
+        return execute(report, request, clock=lambda: server_ms if client_ms is None else client_ms)
+
+    waiting = execute_at(100000)
+    assert not attempts
+    timeout = execute_at(107000)
+    recovered = execute_at(109000)
+    late = execute_at(111000, 110000)
+    reconciled = execute_at(111000)
+
+    stages = {"waiting": waiting, "timeout": timeout, "recovered": recovered, "late": late, "reconciled": reconciled}
+    assert [[row["state"] for row in stage["results"]] for stage in stages.values()] == [
+        ["waiting", "waiting", "waiting"],
+        ["retry", "waiting", "waiting"],
+        ["recovered", "dispatched", "waiting"],
+        ["recovered", "recovered", "rejected"],
+        ["recovered", "recovered", "expired"],
+    ]
+    assert attempts == [{"reservation_id": reservation, "http_status": status}
+                        for reservation, status in [("B", 201), ("C", 201), ("D", 409)]]
+    assert [stage["confirmed_units"] for stage in stages.values()] == [0, 0, 7, 7, 7]
+    assert recovered["results"][0]["receipt"] == reconciled["results"][0]["receipt"]
+    assert client.get("/reservations/A").json()["state"] == "expired"
+    assert client.get("/reservations/D").json()["state"] == "held"
+    with_inventory = client.get("/inventory").json()
+    assert with_inventory == [{"sku": "KIT-01", "capacity": 13, "available": 11}]
+    return {"format": "dispatch-window.execution-demo.v1", "start_ms": report["start_ms"],
+            "stages": stages, "attempts": attempts, "inventory_after": with_inventory[0]}
+
+
+def demo(stockroom, stations=1, delayed=False, *, paused=False, restricted=False, execute_plan=False):
     sys.path.insert(0, str(stockroom.resolve()))
     from stockroom.api import create_app
 
@@ -71,6 +118,8 @@ def demo(stockroom, stations=1, delayed=False, *, paused=False, restricted=False
                 sys.executable, ROOT / "dispatch.py", input_file, "--stations", str(stations)
             ])
             chosen = json.loads(output)
+            if execute_plan:
+                return execution_demo(client, clock, chosen)
             skips_a = stations == 1 or delayed
             assert chosen["ship_units"] == 10 - int(skips_a) - (3 if restricted else 0)
             assert [row["reservation_id"] for row in chosen["scheduled"]] == [
@@ -112,9 +161,11 @@ def demo(stockroom, stations=1, delayed=False, *, paused=False, restricted=False
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("stockroom", type=Path)
-    parser.add_argument("--compare-stations", action="store_true")
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--compare-stations", action="store_true")
+    mode.add_argument("--execute-plan", action="store_true")
     args = parser.parse_args()
-    result = demo(args.stockroom)
+    result = demo(args.stockroom, execute_plan=args.execute_plan)
     if args.compare_stations:
         result = {"format": "dispatch-window.parallel-demo.v1", "single": result,
                   "parallel": demo(args.stockroom, stations=2),

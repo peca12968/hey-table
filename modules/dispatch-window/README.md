@@ -33,6 +33,20 @@ python -m pip install -r ../stockroom-reservations/requirements-dev.txt
 python demo.py ../stockroom-reservations
 ```
 
+## 確認包裝後交運與查回收據
+
+以 `dispatch.py` 的輸出當成計畫檔。用 `execute.py plan.json` 預覽，再對已確認包裝完成的訂單加上 `--confirm`。可重複指定 `--reservation` 選多張單。省略選單時會處理計畫中所有已到排定時間且尚未截止的訂單。每次指令立即核對一次，現場可在下一批包完後重新執行。
+
+```sh
+python execute.py plan.json
+python execute.py plan.json --stockroom http://127.0.0.1:8000 --confirm --reservation B
+python demo.py ../stockroom-reservations --execute-plan
+```
+
+預覽按本機時間把訂單列為 `waiting`、`due` 或 `expired`。正式執行會先用由箱號、保留編號和件數計算的批號查收據。查到時列為 `recovered`，換台重排或重排時間仍可取回同一份收據。沒有收據且已到時間才送出，Stockroom 在同一筆交易核對時窗、到期保留和箱子。開始時間包含在內，截止時間一到即拒絕新增出貨，已完成的批號仍可查回。網路中斷或收據無法核對會列為 `retry`。服務拒絕會列為 `rejected` 並附 HTTP 狀態，需核對現場後再試。輸出逐單寫出結果，遇到待重試、拒絕或已截止會回傳結束碼 1。
+
+整合演練在 Stockroom 寫入 B 單後模擬回覆中斷。重新執行會取回 B 單原收據並交運 C 單，共確認 7 件，B 單只送出一次。D 單隨後因服務端已到裝車截止遭拒，兩件庫存保留待重排。[交運演練（私人預覽）](https://peca-github-demo.peca12968.chatgpt.site/?demo=dispatchExecution#demos)
+
 ## 排程規則
 
 最多安排 17 張單，優先最大化出貨件數，再最大化完成訂單數，最後比較工作完成時間。每張單只能由同一個工作站連續包裝。完成時間須早於保留期限與裝車截止時間，符合 Stockroom 到期時刻即釋回的行為。工時可包含預留的裝車和服務提交時間。

@@ -1,0 +1,290 @@
+{
+  "format": "dispatch-window.execution-demo.v1",
+  "start_ms": 100000,
+  "stages": {
+    "waiting": {
+      "captured_at_ms": 100000,
+      "confirmed_units": 0,
+      "results": [
+        {
+          "reservation_id": "B",
+          "batch_id": "dispatch-6ffb1008c4e044d6fc9c06f10ba4a6d3b3d913e60ea0775b01e52e5bb97673e1",
+          "units": 4,
+          "window": {
+            "not_before_ms": 107000,
+            "before_ms": 108000
+          },
+          "state": "waiting"
+        },
+        {
+          "reservation_id": "C",
+          "batch_id": "dispatch-b3aa67e43ec24e46689a4dfa9275b3a2a0dbc897dd4f883859643f593baf9de0",
+          "units": 3,
+          "window": {
+            "not_before_ms": 109000,
+            "before_ms": 110000
+          },
+          "state": "waiting"
+        },
+        {
+          "reservation_id": "D",
+          "batch_id": "dispatch-f560671a9063d5d08e2efd330cb116f16f000d07730ee791bd5bdddd8817d3cf",
+          "units": 2,
+          "window": {
+            "not_before_ms": 110000,
+            "before_ms": 111000
+          },
+          "state": "waiting"
+        }
+      ]
+    },
+    "timeout": {
+      "captured_at_ms": 107000,
+      "confirmed_units": 0,
+      "results": [
+        {
+          "reservation_id": "B",
+          "batch_id": "dispatch-6ffb1008c4e044d6fc9c06f10ba4a6d3b3d913e60ea0775b01e52e5bb97673e1",
+          "units": 4,
+          "window": {
+            "not_before_ms": 107000,
+            "before_ms": 108000
+          },
+          "state": "retry"
+        },
+        {
+          "reservation_id": "C",
+          "batch_id": "dispatch-b3aa67e43ec24e46689a4dfa9275b3a2a0dbc897dd4f883859643f593baf9de0",
+          "units": 3,
+          "window": {
+            "not_before_ms": 109000,
+            "before_ms": 110000
+          },
+          "state": "waiting"
+        },
+        {
+          "reservation_id": "D",
+          "batch_id": "dispatch-f560671a9063d5d08e2efd330cb116f16f000d07730ee791bd5bdddd8817d3cf",
+          "units": 2,
+          "window": {
+            "not_before_ms": 110000,
+            "before_ms": 111000
+          },
+          "state": "waiting"
+        }
+      ]
+    },
+    "recovered": {
+      "captured_at_ms": 109000,
+      "confirmed_units": 7,
+      "results": [
+        {
+          "reservation_id": "B",
+          "batch_id": "dispatch-6ffb1008c4e044d6fc9c06f10ba4a6d3b3d913e60ea0775b01e52e5bb97673e1",
+          "units": 4,
+          "window": {
+            "not_before_ms": 107000,
+            "before_ms": 108000
+          },
+          "state": "recovered",
+          "receipt": {
+            "batch_id": "dispatch-6ffb1008c4e044d6fc9c06f10ba4a6d3b3d913e60ea0775b01e52e5bb97673e1",
+            "boxes": [
+              {
+                "reservation_id": "B",
+                "shipment_id": "B1",
+                "quantity": 2,
+                "held_after": 2
+              },
+              {
+                "reservation_id": "B",
+                "shipment_id": "B2",
+                "quantity": 2,
+                "held_after": 0
+              }
+            ]
+          }
+        },
+        {
+          "reservation_id": "C",
+          "batch_id": "dispatch-b3aa67e43ec24e46689a4dfa9275b3a2a0dbc897dd4f883859643f593baf9de0",
+          "units": 3,
+          "window": {
+            "not_before_ms": 109000,
+            "before_ms": 110000
+          },
+          "state": "dispatched",
+          "receipt": {
+            "batch_id": "dispatch-b3aa67e43ec24e46689a4dfa9275b3a2a0dbc897dd4f883859643f593baf9de0",
+            "boxes": [
+              {
+                "reservation_id": "C",
+                "shipment_id": "C1",
+                "quantity": 3,
+                "held_after": 0
+              }
+            ]
+          }
+        },
+        {
+          "reservation_id": "D",
+          "batch_id": "dispatch-f560671a9063d5d08e2efd330cb116f16f000d07730ee791bd5bdddd8817d3cf",
+          "units": 2,
+          "window": {
+            "not_before_ms": 110000,
+            "before_ms": 111000
+          },
+          "state": "waiting"
+        }
+      ]
+    },
+    "late": {
+      "captured_at_ms": 110000,
+      "confirmed_units": 7,
+      "results": [
+        {
+          "reservation_id": "B",
+          "batch_id": "dispatch-6ffb1008c4e044d6fc9c06f10ba4a6d3b3d913e60ea0775b01e52e5bb97673e1",
+          "units": 4,
+          "window": {
+            "not_before_ms": 107000,
+            "before_ms": 108000
+          },
+          "state": "recovered",
+          "receipt": {
+            "batch_id": "dispatch-6ffb1008c4e044d6fc9c06f10ba4a6d3b3d913e60ea0775b01e52e5bb97673e1",
+            "boxes": [
+              {
+                "reservation_id": "B",
+                "shipment_id": "B1",
+                "quantity": 2,
+                "held_after": 2
+              },
+              {
+                "reservation_id": "B",
+                "shipment_id": "B2",
+                "quantity": 2,
+                "held_after": 0
+              }
+            ]
+          }
+        },
+        {
+          "reservation_id": "C",
+          "batch_id": "dispatch-b3aa67e43ec24e46689a4dfa9275b3a2a0dbc897dd4f883859643f593baf9de0",
+          "units": 3,
+          "window": {
+            "not_before_ms": 109000,
+            "before_ms": 110000
+          },
+          "state": "recovered",
+          "receipt": {
+            "batch_id": "dispatch-b3aa67e43ec24e46689a4dfa9275b3a2a0dbc897dd4f883859643f593baf9de0",
+            "boxes": [
+              {
+                "reservation_id": "C",
+                "shipment_id": "C1",
+                "quantity": 3,
+                "held_after": 0
+              }
+            ]
+          }
+        },
+        {
+          "reservation_id": "D",
+          "batch_id": "dispatch-f560671a9063d5d08e2efd330cb116f16f000d07730ee791bd5bdddd8817d3cf",
+          "units": 2,
+          "window": {
+            "not_before_ms": 110000,
+            "before_ms": 111000
+          },
+          "state": "rejected",
+          "http_status": 409
+        }
+      ]
+    },
+    "reconciled": {
+      "captured_at_ms": 111000,
+      "confirmed_units": 7,
+      "results": [
+        {
+          "reservation_id": "B",
+          "batch_id": "dispatch-6ffb1008c4e044d6fc9c06f10ba4a6d3b3d913e60ea0775b01e52e5bb97673e1",
+          "units": 4,
+          "window": {
+            "not_before_ms": 107000,
+            "before_ms": 108000
+          },
+          "state": "recovered",
+          "receipt": {
+            "batch_id": "dispatch-6ffb1008c4e044d6fc9c06f10ba4a6d3b3d913e60ea0775b01e52e5bb97673e1",
+            "boxes": [
+              {
+                "reservation_id": "B",
+                "shipment_id": "B1",
+                "quantity": 2,
+                "held_after": 2
+              },
+              {
+                "reservation_id": "B",
+                "shipment_id": "B2",
+                "quantity": 2,
+                "held_after": 0
+              }
+            ]
+          }
+        },
+        {
+          "reservation_id": "C",
+          "batch_id": "dispatch-b3aa67e43ec24e46689a4dfa9275b3a2a0dbc897dd4f883859643f593baf9de0",
+          "units": 3,
+          "window": {
+            "not_before_ms": 109000,
+            "before_ms": 110000
+          },
+          "state": "recovered",
+          "receipt": {
+            "batch_id": "dispatch-b3aa67e43ec24e46689a4dfa9275b3a2a0dbc897dd4f883859643f593baf9de0",
+            "boxes": [
+              {
+                "reservation_id": "C",
+                "shipment_id": "C1",
+                "quantity": 3,
+                "held_after": 0
+              }
+            ]
+          }
+        },
+        {
+          "reservation_id": "D",
+          "batch_id": "dispatch-f560671a9063d5d08e2efd330cb116f16f000d07730ee791bd5bdddd8817d3cf",
+          "units": 2,
+          "window": {
+            "not_before_ms": 110000,
+            "before_ms": 111000
+          },
+          "state": "expired"
+        }
+      ]
+    }
+  },
+  "attempts": [
+    {
+      "reservation_id": "B",
+      "http_status": 201
+    },
+    {
+      "reservation_id": "C",
+      "http_status": 201
+    },
+    {
+      "reservation_id": "D",
+      "http_status": 409
+    }
+  ],
+  "inventory_after": {
+    "sku": "KIT-01",
+    "capacity": 13,
+    "available": 11
+  }
+}

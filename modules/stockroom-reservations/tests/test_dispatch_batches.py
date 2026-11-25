@@ -26,6 +26,42 @@ def preview(api, boxes):
     return api.post("/dispatch-batches/preview", json={"boxes": boxes})
 
 
+def test_dispatch_window_gates_new_writes_but_preserves_concurrent_receipts(tmp_path):
+    now = 100
+    with TestClient(create_app(tmp_path / "window.db", ttl_seconds=60, clock=lambda: now)) as api:
+        reserve(api, "A", 4)
+        boxes = [box("A", "A1", 2)]
+
+        def submit(key, start=101000, end=102000):
+            return api.post("/dispatch-batches", headers={"Idempotency-Key": key},
+                            json={"boxes": boxes, "window": {"not_before_ms": start, "before_ms": end}})
+
+        assert submit("wave", start=True).status_code == 422
+        assert submit("wave", end=101000).status_code == 422
+        assert submit("wave").status_code == 409
+        assert api.get("/dispatch-batches/wave").status_code == 404
+        now = 101
+        barrier = Barrier(2)
+
+        def concurrent_submit():
+            barrier.wait()
+            return submit("wave")
+
+        with ThreadPoolExecutor(max_workers=2) as workers:
+            replies = [workers.submit(concurrent_submit) for _ in range(2)]
+            first, second = [future.result(timeout=10) for future in replies]
+        assert sorted([first.status_code, second.status_code]) == [200, 201]
+        assert first.json() == second.json()
+        now = 102
+        replayed = submit("wave")
+        assert (replayed.status_code, replayed.json()) == (200, first.json())
+        boxes = [box("A", "A2", 2)]
+        assert submit("too-late").status_code == 409
+        assert api.get("/dispatch-batches/too-late").status_code == 404
+        assert api.get("/reservations/A/fulfillments/A2").status_code == 404
+        assert api.get("/inventory").json() == [{"sku": "KIT-01", "capacity": 18, "available": 16}]
+
+
 def test_preview_explains_each_box_without_dispatching(tmp_path):
     database = tmp_path / "preview.db"
     with TestClient(create_app(database, clock=lambda: 100)) as api:
