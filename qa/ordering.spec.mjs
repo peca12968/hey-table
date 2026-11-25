@@ -1481,6 +1481,82 @@ test("pickup, retries, price authority, sold-out race and stale state transition
   expect((await request.post("/api/orders",{data:{...data,mode:"table",table:"Z99",token:randomUUID()}})).status()).toBe(400);
 });
 
+test("kitchen receiving drafts use real purchase statuses and post through SQLite",async({page})=>{
+  const root=process.env.PREP_PROJECT||fileURLToPath(new URL("../modules/prep-sheet/",import.meta.url));
+  const script=[
+    "import json, subprocess, sys, tempfile",
+    "from pathlib import Path",
+    "from ledger import initialize, read_json",
+    "from receiving import accept, cancel, open_order",
+    'recipe = Path("examples/recipes.json")',
+    "book = read_json(recipe)",
+    "with tempfile.TemporaryDirectory() as folder:",
+    '    db = Path(folder) / "stock.db"',
+    "    initialize(db)",
+    '    line = dict(sku="soup-soy",component="soy",unit="ml",pack=25,packs=3)',
+    '    order = dict(status="ok",orders=[dict(supplier="market",lines=[line]),dict(supplier="depot",lines=[dict(line,packs=1)])])',
+    '    open_order(db,book,"NOV",order)',
+    '    accept(db,book,"NOV","market","morning",{"soup-soy":1})',
+    '    cancel(db,"NOV","market","short-shipment",{"soup-soy":1})',
+    '    base = [sys.executable,"-B","receiving.py","--db",str(db)]',
+    "    if len(sys.argv) == 1:",
+    '        print(subprocess.check_output(base+["status","NOV"],encoding="utf-8"))',
+    "    else:",
+    '        command = base+["--recipes",str(recipe),"accept-draft",sys.argv[1]]',
+    '        first = json.loads(subprocess.check_output(command,encoding="utf-8"))',
+    '        replay = json.loads(subprocess.check_output(command,encoding="utf-8"))',
+    '        latest = json.loads(subprocess.check_output(base+["status","NOV"],encoding="utf-8"))',
+    "        print(json.dumps(dict(first=first,replay=replay,latest=latest)))",
+  ].join("\n");
+  function ledger(...args){
+    const result=spawnSync("python",["-B","-c",script,...args],
+      {cwd:root,encoding:"utf8",env:{...process.env,PYTHONUTF8:"1"}});
+    expect(result.status,result.stderr).toBe(0);
+    return JSON.parse(result.stdout);
+  }
+  const snapshot=ledger();
+  await page.setViewportSize({width:360,height:780});
+  await page.addInitScript(()=>sessionStorage.setItem("he-ri-staff","local-test-kitchen"));
+  await page.goto("/kitchen/prep");
+  await page.getByRole("link",{name:"到貨驗收核對"}).click();
+  const review=page.getByRole("region",{name:"到貨驗收核對"});
+  const loadStatus=value=>review.getByLabel("採購單狀態 JSON").setInputFiles({
+    name:"status.json",mimeType:"application/json",buffer:Buffer.from(JSON.stringify(value)),
+  });
+  await loadStatus({...snapshot,remaining_packs:0});
+  await expect(review.getByRole("alert")).toContainText("無法讀取");
+  await loadStatus(snapshot);
+  await expect(review.getByText("採購單 NOV · 部分處理 · 全單待收 2 包")).toBeVisible();
+  const supplier=review.getByRole("combobox",{name:"驗收供應商",exact:true});
+  const posted=review.getByLabel("實收 soup-soy 包數");
+  const delivery=review.getByLabel("送貨單號");
+  const confirm=review.getByRole("button",{name:"核對實收包數"});
+  await supplier.selectOption("market");
+  await expect(review.getByText("已訂 3 · 已收 1 · 已取消 1 · 待收 1 包")).toBeVisible();
+  await delivery.fill("afternoon");
+  await posted.fill("2");
+  await confirm.click();
+  await expect(review.getByRole("alert")).toContainText("最多 1 包");
+  await posted.fill("1");
+  await confirm.click();
+  const draft=review.getByRole("region",{name:"驗收草稿"});
+  await expect(draft.getByText("soup-soy · 1 包 · 25 ml · 入庫後待收 0 包")).toBeVisible();
+  const downloaded=page.waitForEvent("download");
+  await draft.getByRole("button",{name:"下載驗收草稿"}).click();
+  const path=await (await downloaded).path();
+  const accepted=ledger(path);
+  expect(accepted.replay).toEqual(accepted.first);
+  expect(accepted.first.movements.soy).toEqual({unit:"ml",delta:25,balance:50});
+  expect(accepted.latest.lines.find(row=>row.supplier==="market")).toMatchObject(
+    {received_packs:2,cancelled_packs:1,remaining_packs:0});
+  expect(accepted.latest.lines.find(row=>row.supplier==="depot")).toMatchObject({received_packs:0,remaining_packs:1});
+  await supplier.selectOption("depot");
+  await expect(draft).toHaveCount(0);
+  await expect(delivery).toHaveValue("");
+  await expect(posted).toHaveValue("");
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBe(360);
+});
+
 test("printable kitchen snapshot exports the displayed orders to Prep Sheet",async({page,request})=>{
   const headers={Authorization:"Bearer local-test-kitchen"};
   expect((await request.get("/api/kitchen/prep")).status()).toBe(403);

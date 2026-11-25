@@ -9,6 +9,8 @@ import sqlite3
 from ledger import connect, prior_receipt, read_inventory, read_json, record_movement
 from prep import catalog, integer, mapping
 
+DELIVERY_DRAFT = "prep-sheet.receiving-draft.v1"
+
 
 def identifier(value, label):
     if not isinstance(value, str) or not value.strip():
@@ -134,18 +136,21 @@ def pack_request(packs):
     return json.dumps(packs, sort_keys=True)
 
 
-def outstanding_lines(db, order_id, supplier, packs):
+def outstanding_lines(db, order_id, supplier, packs, expected=None):
     lines = {line["sku"]: line for line in status(db, order_id)["lines"] if line["supplier"] == supplier}
     for sku, count in packs.items():
         if sku not in lines:
             raise ValueError(f"{supplier}/{sku}: SKU is absent from this purchase order")
-        remaining = lines[sku]["remaining_packs"]
+        line = lines[sku]
+        if expected is not None and any(line[field] != value for field, value in expected[sku].items()):
+            raise ValueError(f"{supplier}/{sku}: purchase order changed; export a fresh status before receiving")
+        remaining = line["remaining_packs"]
         if count > remaining:
             raise ValueError(f"{sku}: only {remaining} packs outstanding")
     return lines
 
 
-def accept(path, book, order_id, supplier, slip, packs):
+def accept(path, book, order_id, supplier, slip, packs, *, expected=None):
     components, _, _ = catalog(book)
     reference = json.dumps([identifier(value, label) for value, label in
                             [(order_id, "purchase order ID"), (supplier, "supplier"), (slip, "delivery ID")]],
@@ -156,7 +161,7 @@ def accept(path, book, order_id, supplier, slip, packs):
         previous = prior_receipt(db, "purchase_receive", reference, request)
         if previous:
             return previous
-        lines = outstanding_lines(db, order_id, supplier, packs)
+        lines = outstanding_lines(db, order_id, supplier, packs, expected)
         changes = Counter()
         for sku, count in packs.items():
             line = lines[sku]
@@ -168,6 +173,34 @@ def accept(path, book, order_id, supplier, slip, packs):
             db.execute("UPDATE purchase_lines SET received=received+? WHERE po=? AND supplier=? AND sku=?",
                        (count, order_id, supplier, sku))
         return record_movement(db, components, "purchase_receive", reference, request, changes)
+
+
+def accept_draft(path, book, draft):
+    if mapping(draft, "delivery draft").get("format") != DELIVERY_DRAFT or not isinstance(draft.get("lines"), list):
+        raise ValueError("Invalid delivery draft")
+    packs, expected = {}, {}
+    for line in draft["lines"]:
+        row = mapping(line, "delivery line")
+        sku = identifier(row["sku"], "SKU")
+        if sku in packs:
+            raise ValueError(f"{sku}: duplicate SKU in draft")
+        before = {
+            "component": identifier(row["component"], "component"),
+            "unit": identifier(row["unit"], "unit"),
+            "pack": integer(row["pack"], 1, "pack size"),
+            "ordered_packs": integer(row["ordered_packs"], 1, "ordered packs"),
+            "received_packs": integer(row["received_packs"], 0, "previously received packs"),
+            "cancelled_packs": integer(row["cancelled_packs"], 0, "cancelled packs"),
+            "remaining_packs": integer(row["remaining_packs"], 0, "previously outstanding packs"),
+        }
+        count = integer(row["packs"], 1, "delivered packs")
+        if (before["ordered_packs"] - before["received_packs"] - before["cancelled_packs"]
+                != before["remaining_packs"] or count > before["remaining_packs"]):
+            raise ValueError(f"{sku}: draft quantities do not reconcile")
+        packs[sku] = count
+        expected[sku] = before
+    return accept(path, book, draft["purchase_order"], draft["supplier"], draft["delivery_id"],
+                  packs, expected=expected)
 
 
 def cancel(path, order_id, supplier, reference, packs):
@@ -204,6 +237,7 @@ def main():
     opening = commands.add_parser("open")
     opening.add_argument("order_id")
     opening.add_argument("report", type=Path)
+    commands.add_parser("accept-draft").add_argument("draft", type=Path)
     for name in ("accept", "cancel"):
         operation = commands.add_parser(name)
         operation.add_argument("order_id")
@@ -221,10 +255,12 @@ def main():
             result = cancel(args.db, args.order_id, args.supplier, args.reference, read_json(args.packs))
         else:
             if not args.recipes:
-                parser.error("open and accept require --recipes")
+                parser.error("open, accept and accept-draft require --recipes")
             book = read_json(args.recipes)
             if args.command == "open":
                 result = open_order(args.db, book, args.order_id, read_json(args.report))
+            elif args.command == "accept-draft":
+                result = accept_draft(args.db, book, read_json(args.draft))
             else:
                 result = accept(args.db, book, args.order_id, args.supplier, args.reference, read_json(args.packs))
         print(json.dumps(result, ensure_ascii=False, indent=2))

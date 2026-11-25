@@ -112,6 +112,15 @@ python receiving.py --db kitchen.db status LUNCH
 
 `purchase-report.json` 使用 Pantry Freight 的完整 JSON 採購結果。`morning.json` 填寫實際收到的供應商 SKU 與整包數，例如 `{"market-soy": 1}`。同張採購單、供應商及送貨單號可安全重送，內容相同時會取回原收據。若任一品項超收，整張送貨單都會回滾。狀態輸出的每一列包含供應商、包裝規格、已收與待收包數。帳本追蹤實物數量，售價、運費和付款另由採購系統管理。
 
+手機點收時，可把採購單狀態儲存成 JSON，再到食堂備料頁的「到貨驗收核對」上傳。選擇供應商、填寫送貨單號與實收包數，頁面會列出這次實收的數量和各項入庫後的待收包數。下載驗收草稿後，使用同一個帳本入庫。
+
+```sh
+python receiving.py --db kitchen.db status LUNCH > purchase-status.json
+python receiving.py --db kitchen.db --recipes examples/recipes.json accept-draft receiving-draft.json
+```
+
+入庫會在同一筆 SQLite 交易重新核對草稿所選品項。若已收或取消數量變動，可重新匯出狀態後再核對；其他未選品項可獨立處理。重送同張送貨單與相同包數會取回原收據。
+
 若供應商確認少供一包生米，將 `{"market-grain": 1}` 存成 `short-shipment.json`，再登記取消。採購單會保留取消單號、時間和各品項包數，試算會從待收數扣除已取消量。庫存與入庫收據維持原數量。已全部處理的訂單會依結果顯示 `received`（全數驗收）、`closed`（部分驗收、其餘取消）或 `cancelled`（全數取消）。
 
 ```sh

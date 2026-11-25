@@ -8,12 +8,19 @@ import unittest
 from unittest.mock import patch
 
 from ledger import connect, initialize, inventory_snapshot, post, read_inventory, read_json
-from receiving import accept, cancel, open_order, procurement_snapshot, status
+from receiving import DELIVERY_DRAFT, accept, accept_draft, cancel, open_order, procurement_snapshot, status
 
 
 def vendor(name, *lines):
     return {"supplier": name, "lines": [{"sku": sku, "component": "soy", "unit": "ml",
                                          "pack": size, "packs": count} for sku, size, count in lines]}
+
+
+def draft(report, packs, delivery):
+    return {"format": DELIVERY_DRAFT, "purchase_order": report["purchase_order"], "supplier": "market",
+            "delivery_id": delivery, "lines": [
+                {**line, "packs": packs[line["sku"]]} for line in report["lines"]
+                if line["supplier"] == "market" and line["sku"] in packs]}
 
 
 class ReceivingTests(unittest.TestCase):
@@ -175,3 +182,37 @@ class ReceivingTests(unittest.TestCase):
         self.assertEqual((final["state"], final["remaining_packs"]),
                          ("received" if delivered.result() else "cancelled", 0))
         self.assertEqual(self.stock(), {"soy": 50} if delivered.result() else {})
+
+    def test_draft_rechecks_each_line_inside_receiving_transaction_and_replays(self):
+        initial = self.open()
+        stale = draft(initial, {"S": 1, "L": 1}, "delivery")
+        cancel(self.path, "p", "market", "out-of-stock", {"S": 1})
+        with self.assertRaisesRegex(ValueError, "purchase order changed"):
+            accept_draft(self.path, self.book, stale)
+        self.assertEqual(self.stock(), {})
+        self.assertEqual(self.status()["remaining_packs"], 3)
+        current = draft(self.status(), {"S": 1, "L": 1}, "delivery")
+        self.receive({"S": 1}, supplier="depot", slip="different-supplier")
+        posted = accept_draft(self.path, self.book, current)
+        self.assertEqual(posted["movements"]["soy"], {"unit": "ml", "delta": 75, "balance": 85})
+        self.assertEqual(accept_draft(self.path, self.book, current), posted)
+        self.assertEqual(self.receive({"L": 1, "S": 1}, slip="delivery"), posted)
+        with self.assertRaisesRegex(ValueError, "reference already used"):
+            accept_draft(self.path, self.book, draft(initial, {"S": 1}, "delivery"))
+
+    def test_competing_drafts_from_one_snapshot_do_not_both_post_even_when_stock_fits(self):
+        captured = self.open()
+        release = Barrier(2)
+
+        def try_post(slip):
+            release.wait(timeout=10)
+            try:
+                return accept_draft(self.path, self.book, draft(captured, {"S": 1}, slip))
+            except ValueError as error:
+                self.assertIn("export a fresh status", str(error))
+                return None
+
+        with ThreadPoolExecutor(max_workers=2) as workers:
+            self.assertEqual(sum(result is not None for result in workers.map(try_post, ("first", "second"))), 1)
+        self.assertEqual(self.stock(), {"soy": 25})
+        self.assertEqual(self.status()["remaining_packs"], 3)

@@ -7,6 +7,7 @@ import {stationLabels} from "../../../lib/kitchen-timing.mjs";
 import {PickupDate} from "../../pickup-slots";
 import {useBusinessToday} from "../../use-business-today.mjs";
 import ReadinessReview from "./readiness-review";
+import ReceivingReview from "./receiving-review.jsx";
 import "./prep.css";
 
 const names = new Map(dishes.map(dish => [dish.id, dish.name]));
@@ -60,6 +61,7 @@ export default function Prep() {
     <div className="actions prepControl">
       <a href="/kitchen" className="textLink">返回店家接單台</a>
       <a href="/kitchen/pickup-week" className="textLink">七天自取預約總覽</a>
+      {view?.snapshot&&<a href="#prep-receiving" className="textLink">到貨驗收核對</a>}
     </div>
     <h1>廚房備料單</h1>
     <div className="prepControl"><PickupDate label="備料日期" value={day} onChange={setDay}/></div>
@@ -96,6 +98,7 @@ export default function Prep() {
       </>}
     </div>
     <ReadinessReview snapshot={snapshot} orders={orders} station={selected} scope={remainingOnly?"remaining":"all"} clock={taipei}/>
+    {view?.snapshot&&<ReceivingReview/>}
     <p className="prepControl"><a className="textLink" href="https://github.com/peca12968/hey-table/blob/main/modules/prep-sheet/README.md#從訂單匯出試算採購">備料與採購試算說明</a></p>
   </main><Footer/></>;
 }
