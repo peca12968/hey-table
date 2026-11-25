@@ -74,7 +74,7 @@ def reconcile_boxes(boxes, shipped, order_id, duration):
     return tuple(remaining), recorded, conflicts, duration
 
 
-def collect(document, start, cutoff, resume):
+def collect(document, start, cutoff, resume, first_station_ready):
     orders = indexed(document["work"], "reservation_id")
     if not isinstance(document["holds"], list):
         raise ValueError("expected a list of Stockroom packing statements")
@@ -126,7 +126,7 @@ def collect(document, start, cutoff, resume):
             omitted[order_id] = "shipment_id_already_used"
         elif held < units:
             omitted[order_id] = "insufficient_hold"
-        elif ready + duration >= deadline:
+        elif max(ready, first_station_ready) + duration >= deadline:
             omitted[order_id] = "cannot_finish_before_deadline"
         else:
             jobs.append(Job(order_id, ready, duration, deadline, units, rows))
@@ -175,12 +175,17 @@ def optimize(jobs, start):
     return packing_order(parent, best)
 
 
-def optimize_parallel(jobs, start):
+def optimize_parallel(jobs, start, second_start=None):
     """Choose two disjoint feasible routes without enumerating all pairs of subsets."""
-    finish, parent, units = packing_states(jobs, start)
+    second_start = start if second_start is None else second_start
+    first_finish, first_parent, first_units = packing_states(jobs, start)
+    second_finish, second_parent, second_units = (
+        (first_finish, first_parent, first_units) if start == second_start
+        else packing_states(jobs, second_start)
+    )
     limit = 1 << len(jobs)
-    scores = {mask: (units[mask], mask.bit_count(), -at, -mask) for mask, at in finish.items()}
-    best_subset = [mask if mask in finish else 0 for mask in range(limit)]
+    scores = {mask: (second_units[mask], mask.bit_count(), -at, -mask) for mask, at in second_finish.items()}
+    best_subset = [mask if mask in second_finish else 0 for mask in range(limit)]
     # After processing each bit, the best route may also omit that order.
     for index in range(len(jobs)):
         bit = 1 << index
@@ -192,12 +197,14 @@ def optimize_parallel(jobs, start):
 
     def score_pair(pair):
         left, right = pair
-        return (units[left] + units[right], (left | right).bit_count(), -max(finish[left], finish[right]),
+        latest = max(first_finish[left] if left else 0, second_finish[right] if right else 0)
+        return (first_units[left] + second_units[right], (left | right).bit_count(), -latest,
                 -min(left, right), -max(left, right))
 
     full = limit - 1
-    pair = max(((left, best_subset[full ^ left]) for left in finish), key=score_pair)
-    return [packing_order(parent, mask) for mask in sorted(pair, key=lambda mask: (mask == 0, mask))]
+    pair = max(((left, best_subset[full ^ left]) for left in first_finish), key=score_pair)
+    left, right = sorted(pair, key=lambda mask: (mask == 0, mask)) if start == second_start else pair
+    return [packing_order(first_parent, left), packing_order(second_parent, right)]
 
 
 def plan(document, *, resume=False, stations=1):
@@ -210,11 +217,16 @@ def plan(document, *, resume=False, stations=1):
         if start < captured:
             raise ValueError("start_ms predates the packing snapshot")
     cutoff = integer(document["cutoff_ms"], "cutoff_ms", start + 1)
-    jobs, omitted, confirmed, conflicts = collect(document, start, cutoff, resume)
-    routes = [optimize(jobs, start)] if stations == 1 else optimize_parallel(jobs, start)
+    availability = document.get("station_ready_ms", [start] * stations)
+    if not isinstance(availability, list) or len(availability) != stations:
+        raise ValueError("station_ready_ms must contain one timestamp per packing station")
+    station_ready = [integer(value, f"station_ready_ms[{index}]", start)
+                     for index, value in enumerate(availability)]
+    jobs, omitted, confirmed, conflicts = collect(document, start, cutoff, resume, min(station_ready))
+    routes = [optimize(jobs, station_ready[0])] if stations == 1 else optimize_parallel(jobs, *station_ready)
     scheduled = []
     for station, route in enumerate(routes, 1):
-        at = start
+        at = station_ready[station - 1]
         for index in route:
             job = jobs[index]
             begins = max(at, job.ready)
@@ -261,6 +273,8 @@ def plan(document, *, resume=False, stations=1):
         report["shipment_conflicts"] = conflicts
     if stations == 2:
         report["stations"] = stations
+    if "station_ready_ms" in document:
+        report["station_ready_ms"] = station_ready
     return report
 
 
@@ -268,7 +282,7 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("input", type=Path)
     parser.add_argument("--resume", action="store_true", help="Replan boxes that have not been dispatched")
-    parser.add_argument("--stations", type=int, choices=(1, 2), default=1, help="Number of equivalent packing stations")
+    parser.add_argument("--stations", type=int, choices=(1, 2), default=1, help="Number of packing stations")
     args = parser.parse_args(argv)
     try:
         report = plan(json.loads(args.input.read_text(encoding="utf-8-sig")), resume=args.resume, stations=args.stations)

@@ -45,7 +45,9 @@ python demo.py ../stockroom-reservations
 
 規劃器先計算各子集合在一座台上的最早完成時間，再為第一座台找出剩餘訂單的最佳子集合。雙台總體按出貨件數、訂單數與最晚完成時間比較。額外的子集合比對需 O(N × 2^N) 時間，最多仍支援 17 張單。測試以獨立窮舉器比較 180 組案例，核對雙台所有分配及順序。
 
-在早班示範，A 和 B 在第 2 至第 4 秒分別於兩座台包裝，裝車前可出 10 件。單台排程可出 9 件。執行 `python demo.py ../stockroom-reservations --compare-stations` 會以同樣的 Stockroom 初始資料執行兩套排程，核對實際出貨與庫存。[雙台出貨試玩（私人預覽）](https://peca-github-demo.peca12968.chatgpt.site/?demo=dispatchParallel#demos) · [可重建範例](examples/parallel-demo.json)
+在早班示範，A 和 B 在第 2 至第 4 秒分別於兩座台包裝，裝車前可出 10 件。單台排程可出 9 件。[雙台出貨試玩（私人預覽）](https://peca-github-demo.peca12968.chatgpt.site/?demo=dispatchParallel#demos) · [可重建範例](examples/parallel-demo.json)
+
+各包裝台開工時間不同時，可提供 `"station_ready_ms": [100000, 104000]`。陣列依台號排列，每個時間都須等於或晚於 `start_ms`，也可晚於裝車截止以表示該台趕不上這一車。排程會分別核對可行路線，並保留每座台實際的開工時間。範例第二台晚四秒開工時可出 9 件，A 到期釋回，其他訂單仍按期限交運。執行 `python demo.py ../stockroom-reservations --compare-stations` 可透過實際 Stockroom API 核對三種排程的出貨和庫存，單元測試則以獨立窮舉比較 160 組開工時間不同的小案例。
 
 ## 部分出貨後重排
 

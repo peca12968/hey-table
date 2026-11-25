@@ -8,15 +8,15 @@ import unittest
 from dispatch import Job, optimize, optimize_parallel, plan
 
 
-def score(jobs, sequence):
-    at = total = 0
+def score(jobs, sequence, start=0):
+    at, total = start, 0
     for index in sequence:
         job = jobs[index]
         at = max(at, job.ready) + job.duration
         if at >= job.deadline:
             return None
         total += job.units
-    return total, len(sequence), -at
+    return total, len(sequence), -at if sequence else 0
 
 
 class DispatchTests(unittest.TestCase):
@@ -93,6 +93,53 @@ class DispatchTests(unittest.TestCase):
         self.sample["work"].reverse()
         self.sample["holds"].reverse()
         self.assertEqual(plan(self.sample, stations=2), report)
+
+    def test_different_station_start_times_match_independent_exhaustive_splits(self):
+        rng = random.Random(44219)
+        for _ in range(160):
+            jobs = [Job(str(i), rng.randrange(10), rng.randrange(1, 5),
+                        rng.randrange(3, 17), rng.randrange(1, 10), ())
+                    for i in range(rng.randrange(7))]
+            starts = rng.randrange(9), rng.randrange(9)
+
+            def station_score(left, right):
+                a = score(jobs, left, starts[0])
+                b = score(jobs, right, starts[1])
+                return None if a is None or b is None else (a[0] + b[0], a[1] + b[1], min(a[2], b[2]))
+
+            brute = (station_score(order[:split], order[split:])
+                     for size in range(len(jobs) + 1)
+                     for order in permutations(range(len(jobs)), size)
+                     for split in range(size + 1))
+            left, right = optimize_parallel(jobs, *starts)
+            self.assertEqual(len(set(left + right)), len(left) + len(right))
+            self.assertEqual(station_score(left, right), max(value for value in brute if value is not None))
+
+    def test_delayed_stations_keep_identity_and_fixture_reproduces(self):
+        fixture = json.loads(Path(__file__).with_name("examples").joinpath("parallel-demo.json").read_bytes())
+        self.assertEqual(fixture["single"], plan(self.sample))
+        self.assertEqual(fixture["parallel"], plan(self.sample, stations=2))
+        earlier = 100000
+        later = 104000
+        for starts, earliest in [([earlier, later], 1), ([later, earlier], 2), ([112000, earlier], 2)]:
+            report = plan(dict(self.sample, station_ready_ms=starts), stations=2)
+            self.assertEqual(report["station_ready_ms"], starts)
+            self.assertEqual(report["ship_units"], 9)
+            self.assertEqual(report["omitted"], [{"reservation_id": "A", "reason": "not_selected"}])
+            self.assertEqual(report["scheduled"][0]["station"], earliest)
+            for order in report["scheduled"]:
+                self.assertGreaterEqual(order["pack_start_ms"], starts[order["station"] - 1])
+        self.assertEqual(fixture["delayed"], plan(dict(self.sample, station_ready_ms=[earlier, later]), stations=2))
+
+    def test_station_availability_validation_and_deadline(self):
+        for invalid in (None, [], [100000], [100000, 99999], [100000, False], "100000"):
+            with self.subTest(invalid=invalid), self.assertRaisesRegex(ValueError, "station_ready_ms"):
+                plan(dict(self.sample, station_ready_ms=invalid), stations=2)
+        report = plan(dict(self.sample, station_ready_ms=[111000, 112000]), stations=2)
+        self.assertEqual(report["ship_units"], 0)
+        self.assertEqual({row["reason"] for row in report["omitted"]}, {"cannot_finish_before_deadline"})
+        single = plan(dict(self.sample, station_ready_ms=[111000]))
+        self.assertEqual(single["ship_units"], 0)
 
     def test_resume_and_second_station_can_share_the_same_snapshot(self):
         self.sample["captured_at_ms"] = self.sample["start_ms"]
