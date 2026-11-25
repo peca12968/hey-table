@@ -70,11 +70,13 @@ python lunch.py --orders examples/orders.json --recipes examples/recipes.json --
 
 ## 試算現有庫存能做哪些單
 
+在店員備料頁選取食譜 JSON 和盤點庫存 JSON，即可依目前日期、分站和範圍試算。預設只計待接單，可勾選「納入製作中餐單」。頁面會顯示可先做的餐單、備料順序和原料缺口，並可下載報告供同事重新匯入。檔案與試算都留在瀏覽器，實際庫存由店家的帳本管理。[食譜範例](examples/recipes.json) · [庫存範例](examples/stock.json)
+
 `python prep.py --orders orders.json --recipes examples/recipes.json --ledger kitchen.db --readiness` 會依成立時間逐單試算，同時成立的餐單依餐號排序。可改用 `--stock stock.json` 提供盤點數量。每張可做餐單會附上實際的備料順序，例如先做高湯，再做用到高湯的丼飯醬。餘量可供後續餐單使用。缺料會列出該單輪到時所缺的原料與數量。
 
 暫緩的餐單會保留所有模擬庫存給後續餐單。輸出的餘額是試算結果，領料與備料仍依店家的帳本操作。帳本模式會核對並跳過已登記領料的餐單。加上 `--include-preparing` 可納入製作中餐單。執行 `python readiness_demo.py` 可重建補入 280 g 雞肉前後的報告。[試玩現有庫存備料（私人預覽）](https://peca-github-demo.peca12968.chatgpt.site/?demo=prepReadiness#demos) · [範例資料](examples/readiness-demo.json)
 
-若需讓值班店員在備料頁查看結果，從「備料試算報告」下載目前範圍的試算資料，將檔案傳給同一個指令並把輸出存成 JSON。例如：
+要使用 SQLite 帳本試算，可從「備料試算報告」下載目前範圍的試算資料，再將指令的輸出存成 JSON。
 
 ```sh
 python prep.py --orders prep-input.json --recipes examples/recipes.json --ledger kitchen.db --readiness > readiness.json

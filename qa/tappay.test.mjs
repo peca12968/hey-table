@@ -12,6 +12,7 @@ import {paymentPrime,openPaymentUrl} from "../lib/tappay-client.mjs";
 import {comparePaymentHandoffSummaries,readPaymentHandoffSummary} from "../lib/payment-handoff-compare.mjs";
 import {planSupplyReview,supplyReviewRows} from "../lib/supply-review.mjs";
 import {matchesPrepOrderSource,prepOrderSource,readPrepReadinessReport} from "../lib/prep-readiness-report.mjs";
+import {forecastPrepReadiness} from "../lib/prep-readiness.mjs";
 import {dishes} from "../lib/menu.mjs";
 import {sqliteD1} from "../scripts/sqlite-d1.mjs";
 import {applyDemoMigrations} from "../scripts/apply-demo-migrations.mjs";
@@ -596,6 +597,40 @@ test("staff payment attempt history paginates stable ordinals and isolates notes
   assert.equal((await (await get(path)).json()).attempts[0].number,13);
   assert.deepEqual((await (await get(filter+"12")).json()).notes.map(row=>row.note),["最新嘗試的備註"]);
   assert.equal((await (await get(filter+"12")).json()).target,null);
+});
+
+test("browser prep readiness matches Python for FIFO, recipe revisions, shortages and batch leftovers",()=>{
+  const cwd=fileURLToPath(new URL("../modules/prep-sheet/",import.meta.url));
+  const example=name=>JSON.parse(readFileSync(join(cwd,"examples",name+".json"),"utf8"));
+  const book=example("recipes"),orders=example("orders");
+  const input=[];
+  for(const includePreparing of [false,true]){
+    input.push({orders,book,stock:example("stock"),includePreparing});
+    for(let step=0;step<18;step++){
+      const stock={grain:step*45,water:step*100,soy:20,kombu:5,cutlet:3,eggs:8,chicken:step*40,rice:step*15};
+      input.push({orders:[...orders].reverse(),book,stock,includePreparing});
+    }
+  }
+  const maximum=Number.MAX_SAFE_INTEGER;
+  input.push({
+    orders:[{id:1,created:0,status:"pending",items:[{id:"meal",qty:maximum}]}],
+    book:{components:{dishBase:{unit:"g",yield:3,inputs:{water:1}},water:{unit:"ml",pack:1}},
+      dishes:{meal:[{from_ms:0,uses:{dishBase:1}}]}},
+    stock:{water:maximum},
+    includePreparing:false,
+  });
+  const python=spawnSync(process.env.PYTHON||"python",["-B","-c",[
+    "import json, sys",
+    "from prep import readiness",
+    'print(json.dumps([readiness(case["orders"], case["book"], case["stock"], case["includePreparing"]) for case in json.load(sys.stdin)]))',
+  ].join("\n")],{cwd,input:JSON.stringify(input),encoding:"utf8",env:{...process.env,PYTHONUTF8:"1"}});
+  assert.equal(python.status,0,python.stderr);
+  assert.deepEqual(input.map(test=>forecastPrepReadiness(test.orders,test.book,test.stock,test.includePreparing)),
+    JSON.parse(python.stdout));
+  assert.throws(()=>forecastPrepReadiness(orders,book,{cutlet:maximum+1}),/整數/);
+  const cyclic=structuredClone(book);
+  cyclic.components.dashi.inputs.sauce=1;
+  assert.throws(()=>forecastPrepReadiness(orders,cyclic,{}),/循環相依/);
 });
 
 test("prep report compares date, station and source quantities independently of capture time or item order",()=>{

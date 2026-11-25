@@ -13,6 +13,10 @@
 .prep thead {background: #f2efe8}
 .prepReadiness {margin: 1rem 0; min-width: 0; overflow-wrap: anywhere}
 .prepReadiness h2 {margin-top: 0}
+.prepReadinessFiles {min-width: 0; margin: 0 0 1rem; padding: 6px 10px; border: 1px solid var(--line); border-radius: 8px}
+.prepReadinessFiles legend {font-weight: 650; padding-inline: 4px}
+.prepReadinessPreparing {display: inline-flex; align-items: center; gap: 6px; min-height: 40px; cursor: pointer}
+.prepReadinessPreparing input {width: auto; accent-color: var(--green)}
 .prepReadinessActions {align-items: end}
 .prepReadinessActions label {display: grid; gap: .3rem; min-width: 0}
 .prepReadinessActions input {width: 100%; max-width: 25rem}

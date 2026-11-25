@@ -1521,11 +1521,35 @@ test("printable kitchen snapshot exports the displayed orders to Prep Sheet",asy
   const importReport=text=>review.getByLabel("備料試算報告 JSON").setInputFiles({
     name:"readiness.json",mimeType:"application/json",buffer:Buffer.from(text),
   });
+  const results=review.getByRole("region",{name:"備料試算結果"});
+  const reported=results.getByRole("listitem").filter({hasText:"餐單 #"+String(pending).padStart(4,"0")});
+  const calculate=review.getByRole("button",{name:"開始試算"});
+  const stock=review.getByLabel("庫存 JSON",{exact:true});
+  await expect(calculate).toBeDisabled();
+  await review.getByLabel("食譜 JSON",{exact:true}).setInputFiles(join(root,"examples","recipes.json"));
+  await stock.setInputFiles({name:"stock.json",mimeType:"application/json",buffer:Buffer.from("[invalid")});
+  await calculate.click();
+  await expect(review.getByRole("alert")).toContainText("無法讀取庫存");
+  await stock.setInputFiles(join(root,"examples","stock.json"));
+  await calculate.click();
+  await expect(reported).toContainText("缺 毛豆 400 g");
+  const preparingOrder=results.getByRole("listitem").filter({hasText:"餐單 #"+String(preparing).padStart(4,"0")});
+  await expect(preparingOrder).toHaveCount(0);
+  await review.getByLabel("納入製作中餐單").check();
+  await expect(results).toHaveCount(0);
+  await calculate.click();
+  await expect(preparingOrder).toContainText("缺 毛豆 200 g");
+  const browserDownload=page.waitForEvent("download");
+  await results.getByRole("button",{name:"下載備料試算報告"}).click();
+  const browserReport=await readFile(await (await browserDownload).path(),"utf8");
+  expect(JSON.parse(browserReport)).toEqual(JSON.parse(forecast.stdout));
+  await review.getByRole("button",{name:"清除報告"}).click();
+  await importReport(browserReport);
+  await expect(reported).toContainText("缺 毛豆 400 g");
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBe(360);
   await importReport("{}");
   await expect(review.getByRole("alert")).toContainText("無法讀取");
   await importReport(forecast.stdout);
-  const results=review.getByRole("region",{name:"備料試算結果"});
-  const reported=results.getByRole("listitem").filter({hasText:"餐單 #"+String(pending).padStart(4,"0")});
   await expect(reported).toContainText("缺 毛豆 400 g");
   expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBe(360);
   const report=JSON.parse(forecast.stdout),dish=report.orders.find(order=>order.order_id===pending).portions[0];
