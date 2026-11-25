@@ -2,6 +2,8 @@ import {methods,onlinePaymentEnvironments,paymentAttentionStates} from "../lib/p
 import {latestPaymentAttentionNote} from "./payment-attention-notes.mjs";
 
 const pageSize=25;
+const amountBase=1_000_000;
+const summaryTotals=()=>({orders:0,amount:0n,pending:0,authorized:0,overdue:0});
 const filters={
   state:paymentAttentionStates,
   environment:onlinePaymentEnvironments,
@@ -23,10 +25,33 @@ export function paymentAttentionQuery(params){
     query.after=cursor.slice(1).map(Number);
     if(!query.after.every(Number.isSafeInteger)||query.after[0]>8_640_000_000_000_000)return null;
   }
+  const summaries=params.getAll("summary");
+  if(summaries.length>1||(summaries.length===1&&summaries[0]!=="1"))return null;
+  if(summaries.length)query.summary=true;
   return query;
 }
 
-export async function paymentAttention(env,{state,environment,method,after},capturedAt){
+function summarize(rows,query,capturedAt){
+  const groups=new Map(),totals=summaryTotals();
+  for(const row of rows){
+    const method=Object.hasOwn(methods,row.method)?row.method:"unknown";
+    const environment=onlinePaymentEnvironments.includes(row.environment)?row.environment:"unknown";
+    const key=method+":"+environment;
+    if(!groups.has(key))groups.set(key,{method,environment,...summaryTotals()});
+    const amount=BigInt(row.whole)*BigInt(amountBase)+BigInt(row.remainder);
+    for(const summary of [groups.get(key),totals]){
+      summary.orders+=row.orders;
+      summary.amount+=amount;
+      summary[row.state]+=row.orders;
+      summary.overdue+=row.overdue;
+    }
+  }
+  const serialize=summary=>({...summary,amount:String(summary.amount)});
+  return {format:"hey-table.payment-attention-summary.v1",capturedAt,timeZone:"Asia/Taipei",filters:query,
+    totals:serialize(totals),groups:[...groups.values()].map(serialize)};
+}
+
+export async function paymentAttention(env,{state,environment,method,after,summary},capturedAt){
   const conditions=[
     "attempt.state IN ('pending','authorized')",
     "orders.payment_method<>'cash'",
@@ -37,12 +62,26 @@ export async function paymentAttention(env,{state,environment,method,after},capt
   for(const [column,value] of [["attempt.state",state],["orders.payment_env",environment],["orders.payment_method",method]]){
     if(value){conditions.push(column+"=?");args.push(value);}
   }
-  if(after){conditions.push("(attempt.created,attempt.order_id)>(?,?)");args.push(...after);}
-  const {results}=await env.DB.prepare(`SELECT orders.id,orders.status,orders.payment_method AS method,orders.payment_env AS environment,
+  const scope="FROM payment_attempts AS attempt JOIN orders ON orders.id=attempt.order_id WHERE "+conditions.join(" AND ");
+  const cursor=after?" AND (attempt.created,attempt.order_id)>(?,?)":"";
+  const page=env.DB.prepare(`SELECT orders.id,orders.status,orders.payment_method AS method,orders.payment_env AS environment,
     orders.total,orders.payment_due_at AS paymentDueAt,attempt.state,attempt.created AS startedAt,NULLIF(attempt.checked,0) AS checkedAt,
     ${latestPaymentAttentionNote} AS latestNote
-    FROM payment_attempts AS attempt JOIN orders ON orders.id=attempt.order_id WHERE ${conditions.join(" AND ")}
-    ORDER BY attempt.created,attempt.order_id LIMIT ?`).bind(...args,pageSize+1).all();
+    ${scope}${cursor} ORDER BY attempt.created,attempt.order_id LIMIT ?`).bind(...args,...(after??[]),pageSize+1);
+  let results,report;
+  if(summary){
+    // Sum integer quotients and remainders separately so the full total can exceed SQLite's single integer range.
+    const aggregate=env.DB.prepare(`SELECT orders.payment_method AS method,orders.payment_env AS environment,attempt.state,
+      COUNT(*) AS orders,COUNT(CASE WHEN attempt.state='pending' AND orders.payment_due_at<=? THEN 1 END) AS overdue,
+      CAST(SUM(orders.total/${amountBase}) AS TEXT) AS whole,CAST(SUM(orders.total%${amountBase}) AS TEXT) AS remainder
+      ${scope} GROUP BY orders.payment_method,orders.payment_env,attempt.state ORDER BY method,environment,attempt.state`)
+      .bind(capturedAt,...args);
+    const [details,rollup]=await env.DB.batch([page,aggregate]);
+    results=details.results;
+    report=summarize(rollup.results,{state:state??null,environment:environment??null,method:method??null},capturedAt);
+  }else{
+    results=(await page.all()).results;
+  }
   const orders=results.slice(0,pageSize).map(({latestNote,...row})=>({...row,
     ...(latestNote?{latestNote:JSON.parse(latestNote)}:{}),
     canCheck:(row.environment==="sandbox"||row.environment==="production")&&
@@ -50,5 +89,5 @@ export async function paymentAttention(env,{state,environment,method,after},capt
   }));
   const last=orders.at(-1);
   return {format:"hey-table.payment-attention.v1",capturedAt,orders,
-    nextAfter:results.length>pageSize?last.startedAt+":"+last.id:null};
+    nextAfter:results.length>pageSize?last.startedAt+":"+last.id:null,...(report?{summary:report}:{})};
 }

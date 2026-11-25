@@ -230,6 +230,51 @@ test("mobile staff filter actual pending wallet attempts and return from the ord
   expect((await request.post("/api/payments/demo",{headers:px.headers,data:{ref:px.attempt.ref,outcome:"cancelled"}})).status()).toBe(200);
 });
 
+test("mobile handoff summary downloads the same filtered capture after another payment settles",async({page,request})=>{
+  const method="plus_pay";
+  async function pending(){
+    const token=randomUUID(),headers={"X-Ticket":token};
+    const created=await request.post("/api/orders",{data:{token,mode:"pickup",note:"私人顧客備註",
+      items:[{id:"sencha",qty:1}],paymentMethod:method,paymentEnv:"demo"}});
+    expect(created.status()).toBe(200);
+    const started=await request.post("/api/payments/start",{headers,data:{}});
+    expect(started.status()).toBe(200);
+    return {headers,attempt:(await started.json()).attempt};
+  }
+  const [first,second]=[await pending(),await pending()];
+  const complete=(row,outcome)=>request.post("/api/payments/demo",{headers:row.headers,data:{ref:row.attempt.ref,outcome}});
+  await page.setViewportSize({width:360,height:780});
+  await page.addInitScript(()=>sessionStorage.setItem("he-ri-staff","local-test-kitchen"));
+  const capture=()=>page.waitForResponse(response=>{
+    const url=new URL(response.url());
+    return url.pathname==="/api/kitchen/payment-attention"&&url.searchParams.get("summary")==="1";
+  });
+  const initial=capture();
+  await page.goto("/kitchen/payment-attention?method="+method+"&state=pending&environment=demo");
+  const {summary}=await (await initial).json();
+  expect(summary.filters).toEqual({method,state:"pending",environment:"demo"});
+  expect(summary.totals.orders).toBeGreaterThanOrEqual(2);
+  const section=page.getByRole("region",{name:"待核對交班匯總"});
+  await expect(section.getByRole("heading",{name:"全盈+PAY · 示範環境"})).toBeVisible();
+  await expect(section.getByText("NT$ "+BigInt(summary.totals.amount).toLocaleString("zh-TW"),{exact:true}).first()).toBeVisible();
+  expect((await complete(first,"paid")).status()).toBe(200);
+  const [download]=await Promise.all([page.waitForEvent("download"),
+    section.getByRole("button",{name:"下載付款交班摘要 JSON"}).click()]);
+  const contents=await readFile(await download.path(),"utf8");
+  expect(download.suggestedFilename()).toContain("hey-table-payment-handoff-");
+  expect(JSON.parse(contents)).toEqual(summary);
+  expect(contents).not.toContain(first.attempt.ref);
+  expect(contents).not.toContain("私人顧客備註");
+  const refreshed=capture();
+  await page.getByRole("button",{name:"重新擷取"}).click();
+  const next=(await (await refreshed).json()).summary;
+  expect(next.totals.orders).toBe(summary.totals.orders-1);
+  expect(next.totals.amount).toBe(String(BigInt(summary.totals.amount)-45n));
+  await expect(section.getByText("NT$ "+BigInt(next.totals.amount).toLocaleString("zh-TW"),{exact:true}).first()).toBeVisible();
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBe(360);
+  expect((await complete(second,"cancelled")).status()).toBe(200);
+});
+
 test("mobile payment queue preserves unmatched payments and refreshes after a verified lookup",async({page})=>{
   const id=91,number="0091",startedAt=Date.parse("2026-11-24T23:30:00+08:00");
   const capture=startedAt+60*60_000;

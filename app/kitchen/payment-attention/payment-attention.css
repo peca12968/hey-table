@@ -10,3 +10,10 @@
 .paymentAttentionNoteLink { display: block; width: fit-content; margin: .4rem 0; }
 .paymentAttentionLatestNote { white-space: pre-wrap; }
 .paymentAttentionPages { margin-top: 1rem; }
+.paymentHandoffSummary { overflow-wrap: anywhere; }
+.paymentHandoffSummary h2 { margin-top: 0; }
+.paymentSummaryAmounts { display: grid; grid-template-columns: repeat(auto-fit,minmax(min(100%,120px),1fr)); gap: .5rem; }
+.paymentSummaryAmounts div { border-top: 1px solid var(--line); padding-top: .3rem; }
+.paymentSummaryAmounts dd { margin: 0; font-weight: 650; }
+.paymentSummaryGroups { list-style: none; margin-block: .7rem; padding: 0; }
+.paymentSummaryGroups h3 { margin-block: .7rem .4rem; }

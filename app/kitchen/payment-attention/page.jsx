@@ -3,6 +3,7 @@
 import {useEffect,useState,useSyncExternalStore} from "react";
 import {Header,Footer,request} from "../../shared";
 import {labels,numberOf} from "../../../lib/menu.mjs";
+import {downloadJson} from "../../../lib/download-json.mjs";
 import {environmentLabel,methods,onlinePaymentEnvironments,paymentAttentionStates,paymentCheckMessage,
   paymentStates} from "../../../lib/payments.mjs";
 import "../daily/daily.css";
@@ -12,6 +13,7 @@ const path="/kitchen/payment-attention",endpoint="/api/kitchen/payment-attention
 const time=new Intl.DateTimeFormat("zh-TW",{timeZone:"Asia/Taipei",dateStyle:"medium",timeStyle:"short",hourCycle:"h23"});
 const timeLabel=at=><time dateTime={new Date(at).toISOString()}>{time.format(at)}</time>;
 const environmentName={demo:"示範環境",sandbox:"TapPay 測試環境",production:"正式付款"};
+const formatAmount=amount=>"NT$ "+BigInt(amount).toLocaleString("zh-TW");
 const browserSearch=()=>window.location.search;
 const serverSearch=()=>null;
 function subscribe(notify){
@@ -28,6 +30,33 @@ function Filter({name,title,choices,current}){
     <option value="">全部</option>
     {choices.map(([value,label])=><option value={value} key={value}>{label}</option>)}
   </select></label>;
+}
+
+function SummaryTotals({totals}){
+  return <dl className="paymentSummaryAmounts">
+    <div><dt>待核對</dt><dd>{totals.orders} 筆</dd></div>
+    <div><dt>原餐單金額</dt><dd>{formatAmount(totals.amount)}</dd></div>
+    <div><dt>付款確認中</dt><dd>{totals.pending} 筆</dd></div>
+    <div><dt>已授權待請款</dt><dd>{totals.authorized} 筆</dd></div>
+    <div><dt>已到保留時間</dt><dd>{totals.overdue} 筆</dd></div>
+  </dl>;
+}
+
+function HandoffSummary({summary}){
+  return <section className="sheet paymentHandoffSummary" aria-labelledby="payment-handoff-summary">
+    <h2 id="payment-handoff-summary">待核對交班匯總</h2>
+    <p>涵蓋所有符合篩選的付款 · 台灣擷取時間 {timeLabel(summary.capturedAt)}</p>
+    <SummaryTotals totals={summary.totals}/>
+    {summary.groups.length>0&&<ul className="paymentSummaryGroups">
+      {summary.groups.map(group=><li key={group.method+":"+group.environment}>
+        <h3>{methods[group.method]??"付款方式未記錄"} · {environmentName[group.environment]??"環境未記錄"}</h3>
+        <SummaryTotals totals={group}/>
+      </li>)}
+    </ul>}
+    <button className="outline" onClick={()=>downloadJson("hey-table-payment-handoff-",summary.capturedAt,summary)}>
+      下載付款交班摘要 JSON
+    </button>
+  </section>;
 }
 
 function PaymentRow({order,capturedAt,returnPath,onCheck,checking}){
@@ -64,7 +93,9 @@ export default function PaymentAttention(){
   useEffect(()=>{
     if(search===null)return;
     const controller=new AbortController();
-    request(endpoint+search,{headers:staffHeaders(),signal:AbortSignal.any([controller.signal,AbortSignal.timeout(10_000)])}).then(report=>{
+    const filters=new URLSearchParams(search);
+    filters.set("summary","1");
+    request(endpoint+"?"+filters,{headers:staffHeaders(),signal:AbortSignal.any([controller.signal,AbortSignal.timeout(10_000)])}).then(report=>{
       if(!controller.signal.aborted)setView({search,revision,report});
     }).catch(failure=>{
       if(!controller.signal.aborted)setView({search,revision,denied:failure.status===403,
@@ -113,6 +144,7 @@ export default function PaymentAttention(){
       {report&&<p>擷取時間 {timeLabel(report.capturedAt)}</p>}
       <button className="outline" onClick={refresh} disabled={activeAction?.checking}>重新擷取</button>
     </div>}
+    {report?.summary&&<HandoffSummary summary={report.summary}/>}
     {report&&<section aria-label="待核對付款清單">
       {report.orders.length>0?<ul className="paymentAttentionList">
         {report.orders.map(order=><PaymentRow key={order.id} order={order} capturedAt={report.capturedAt}

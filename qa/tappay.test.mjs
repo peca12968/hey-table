@@ -360,9 +360,9 @@ test("payment attention pages unresolved latest attempts across dates without ch
 
   assert.equal((await read("",{})).status,403);
   for(const filter of ["?state=paid","?state=pending&state=authorized","?method=cash","?environment=live",
-    "?after=","?after=5:0","?after=1:9007199254740992","?after=9:3&after=10:3"])
+    "?after=","?after=5:0","?after=1:9007199254740992","?after=9:3&after=10:3","?summary=0","?summary=1&summary=1"])
     assert.equal((await read(filter)).status,400);
-  const first=await read();
+  const first=await read("?summary=1");
   assert.equal(first.headers.get("Cache-Control"),"no-store");
   const page=await first.json();
   assert.equal(page.format,"hey-table.payment-attention.v1");
@@ -376,19 +376,55 @@ test("payment attention pages unresolved latest attempts across dates without ch
   assert.equal(page.orders[1].canCheck,false);
   assert.equal(page.orders[2].canCheck,false);
   assert.equal(db.sqlite.prepare("SELECT status FROM orders WHERE id=1").get().status,"pending");
+  assert.deepEqual(page.summary.totals,{orders:30,amount:"1350",pending:2,authorized:28,overdue:2});
+  assert.deepEqual(page.summary.filters,{state:null,environment:null,method:null});
+  assert.equal(page.summary.capturedAt,page.capturedAt);
+  assert.deepEqual(page.summary.groups.find(group=>group.method==="line_pay"),
+    {method:"line_pay",environment:"sandbox",orders:28,amount:"1260",pending:1,authorized:27,overdue:1});
 
-  const pending=await (await read("?state=pending&method=line_pay&environment=sandbox")).json();
+  const pending=await (await read("?state=pending&method=line_pay&environment=sandbox&summary=1")).json();
   assert.deepEqual(pending.orders.map(row=>row.id),[1]);
+  assert.deepEqual(pending.summary.filters,{state:"pending",environment:"sandbox",method:"line_pay"});
+  assert.deepEqual(pending.summary.totals,{orders:1,amount:"45",pending:1,authorized:0,overdue:1});
   append(29,"paid",now);
-  const second=await (await read("?after="+encodeURIComponent(page.nextAfter))).json();
+  const second=await (await read("?summary=1&after="+encodeURIComponent(page.nextAfter))).json();
   assert.deepEqual(second.orders.map(row=>row.id),[30,31,32,33]);
   assert.equal(second.nextAfter,null);
+  assert.deepEqual(second.summary.totals,{orders:29,amount:"1305",pending:2,authorized:27,overdue:2});
+  assert.equal((await (await read()).json()).summary,undefined);
 
   const plan=db.sqlite.prepare(`EXPLAIN QUERY PLAN SELECT created,order_id FROM payment_attempts
     WHERE state IN ('pending','authorized') AND created<=? AND (created,order_id)>(?,?)
     ORDER BY created,order_id LIMIT 26`).all(now,old,2);
   assert.ok(plan.some(row=>row.detail.includes("payment_attempts_attention_age")));
   assert.ok(plan.every(row=>!row.detail.includes("TEMP B-TREE")));
+});
+
+test("payment attention handoff totals remain exact even beyond the SQLite signed integer sum",async t=>{
+  const db=database();
+  t.after(()=>db.sqlite.close());
+  const amount=Number.MAX_SAFE_INTEGER,qty=1025,at=Date.parse("2026-11-26T11:00:00+08:00");
+  t.mock.method(Date,"now",()=>at+60_000);
+  const order=db.sqlite.prepare(`INSERT INTO orders(id,token,mode,note,items,total,created,payment_method,payment_env)
+    VALUES (?,?,'pickup','customer note','[]',?,?,'line_pay','demo')`);
+  const attempt=db.sqlite.prepare(`INSERT INTO payment_attempts(order_id,reference,merchant,state,created)
+    VALUES (?,?,'merchant secret','pending',?)`);
+  db.sqlite.exec("BEGIN");
+  for(let id=1;id<=qty;id++){
+    order.run(id,"customer-token-"+id,amount,at);
+    attempt.run(id,"bank-reference-"+id,at);
+  }
+  db.sqlite.exec("COMMIT");
+  const response=await api(new Request("https://order.example/api/kitchen/payment-attention?summary=1",{
+    headers:{Authorization:"Bearer staff"},
+  }),{DB:db,STAFF_KEY:"staff"});
+  const {summary}=await response.json();
+  const expected=BigInt(amount)*BigInt(qty);
+  assert.ok(expected>2n**63n-1n);
+  assert.equal(summary.totals.amount,String(expected));
+  assert.equal(summary.totals.orders,qty);
+  assert.equal(summary.groups[0].amount,String(expected));
+  assert.doesNotMatch(JSON.stringify(summary),/customer|merchant|bank-reference|orderId/);
 });
 
 test("staff payment notes follow one attempt, are retry-safe after settlement, and keep older notes readable",async t=>{
