@@ -12,7 +12,7 @@ import {paymentPrime,openPaymentUrl} from "../lib/tappay-client.mjs";
 import {comparePaymentHandoffSummaries,readPaymentHandoffSummary} from "../lib/payment-handoff-compare.mjs";
 import {planSupplyReview,supplyReviewRows} from "../lib/supply-review.mjs";
 import {matchesPrepOrderSource,prepOrderSource,readPrepReadinessReport} from "../lib/prep-readiness-report.mjs";
-import {forecastPrepReadiness} from "../lib/prep-readiness.mjs";
+import {forecastPrepReadiness,prepReadinessPlanner} from "../lib/prep-readiness.mjs";
 import {dishes} from "../lib/menu.mjs";
 import {sqliteD1} from "../scripts/sqlite-d1.mjs";
 import {applyDemoMigrations} from "../scripts/apply-demo-migrations.mjs";
@@ -631,6 +631,39 @@ test("browser prep readiness matches Python for FIFO, recipe revisions, shortage
   const cyclic=structuredClone(book);
   cyclic.components.dashi.inputs.sauce=1;
   assert.throws(()=>forecastPrepReadiness(orders,cyclic,{}),/循環相依/);
+});
+
+test("forecast delivery trials rerun FIFO from the same physical stock and expose displaced orders",()=>{
+  const components={chicken:{name:"雞肉",unit:"g",pack:500},rice:{name:"白飯",unit:"g",pack:200}};
+  const book={components,dishes:{
+    combo:[{from_ms:0,uses:{chicken:200,rice:200}}],
+    rice:[{from_ms:0,uses:{rice:200}}],
+    chicken:[{from_ms:0,uses:{chicken:100}}],
+  }};
+  const orders=["combo","rice","chicken"].map((id,index)=>({
+    id:index+1,created:1000,status:index===2?"preparing":"pending",items:[{id,qty:1}],
+  })).reverse();
+  const stock={rice:200};
+  const planner=prepReadinessPlanner(book,stock);
+  const baseline=planner.forecast(orders,true);
+  assert.deepEqual(baseline.orders.map(row=>row.status),["shortage","ready","shortage"]);
+  const delivery={component:"chicken",quantity:300};
+  const after=planner.forecast(orders,true,[delivery]);
+  assert.deepEqual(after.orders.map(row=>[row.order_id,row.status]),[[1,"ready"],[2,"shortage"],[3,"ready"]]);
+  assert.deepEqual(after.orders[1].missing,[{component:"rice",name:"白飯",unit:"g",quantity:200}]);
+  assert.deepEqual(after.remaining_stock,{chicken:0,rice:0});
+  const second=planner.forecast(orders,true,[delivery,{component:"rice",quantity:200}]);
+  assert.deepEqual(second.orders.map(row=>row.status),["ready","ready","ready"]);
+  assert.deepEqual(planner.forecast(orders,false,[delivery]).orders.map(row=>row.order_id),[1,2]);
+  assert.throws(()=>planner.forecast(orders,true,[delivery,delivery]),/請合併 雞肉/);
+  assert.throws(()=>planner.forecast(orders,true,[{component:"unknown",quantity:1}]),/請選擇食譜/);
+  for(const quantity of [0,-1,1.5,NaN,Number.MAX_SAFE_INTEGER+1]){
+    assert.throws(()=>planner.forecast(orders,true,[{component:"chicken",quantity}]),/正整數/);
+  }
+  assert.throws(()=>planner.forecast(orders,true,[{component:"rice",quantity:Number.MAX_SAFE_INTEGER}]),
+    /現有庫存加到貨量/);
+  assert.deepEqual(planner.forecast(orders,true),baseline);
+  assert.deepEqual(stock,{rice:200});
 });
 
 test("prep report compares date, station and source quantities independently of capture time or item order",()=>{

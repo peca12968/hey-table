@@ -1,9 +1,10 @@
 "use client";
 import {useMemo,useRef,useState} from "react";
-import {numberOf} from "../../../lib/menu.mjs";
 import {downloadJson} from "../../../lib/download-json.mjs";
-import {forecastPrepReadiness} from "../../../lib/prep-readiness.mjs";
+import {prepReadinessPlanner} from "../../../lib/prep-readiness.mjs";
 import {matchesPrepOrderSource,prepOrderSource,prepOrdersFormat,prepReportFormat,readPrepReadinessReport} from "../../../lib/prep-readiness-report.mjs";
+import ReadinessArrivals from "./readiness-arrivals.jsx";
+import ReadinessOrders from "./readiness-orders.jsx";
 
 const jsonLimit=4*1024*1024;
 
@@ -50,9 +51,10 @@ export default function ReadinessReview({snapshot,orders,station,scope,clock}){
     try{
       const [recipes,stock]=await Promise.all([readJson(recipeFile,"食譜"),readJson(stockFile,"庫存")]);
       if(version!==operation.current)return;
-      const result=forecastPrepReadiness(source.orders,recipes,stock,includePreparing);
+      const planner=prepReadinessPlanner(recipes,stock);
+      const result=planner.forecast(source.orders,includePreparing);
       const exchange={format:prepReportFormat,source,orders:result.orders};
-      setFileState({report:readPrepReadinessReport(exchange),exchange});
+      setFileState({report:readPrepReadinessReport(exchange),exchange,planner});
     }catch(error){
       if(version===operation.current)setFileState({error:error.message});
     }
@@ -104,11 +106,9 @@ export default function ReadinessReview({snapshot,orders,station,scope,clock}){
         downloadJson("hey-table-prep-readiness-report-",report.source.capturedAt,fileState.exchange)}>
         下載備料試算報告
       </button>}
-      {report.orders.length>0&&<ul>{report.orders.map(order=><li key={order.order_id}>
-        <h3>餐單 #{numberOf(order.order_id)} · {order.status==="ready"?"可先做":"缺料暫緩"}</h3>
-        {order.missing.length>0&&<p>缺 {order.missing.map(line=>line.name+" "+line.quantity+" "+line.unit).join("、")}</p>}
-        {order.prep.length>0&&<p>備料順序 {order.prep.map(line=>line.name+" "+line.batches+" 批").join(" → ")}</p>}
-      </li>)}</ul>}
+      <ReadinessOrders orders={report.orders}/>
     </section>}
+    {matches&&fileState.planner&&report.orders.length>0&&
+      <ReadinessArrivals planner={fileState.planner} report={report} includePreparing={includePreparing}/>}
   </section>;
 }
