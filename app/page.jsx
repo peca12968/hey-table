@@ -3,12 +3,15 @@ import {useCallback,useEffect,useRef,useState} from "react";
 import {Plus,Minus,ShoppingBag,X,Utensils,Check} from "lucide-react";
 import {dishes,itemNoteLimit,tables,withItemNotes} from "../lib/menu.mjs";
 import {Header,Footer,Mode,request} from "./shared";
-import {cartKey,claimCart,dispatchCart,openReceipt,persistCart,read,readCart,settleCart} from "../lib/order-storage.mjs";
+import {cartKey,claimCart,dispatchCart,openReceipt,persistCart,read,readCart,sameCheckout,settleCart} from "../lib/order-storage.mjs";
 import {comboVersion,priceCombos} from "../lib/combo-pricing.mjs";
 import {intakeNotice} from "../lib/order-intake.mjs";
 import CartAddOn from "./cart-add-on";
 import CartQuote from "./cart-quote";
 import Reorder from "./reorder";
+import {ReviewSharedCart,ShareCart} from "./cart-share";
+import {readCartShare} from "../lib/cart-share.mjs";
+import {reorderPlan} from "../lib/reorder.mjs";
 import {ItemNotesEditor} from "./item-notes";
 import PickupSlots,{PickupDate,usePickupSlotAvailability} from "./pickup-slots";
 import PickupSuggestion from "./pickup-suggestion";
@@ -43,7 +46,9 @@ export default function Menu(){
   const [note,setNote]=useState(""),[sold,setSold]=useState([]),[availability,setAvailability]=useState(null);
   const [remaining,setRemaining]=useState({});
   const [supplyReview,setSupplyReview]=useState(null);
-  const [draft,setDraft]=useState(null),[busy,setBusy]=useState(false),[error,setError]=useState(""),[panel,setPanel]=useState(false);
+  const [draft,setDraft]=useState(null),[checkoutBusy,setBusy]=useState(false),[error,setError]=useState(""),[panel,setPanel]=useState(false);
+  const [sharingBusy,setSharingBusy]=useState(false),shareApplying=useRef(false);
+  const busy=checkoutBusy||sharingBusy;
   const [announcement,setAnnouncement]=useState(""); const sending=useRef(false);
   const [method,setMethod]=useState("cash"),[paymentOptions,setPayments]=useState(null);
   const payments=paymentOptions??cashOnly;
@@ -57,6 +62,7 @@ export default function Menu(){
   const [sharedCheckout,setSharedCheckout]=useState(false);
   const checkoutSeen=useRef(null);
   const [repeat,setRepeat]=useState("");
+  const [share,setShare]=useState(null),[shareNotice,setShareNotice]=useState("");
   const [pickupSlot,setPickupSlot]=useState(null),[slotRevision,setSlotRevision]=useState(0);
   const [pickupDate,setPickupDate]=useState("");
   const [pickupPaused,setPickupPaused]=useState(false);
@@ -109,10 +115,21 @@ export default function Menu(){
   useEffect(()=>{
     const param=new URLSearchParams(location.search).get("table"),key=cartKey(param),old=readCart(key);
     setTable(param);setScope(key);loadCart(old,param);
-    const token=new URLSearchParams(location.hash.slice(1)).get("reorder")??"";
-    setRepeat(token);
-    if((old.draft||token)&&window.matchMedia("(max-width: 680px)").matches) setPanel(true);
+    if(old.draft&&window.matchMedia("(max-width: 680px)").matches)setPanel(true);
   },[loadCart]);
+  useEffect(()=>{
+    function readLinkedList(){
+      const values=new URLSearchParams(location.hash.slice(1)),links=values.getAll("cart");
+      const token=links.length?"":values.get("reorder")??"";
+      setRepeat(token);
+      setShare(links.length?{lines:links.length===1?readCartShare(links[0]):null}:null);
+      setShareNotice("");
+      if((links.length||token)&&window.matchMedia("(max-width: 680px)").matches)setPanel(true);
+    }
+    readLinkedList();
+    window.addEventListener("hashchange",readLinkedList);
+    return ()=>window.removeEventListener("hashchange",readLinkedList);
+  },[]);
   useEffect(()=>{
     refreshMenu();
     const online=()=>refreshMenu(true);
@@ -221,6 +238,46 @@ export default function Menu(){
     setAnnouncement("先前餐點已加入餐單，請確認後送出。");
     return true;
   }
+  const supplyLabel=bookingDay?"取餐日":"今日";
+  const sharedPlan=loaded&&share?.lines?reorderPlan(
+    share.lines.map(item=>({...item,name:"原清單品項"})),dishes,sold,cart,remaining,supplyLabel,
+  ):null;
+  function dismissShare(){
+    setShare(null);setShareNotice("");
+    const values=new URLSearchParams(location.hash.slice(1));
+    values.delete("cart");
+    history.replaceState(history.state,"",location.pathname+location.search+(values.size?"#"+values:""));
+  }
+  async function addSharedCart(){
+    if(!scope||invalid||draft||busy||sending.current||shareApplying.current||!sharedPlan?.some(item=>item.added>0))return;
+    const hash=location.hash,seen=checkoutSeen.current;
+    const draftSnapshot={cart,lineNotes,note,draft:null,method,paymentEnv,useCombo,pickupSlot,pickupDate};
+    shareApplying.current=true;setSharingBusy(true);setShareNotice("");
+    try{
+      await dispatchCart(scope,()=>{
+        if(location.hash!==hash)return;
+        const stored=readCart(scope);
+        const reviewChanged=!sameCheckout(stored.checkout,seen)||(stored.cart&&(
+          (stored.pickupDate??"")!==pickupDate||dishes.some(({id})=>(stored.cart[id]||0)!==(cart[id]||0))));
+        if(stored.draft||reviewChanged){
+          loadCart(stored,table);
+          if(stored.draft)setSharedCheckout(true);
+          setShareNotice(stored.draft?"另一個分頁正在確認送單，已保留原餐單。":"另一個分頁已更新餐單，請核對加入後的份數。");
+          return;
+        }
+        const nextCart={...cart};
+        for(const {id,added} of sharedPlan)if(added)nextCart[id]=(nextCart[id]||0)+added;
+        const next={...draftSnapshot,...stored,cart:nextCart};
+        persistCart(scope,next,seen);
+        loadCart(next,table);dismissShare();setSupplyReview(null);setError("");
+        setAnnouncement("已加入分享的餐點，請核對後送單。");
+      });
+    }catch{
+      setShareNotice("暫時無法確認餐單狀態，請再試一次。");
+    }finally{
+      shareApplying.current=false;setSharingBusy(false);
+    }
+  }
   function selectPickupDate(day,start=null){
     setPickupDate(day);setPickupSlot(start);setError("");setSupplyReview(null);
     if((day||today)!==supplyDay){
@@ -242,7 +299,7 @@ export default function Menu(){
     setAnnouncement("已依供應調整餐單，請確認新的份數和金額。");
   }
   async function submit(){
-    if(sending.current||invalid||!scope||!count||
+    if(sending.current||shareApplying.current||invalid||!scope||!count||
       (!draft&&(paused||blocked||pickupBlocked||!loaded||paymentUnavailable||confirmPaymentEnv)))return;
     sending.current=true;setBusy(true);setError("");setLookup(null);setSendTimedOut(false);setSharedCheckout(false);
     const payload=draft??{token:crypto.randomUUID(),...(online?{paymentMethod:method,paymentEnv}:{}),mode,table,note,
@@ -302,7 +359,6 @@ export default function Menu(){
   const hero=dishes[0],unavailableForAddOn=dishes.filter(d=>cannotAdd(d.id)).map(d=>d.id);
   const quoteBody=JSON.stringify({items});
   const addOnBody=bookingDay?JSON.stringify({items,pickupDate:bookingDay}):quoteBody;
-  const supplyLabel=bookingDay?"取餐日":"今日";
   const lookupStatus=draft&&lookup?.token===draft.token?lookup.status:"checking";
   function addButton(d){return <button className="add" aria-label={"加入"+d.name} disabled={!loaded||busy||!!draft||cannotAdd(d.id)||invalid} onClick={()=>change(d.id,1)}><Plus size={18}/></button>;}
   return <><Header home/><main className="shell">
@@ -320,7 +376,10 @@ export default function Menu(){
     <div className="cartMode"><Mode table={table}/><span>{methods[method]}</span></div>
     {repeat&&scope&&!invalid&&<Reorder token={repeat} table={table} sold={sold} remaining={remaining} loaded={loaded} cart={cart}
       blocked={!!draft||busy} onAdd={addRepeat} onClose={dismissRepeat}/>}
+    {share&&scope&&!invalid&&<ReviewSharedCart share={share} plan={sharedPlan} cart={cart} busy={busy}
+      pending={!!draft} notice={shareNotice} onAdd={addSharedCart} onClose={dismissShare}/>}
     {!count?<div className="empty"><Utensils size={30}/><strong>餐單還是空的</strong><p>從菜單加入想吃的餐點</p></div>:<ul className="orderLines">{lines.map(d=><li key={d.id}><div><b>{d.name}{sold.includes(d.id)||remaining[d.id]===0?"（售完）":""}</b><small>NT$ {d.price*cart[d.id]}</small></div><div className="stepper"><button disabled={!!draft||busy} aria-label={"減少"+d.name} onClick={()=>change(d.id,-1)}><Minus size={14}/></button><span>{cart[d.id]}</span><button disabled={!!draft||busy||cannotAdd(d.id)} aria-label={"增加"+d.name} onClick={()=>change(d.id,1)}><Plus size={14}/></button></div></li>)}</ul>}
+    {count>0&&!draft&&!invalid&&<ShareCart items={items} disabled={busy}/>}
     {loaded&&!invalid&&!blocked&&!draft&&!busy&&lines.some(d=>d.group==="丼飯")&&
       <CartAddOn key={addOnBody+JSON.stringify(unavailableForAddOn)} body={addOnBody} sold={unavailableForAddOn} onAdd={id=>change(id,1)}/>}
     {count>0&&<ItemNotesEditor dishes={lines} notes={lineNotes} disabled={!!draft||busy} onChange={(id,value)=>
@@ -385,7 +444,7 @@ export default function Menu(){
     {scope&&!loaded&&(menuFailed?<div className="supplyReview"><p role="status">暫時無法確認餐點供應，餐單已保留。</p>
       <button className="outline" onClick={()=>refreshMenu(true)}>重新檢查供應</button></div>:
       <p role="status">正在確認餐點供應狀態…</p>)}
-    <button className="primary full" disabled={busy||!count||invalid||(!draft&&(paused||blocked||pickupBlocked||!loaded||paymentUnavailable||confirmPaymentEnv))} onClick={submit}><Check size={17}/>{busy?"送單中…":draft?"重試同一張訂單":paused?"暫停接單":"確認送出訂單"}</button></aside></div>
+    <button className="primary full" disabled={busy||!count||invalid||(!draft&&(paused||blocked||pickupBlocked||!loaded||paymentUnavailable||confirmPaymentEnv))} onClick={submit}><Check size={17}/>{sharingBusy?"正在加入清單…":checkoutBusy?"送單中…":draft?"重試同一張訂單":paused?"暫停接單":"確認送出訂單"}</button></aside></div>
     <span className="sr" aria-live="polite">{announcement}</span></main><Footer/>
     <button className="mobileCart" onClick={()=>setPanel(true)}><ShoppingBag size={18}/> 我的餐單 · {count} 件 <b>NT$ {total}</b></button></>;
 }

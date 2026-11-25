@@ -56,6 +56,12 @@
 .supplyReview ul{list-style:none;padding:0;margin:0 0 8px}
 .supplyReview li{display:flex;flex-wrap:wrap;gap:4px 10px;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--line)}
 .supplyReview button{min-height:40px}
+.cartShare{margin:12px 0}
+.cartShare input{margin-bottom:8px}
+.cartShare [role=status]{margin-top:8px}
+.sharedCartReview h3{margin:0 0 8px}
+.sharedCartReview li small{flex-basis:100%;color:var(--muted)}
+.sharedCartReview>.outline{margin:8px 0 0}
 .pickupCode{border:1px solid var(--line);border-radius:8px;padding:10px 12px;margin:12px 0;background:var(--pale)}
 .pickupCode summary{cursor:pointer;color:var(--green);font-weight:700}
 .pickupCode img{display:block;width:184px;max-width:100%;height:auto;margin:10px auto;image-rendering:pixelated}

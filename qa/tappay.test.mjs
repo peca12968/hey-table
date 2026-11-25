@@ -13,6 +13,7 @@ import {sqliteD1} from "../scripts/sqlite-d1.mjs";
 import {applyDemoMigrations} from "../scripts/apply-demo-migrations.mjs";
 import {bookablePickupSlots} from "../lib/pickup-slots.mjs";
 import {stationReview,stationReviewDigest} from "../lib/kitchen-timing.mjs";
+import {cartShareLink,readCartShare} from "../lib/cart-share.mjs";
 
 const env={TAPPAY_MODE:"sandbox",TAPPAY_APP_ID:"123",TAPPAY_APP_KEY:"test-public",TAPPAY_PARTNER_KEY:"test-only",
   TAPPAY_SITE_ORIGIN:"https://order.example",TAPPAY_NOTIFY_URL:"https://notify.example/api/payments/notify"};
@@ -21,6 +22,18 @@ const attempt={reference:ref,created:Date.now(),merchant:"fixture",trade_id:"kno
 const data={bank_transaction_id:ref,rec_trade_id:"known",merchant_id:"fixture",payment_method:"px_pay_plus",original_amount:190};
 const order={total:190,payment_method:"px_pay_plus"};
 const reply=record=>async()=>Response.json({status:0,trade_records:[record]});
+test("shared carts encode only item IDs and quantities and reject malformed or oversized links",()=>{
+  const sample=[{id:"sencha",qty:2,note:"private item note",price:45},{id:"retired-dessert",qty:20,table:"A03"}];
+  const url=new URL(cartShareLink("https://order.example",sample));
+  assert.equal(url.pathname,"/");
+  assert.equal(url.search,"");
+  const value=new URLSearchParams(url.hash.slice(1)).get("cart");
+  assert.deepEqual(readCartShare(value),[{id:"sencha",qty:2},{id:"retired-dessert",qty:20}]);
+  assert.equal(cartShareLink("https://order.example",[sample[0],sample[0]]),"");
+  for(const invalid of ["1.","2.sencha:2","1.sencha:0","1.sencha:21","1.sencha:1e1","1.sencha:01",
+    "1.sencha:1:2","1.sencha:1,sencha:1","1.<b>:1","1.__proto__:1","1."+("x".repeat(1300))+":1",
+    "1."+Array.from({length:25},(_,i)=>"dish-"+i+":1").join(",")])assert.equal(readCartShare(invalid),null);
+});
 test("enable only configured methods and expose only SDK keys",()=>{
   assert.deepEqual(settings({...env,TAPPAY_MERCHANT_PX_PAY_PLUS:"test"}),{mode:"sandbox",methods:["cash","px_pay_plus"],appId:123,appKey:"test-public"});
   assert.deepEqual(settings({...env,TAPPAY_MODE:"invalid"}).methods,["cash"]);
