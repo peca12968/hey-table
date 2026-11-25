@@ -1,9 +1,9 @@
 "use client";
-import {useEffect,useState} from "react";
+import {useEffect,useMemo,useState,useSyncExternalStore} from "react";
 import {RefreshCw} from "lucide-react";
 import {Header,Footer,Mode,PickupAppointment,request} from "../shared";
-import {pickupChangeWindows,pickupPrepLead,pickupTime} from "../../lib/pickup-slots.mjs";
-import {businessDate} from "../../lib/business-day.mjs";
+import {pickupChangeWindows,pickupPrepLead,pickupRosterPath,pickupSlotsForDay,pickupTime} from "../../lib/pickup-slots.mjs";
+import {businessDate,businessDayRange} from "../../lib/business-day.mjs";
 import {ItemNote} from "../item-notes";
 import ReschedulePickup from "../reschedule-pickup";
 import {useBusinessToday} from "../use-business-today.mjs";
@@ -17,6 +17,30 @@ import CashCollection from "./cash-collection";
 import {methods,paymentStates,environmentLabel,canPrepare,canCancel} from "../../lib/payments.mjs";
 const action={preparing:"接單製作",ready:"完成製作",completed:"完成交餐",cancelled:"取消訂單"};
 const overdueStage={pending:"待接單",preparing:"製作中",ready:"待交餐"};
+const browserSearch=()=>window.location.search;
+const serverSearch=()=>null;
+const browserStaffKey=()=>sessionStorage.getItem("he-ri-staff")||"";
+const anonymousKey=()=>"";
+const ignoreStorageChanges=()=>()=>{};
+
+function subscribeToLocation(notify){
+  window.addEventListener("popstate",notify);
+  return ()=>window.removeEventListener("popstate",notify);
+}
+
+function kitchenFocus(search){
+  if(search===null)return undefined;
+  const query=new URLSearchParams(search);
+  const kind=query.has("pickup")?"pickup":"booking";
+  const number=query.get(kind);
+  if(number===null)return null;
+  const id=Number(number);
+  const valid=/^[0-9]+$/.test(number)&&Number.isSafeInteger(id)&&id>0;
+  const day=query.get("date"),slot=query.get("slot");
+  const start=pickupSlotsForDay(day).find(value=>String(value)===slot)??null;
+  const roster=kind==="booking"&&businessDayRange(day)?pickupRosterPath(day,start):"/kitchen/pickup-roster";
+  return {kind,number:valid?numberOf(id):"",roster,signInTarget:"/kitchen"+search};
+}
 
 function TableMove({id,table,revision,busy,update}){
   const [destination,setDestination]=useState("");
@@ -106,23 +130,20 @@ function KitchenTicket({order,busy,update,movePickup,recordCash,refresh,today,sh
 }
 
 export default function Kitchen(){
-  const [key,setKey]=useState(""),[entry,setEntry]=useState(""),[denied,setDenied]=useState(false),[rows,setRows]=useState(null);
+  const [entry,setEntry]=useState(""),[denied,setDenied]=useState(false),[rows,setRows]=useState(null);
   const [sold,setSold]=useState([]),[filter,setFilter]=useState("active"),[error,setError]=useState(""),[revision,setRevision]=useState(0),[busy,setBusy]=useState(false);
   const [exporting,setExporting]=useState(false),[exportMessage,setExportMessage]=useState("");
   const [scope,setScope]=useState("all"),[search,setSearch]=useState("");
   const [queueAvailable,setQueueAvailable]=useState(false);
-  const [pickup,setPickup]=useState(undefined),[actionMessage,setActionMessage]=useState("");
+  const [actionMessage,setActionMessage]=useState("");
   const today=useBusinessToday();
-  const focused=typeof pickup==="string";
-  const signInTarget=pickup?"/kitchen?pickup="+pickup:"/kitchen";
+  const key=useSyncExternalStore(ignoreStorageChanges,browserStaffKey,anonymousKey);
+  const locationSearch=useSyncExternalStore(subscribeToLocation,browserSearch,serverSearch);
+  const focus=useMemo(()=>kitchenFocus(locationSearch),[locationSearch]);
+  const focused=Boolean(focus),handoffOnly=focus?.kind==="pickup";
+  const title=focused?(handoffOnly?"自取交餐":"自取預約餐單"):"店家接單台";
   useEffect(()=>{
-    setKey(sessionStorage.getItem("he-ri-staff")||"");
-    const number=new URLSearchParams(location.search).get("pickup");
-    const id=Number(number);
-    setPickup(number===null ? null : /^[0-9]+$/.test(number)&&Number.isSafeInteger(id)&&id>0 ? numberOf(id) : "");
-  },[]);
-  useEffect(()=>{
-    if(pickup===undefined||pickup==="")return;
+    if(focus===undefined||focus?.number==="")return;
     const controller=new AbortController();
     const headers=key?{Authorization:"Bearer "+key}:{};
     let inFlight=false;
@@ -132,8 +153,9 @@ export default function Kitchen(){
       try{
         const signal=AbortSignal.any([controller.signal,AbortSignal.timeout(10_000)]);
         const options={headers,signal};
-        if(focused){
-          const order=await request("/api/kitchen/pickup?id="+pickup,options);
+        if(focus){
+          const endpoint=focus.kind==="pickup"?"pickup":"pickup-booking";
+          const order=await request("/api/kitchen/"+endpoint+"?id="+focus.number,options);
           if(!controller.signal.aborted)setRows([order]);
         }else{
           const [orders,menu]=await Promise.all([request("/api/kitchen",options),request("/api/menu",{signal})]);
@@ -144,18 +166,21 @@ export default function Kitchen(){
         if(!controller.signal.aborted){
           setQueueAvailable(false);
           setDenied(e.status===403);
-          if(e.status===403||focused)setRows(null);
+          if(e.status===403||focus)setRows(null);
           setError(e.name==="TimeoutError"?"讀取餐單逾時，請稍後重試。":e.message);
         }
       }finally{inFlight=false;}
     }
     load();const t=setInterval(load,5000);return()=>{controller.abort();clearInterval(t);};
-  },[key,revision,pickup,focused]);
+  },[key,revision,focus]);
   async function update(endpoint,body){
     setBusy(true);setError("");setActionMessage("");
     try{
       const result=await request("/api/kitchen/"+endpoint,{method:"PATCH",headers:{"Content-Type":"application/json",...(key?{Authorization:"Bearer "+key}:{})},body:JSON.stringify(body)});
-      if(focused){setRows(null);setActionMessage("已完成交餐。");}
+      if(focused&&endpoint==="status"){
+        setRows(null);
+        setActionMessage(handoffOnly?"已完成交餐。":"餐單已更新為「"+labels[body.to]+"」。");
+      }
       if(endpoint==="table")setActionMessage("餐單 "+numberOf(body.id)+" 已換到 "+body.to+" 桌。");
       if(endpoint==="table-handoff"){
         const ids=new Set(body.orders.map(order=>order.id));
@@ -210,15 +235,16 @@ export default function Kitchen(){
   if(filter==="overdue")filtered.sort((a,b)=>b.overdue.overByMs-a.overdue.overByMs||a.id-b.id);
   if(filter==="booked")filtered.sort((a,b)=>a.pickupSlot-b.pickupSlot||a.id-b.id);
   let content;
-  if(pickup===""){
-    content=<p role="alert">取餐 QR 碼的號碼無效。</p>;
+  if(focus?.number===""){
+    content=<p role="alert">{handoffOnly?"取餐 QR 碼的號碼無效。":"預約餐單的取餐號碼無效。"}</p>;
   }else if(denied){
-    content=<div className="sheet"><h2>店員登入</h2><p>託管網站請使用獲授權的店主帳號。</p><a className="primary" href={"/signin-with-chatgpt?return_to="+encodeURIComponent(signInTarget)} target="_top">使用 ChatGPT 登入</a>
-      <details><summary>使用自架店員金鑰</summary><form onSubmit={e=>{e.preventDefault();sessionStorage.setItem("he-ri-staff",entry);setKey(entry);setEntry("");setRevision(v=>v+1);}}><label>店員金鑰<input type="password" value={entry} onChange={e=>setEntry(e.target.value)} required/></label><button className="outline">登入</button></form></details></div>;
+    content=<div className="sheet"><h2>店員登入</h2><p>託管網站請使用獲授權的店主帳號。</p><a className="primary" href={"/signin-with-chatgpt?return_to="+encodeURIComponent(focus?.signInTarget??"/kitchen")} target="_top">使用 ChatGPT 登入</a>
+      <details><summary>使用自架店員金鑰</summary><form onSubmit={e=>{e.preventDefault();sessionStorage.setItem("he-ri-staff",entry);setEntry("");setRevision(v=>v+1);}}><label>店員金鑰<input type="password" value={entry} onChange={e=>setEntry(e.target.value)} required/></label><button className="outline">登入</button></form></details></div>;
   }else if(rows===null){
     content=!error&&<p>正在讀取{focused?"自取餐單":"接單台"}…</p>;
   }else if(focused){
-    content=<KitchenTicket key={rows[0].id} order={rows[0]} busy={busy} update={update} recordCash={recordCash} refresh={refresh} handoffOnly/>;
+    content=<KitchenTicket key={rows[0].id} order={rows[0]} busy={busy} update={update} movePickup={movePickup} recordCash={recordCash}
+      refresh={refresh} today={today} handoffOnly={handoffOnly} showOverdue={!handoffOnly}/>;
   }else{
     const showTableHandoff=filter==="ready"&&!search.trim();
     const readyAt=table=>filtered.filter(order=>order.table===table&&order.mode==="table");
@@ -260,14 +286,14 @@ export default function Kitchen(){
       movePickup={movePickup} recordCash={recordCash} refresh={refresh} showOverdue={queueAvailable}/>)}</div>
     <section className="sheet stock"><h2>餐點供應</h2>{dishes.map(d=><div key={d.id}><span>{d.name}</span><button className="outline" disabled={busy} onClick={()=>update("availability",{id:d.id,available:sold.includes(d.id)})}>{sold.includes(d.id)?"已售完 · 恢復供應":"供應中 · 標記售完"}</button></div>)}</section>
     <Timing staffKey={key}/>
-    {key&&<button className="outline" onClick={()=>{sessionStorage.removeItem("he-ri-staff");setKey("");}}>登出金鑰</button>}
+    {key&&<button className="outline" onClick={()=>{sessionStorage.removeItem("he-ri-staff");setRevision(v=>v+1);}}>登出金鑰</button>}
     </>;
   }
 
   return <><Header/><main className={focused?"shell section narrow":"shell section"}>
-    {focused&&<a className="textLink" href="/kitchen">返回店家接單台</a>}
-    <div className="menuTitle"><div>{!focused&&<p className="eyebrow">KITCHEN</p>}<h1>{focused?"自取交餐":"店家接單台"}</h1></div>
-      {pickup!==""&&<button className="outline" onClick={()=>setRevision(v=>v+1)}><RefreshCw size={16}/> 更新</button>}</div>
+    {focused&&<a className="textLink" href={handoffOnly?"/kitchen":focus.roster}>{handoffOnly?"返回店家接單台":"返回自取預約清單"}</a>}
+    <div className="menuTitle"><div>{!focused&&<p className="eyebrow">KITCHEN</p>}<h1>{title}</h1></div>
+      {focus?.number!==""&&<button className="outline" onClick={()=>setRevision(v=>v+1)}><RefreshCw size={16}/> 更新</button>}</div>
     {error&&<p className="error" role="alert">{error}</p>}
     {focused&&actionMessage&&<p role="status">{actionMessage}</p>}
     {content}

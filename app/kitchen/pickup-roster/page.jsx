@@ -23,7 +23,7 @@ function subscribeToScope(notify){
   };
 }
 
-function RosterWindow({slot,includeCancelled}){
+function RosterWindow({slot,includeCancelled,date,selectedStart}){
   const visible=includeCancelled?slot.orders:slot.orders.filter(order=>order.status!=="cancelled");
   if(!visible.length)return null;
   const title=pickupWindow(slot.start);
@@ -32,7 +32,8 @@ function RosterWindow({slot,includeCancelled}){
     <table aria-label={title+" 的自取餐單"}>
       <thead><tr><th scope="col">取餐號碼</th><th scope="col">份數</th><th scope="col">付款</th><th scope="col">餐單狀態</th></tr></thead>
       <tbody>{visible.map(order=><tr key={order.id}>
-        <th scope="row"><a className="textLink" href={"/kitchen?pickup="+numberOf(order.id)}>#{numberOf(order.id)}</a>
+        <th scope="row"><a className="textLink" href={"/kitchen?"+new URLSearchParams({booking:numberOf(order.id),date,
+          ...(selectedStart!==null?{slot:String(selectedStart)}:{})})}>#{numberOf(order.id)}</a>
           <small>{order.source==="staff"?"店員代建":"線上自取"}</small></th>
         <td>{order.portions}</td>
         <td>{methods[order.paymentMethod]??"未記錄"}{order.paymentMethod==="cash"?
@@ -105,7 +106,7 @@ export default function PickupRoster(){
       {snapshot.totals.cancelled>0&&<label className="rosterControl rosterCancelled"><input type="checkbox" checked={includeCancelled}
         onChange={event=>setIncludeCancelled(event.target.checked)}/>顯示 {snapshot.totals.cancelled} 張已取消餐單</label>}
       {visibleCount===0&&<p className="sheet">{start===null?"這天":"這個時段"}沒有{includeCancelled?"":"有效的"}自取預約。</p>}
-      {snapshot.windows.map(slot=><RosterWindow key={slot.start} slot={slot} includeCancelled={includeCancelled}/>)}
+      {snapshot.windows.map(slot=><RosterWindow key={slot.start} slot={slot} includeCancelled={includeCancelled} date={snapshot.date} selectedStart={start}/>)}
     </>}
   </main><Footer/></>;
 }

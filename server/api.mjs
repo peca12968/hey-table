@@ -32,6 +32,8 @@ const timingRows = "SELECT revision,config FROM kitchen_timing ORDER BY revision
 const fromTimingRow = row => ({revision:row?.revision??0, kitchen:activeKitchen(row ? JSON.parse(row.config) : null)});
 const orderColumns = `SELECT orders.*, ${latestState} AS payment_state, ${cashReceiptColumn} AS cash_receipt`;
 const selectOrders = orderColumns+" FROM orders";
+const kitchenPayableAt=`, CASE WHEN orders.status='pending' AND orders.payment_method<>'cash'
+  THEN (SELECT kitchen_payable_at FROM payment_attempts WHERE order_id=orders.id ORDER BY id DESC LIMIT 1) END AS kitchen_payable_at`;
 const intakeRows = "SELECT mode,accepting,revision FROM order_intake";
 const tableIntakeRows = "SELECT table_no,accepting,revision FROM table_intake";
 const modePaused = "EXISTS (SELECT 1 FROM order_intake WHERE mode=? AND accepting=0)";
@@ -58,6 +60,17 @@ function receipt(row) {
     ...(row.combo_quote ? {combo:JSON.parse(row.combo_quote)} : {}),
     ...(row.cash_receipt ? {cashReceipt:JSON.parse(row.cash_receipt)} : {}),
     paymentMethod:row.payment_method,paymentEnv:row.payment_env,paymentState:row.payment_state??'unpaid',total:row.total, status:row.status, created:row.created};
+}
+function kitchenOrder(row,capturedAt){
+  const order=receipt(row);
+  const overdue=kitchenOverdue(row,order,capturedAt);
+  const booked=order.status==="pending"&&order.pickupSlot!=null;
+  const changes=booked?pickupChanges(row):[];
+  return {...order,...(row.station_progress?{stationProgress:true}:{}),
+    ...(overdue?{overdue}:{}),
+    ...(booked?{pickupRevision:changes.length,...(changes.length?{latestPickupChange:changes.at(-1)}:{}),
+      ...(canReschedulePickup(row,capturedAt)?{pickupUpcoming:true}:{})}:{}),
+    ...(row.table_moves?{tableRevision:JSON.parse(row.table_moves).length}:{})};
 }
 function statusHistory(row) {
   const history = [{status:"pending",at:row.created}];
@@ -653,6 +666,15 @@ export async function api(request, env) {
     const row = await db.prepare(`${selectOrders} WHERE id=? AND mode='pickup'`).bind(id).first();
     return row ? json(receipt(row)) : fail("找不到這張自取餐單",404);
   }
+  if (path === "/api/kitchen/pickup-booking" && method === "GET") {
+    const id=collectionId(url);
+    if(id===null)return fail("請輸入有效的取餐號碼");
+    const capturedAt=Date.now();
+    const [,lookup]=await db.batch([expirePaymentHolds(db,capturedAt),db.prepare(`${orderColumns}${kitchenPayableAt}
+      FROM orders WHERE id=? AND mode='pickup' AND pickup_slot IS NOT NULL`).bind(id)]);
+    const row=lookup.results[0];
+    return row?json(kitchenOrder(row,capturedAt)):fail("找不到這張預約自取餐單。",404);
+  }
   if (path === "/api/kitchen/pickup-display" && method === "GET") {
     const {results}=await db.prepare(`SELECT id,status FROM orders
       WHERE mode='pickup' AND status IN ('preparing','ready') AND ${payableForKitchen}
@@ -696,31 +718,20 @@ export async function api(request, env) {
   }
   if ((path === "/api/kitchen" || path === "/api/kitchen/stations") && method === "GET") {
     const forBoard=path==="/api/kitchen";
-    const payableAt=forBoard?`, CASE WHEN orders.status='pending' AND orders.payment_method<>'cash'
-      THEN (SELECT kitchen_payable_at FROM payment_attempts WHERE order_id=orders.id ORDER BY id DESC LIMIT 1) END AS kitchen_payable_at`:"";
+    const payableAt=forBoard?kitchenPayableAt:"";
     const capturedAt=Date.now();
     const [,queue] = await db.batch([expirePaymentHolds(db,capturedAt),db.prepare(`${orderColumns}${payableAt} FROM orders WHERE status NOT IN ('completed','cancelled')
         OR id IN (SELECT id FROM orders WHERE status IN ('completed','cancelled') ORDER BY id DESC LIMIT 20)
         ORDER BY id DESC`)]);
     const {results}=queue;
-    const orders = results.map(receipt);
     if (path === "/api/kitchen/stations") {
+      const orders=results.map(receipt);
       return json({format:"hey-table.station-orders.v1",capturedAt:Date.now(),throughId:orders[0]?.id ?? 0,
         orders:orders.map(({id,created,mode,table,note,status,items}) => ({
           id,created,mode,table,note,status,items:items.map(({id,name,qty,note:itemNote}) => ({id,name,qty,...(itemNote?{note:itemNote}:{})}))
         }))});
     }
-    return json(orders.map((order,index)=>{
-      const row=results[index];
-      const overdue=kitchenOverdue(row,order,capturedAt);
-      const booked=order.status==="pending"&&order.pickupSlot!=null;
-      const changes=booked?pickupChanges(row):[];
-      return {...order,...(row.station_progress?{stationProgress:true}:{}),
-        ...(overdue?{overdue}:{}),
-        ...(booked?{pickupRevision:changes.length,...(changes.length?{latestPickupChange:changes.at(-1)}:{}),
-          ...(canReschedulePickup(row,capturedAt)?{pickupUpcoming:true}:{})}:{}),
-        ...(row.table_moves?{tableRevision:JSON.parse(row.table_moves).length}:{})};
-    }));
+    return json(results.map(row=>kitchenOrder(row,capturedAt)));
   }
   if (path === "/api/kitchen/table" && method === "PATCH") {
     const {id,from,to,revision}=input;
