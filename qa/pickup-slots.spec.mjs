@@ -136,6 +136,74 @@ test("customer and staff pickup recheck the selected slot before sending while p
   }
 });
 
+test("receipt and kitchen recheck a selected reschedule against shared capacity",async({page,request})=>{
+  const staff={Authorization:"Bearer local-test-kitchen"};
+  const date=businessDate(Date.now()+86_400_000);
+  const first=Date.parse(date+"T18:00:00+08:00"),next=Date.parse(date+"T19:00:00+08:00");
+  const capacity="/api/kitchen/pickup-slots",slots="/api/pickup-slots";
+  const setting=async()=>(await (await request.get(capacity+"?date="+date,{headers:staff})).json()).slots.find(slot=>slot.start===next);
+  const set=(limit,revision)=>request.patch(capacity,{headers:staff,data:{date,start:next,capacity:limit,revision}});
+  const booking=(pickupSlot,qty)=>({token:randomUUID(),mode:"pickup",table:null,note:"",items:[{id:"sencha",qty}],pickupSlot});
+  const original=booking(first,2),competing=booking(next,1);
+  const cancel=order=>request.post("/api/ticket/cancel",{headers:{"X-Ticket":order.token},data:{}});
+  const receipt=async()=>(await (await request.get("/api/ticket?progress=1",{headers:{"X-Ticket":original.token}})).json());
+  const previous=await setting();
+  const operator=await page.context().newPage();
+  let booked=false,held=false;
+  try{
+    expect((await set(previous.used+2,previous.revision)).ok()).toBe(true);
+    expect((await request.post("/api/orders",{data:original})).ok()).toBe(true);
+    booked=true;
+    const {id}=await receipt();
+    await page.setViewportSize({width:360,height:780});
+    await operator.setViewportSize({width:360,height:780});
+    await operator.addInitScript(()=>sessionStorage.setItem("he-ri-staff","local-test-kitchen"));
+    await page.goto("/ticket#"+original.token);
+    await operator.goto("/kitchen");
+    await operator.getByRole("searchbox",{name:"取餐號碼"}).fill(String(id).padStart(4,"0"));
+    const views=[page,operator.locator(".kitchenTicket")];
+    for(const view of views){
+      await view.getByRole("button",{name:"更改取餐時段"}).click();
+      await view.getByLabel("新的取餐時段").selectOption(String(next));
+      await expect(view.getByRole("button",{name:"確認改期"})).toBeEnabled();
+    }
+    expect((await request.post("/api/orders",{data:competing})).ok()).toBe(true);
+    held=true;
+    await page.bringToFront();
+    await page.evaluate(()=>document.dispatchEvent(new Event("visibilitychange")));
+    await operator.evaluate(()=>window.dispatchEvent(new Event("online")));
+    for(const view of views){
+      await expect(view.getByText("新時段目前無法容納這張餐單，原預約仍有效。")).toBeVisible();
+      await expect(view.getByLabel("新的取餐時段")).toHaveValue(String(next));
+      await expect(view.getByRole("button",{name:"確認改期"})).toBeDisabled();
+      await expect(view.locator(".pickupSlotTime")).toContainText("18:00～18:15");
+    }
+    expect((await receipt()).pickupSlot).toBe(first);
+    await page.route(url=>url.pathname===slots,route=>route.fulfill({status:503,json:{error:"暫時中斷"}}),{times:1});
+    await page.getByRole("button",{name:"重新檢查時段"}).click();
+    await expect(page.getByText("暫時無法讀取自取時段。")).toBeVisible();
+    await expect(page.getByRole("button",{name:"確認改期"})).toBeDisabled();
+    expect((await cancel(competing)).ok()).toBe(true);
+    held=false;
+    await page.getByRole("button",{name:"重讀時段"}).click();
+    await operator.evaluate(()=>window.dispatchEvent(new Event("online")));
+    for(const view of views){
+      await expect(view.getByLabel("新的取餐時段")).toHaveValue(String(next));
+      await expect(view.getByRole("button",{name:"確認改期"})).toBeEnabled();
+    }
+    for(const browser of [page,operator])expect(await browser.evaluate(()=>document.documentElement.scrollWidth)).toBe(360);
+    await page.getByRole("button",{name:"確認改期"}).click();
+    await expect(page.locator(".pickupSlotTime")).toContainText("19:00～19:15");
+    expect((await receipt()).pickupSlot).toBe(next);
+  }finally{
+    if(held)await cancel(competing);
+    if(booked)await cancel(original);
+    const current=await setting();
+    if(current.capacity!==previous.capacity)await set(previous.capacity,current.revision);
+    await operator.close();
+  }
+});
+
 test("mobile guests recover a full pickup slot and the kitchen sees when preparation can start",async({page})=>{
   const start=Date.parse("2026-11-25T12:00:00+08:00"),duration=900_000;
   const next=start+duration;
@@ -214,7 +282,7 @@ test("a mobile receipt preserves its booking across a full slot and retries one 
   await page.setViewportSize({width:360,height:780});
   await page.route(url=>url.pathname==="/api/ticket",route=>route.fulfill({json:readBack?moved:base}));
   await page.route("**/api/pickup-slots",route=>route.fulfill({json:{slots:[
-    {start:first,end:offered,remaining:10},{start:offered,end:next,remaining:full?0:2},{start:next,end:next+interval,remaining:12},
+    {start:first,end:offered,remaining:10},{start:offered,end:next,remaining:full?0:2},{start:next,end:next+interval,remaining:attempt?0:12},
   ]}}));
   await page.route("**/api/ticket/reschedule",route=>{
     const data=route.request().postDataJSON();

@@ -20,12 +20,12 @@ export function PickupDate({value,disabled,onChange,label="取餐日期",paused=
   </div>;
 }
 
-export function usePickupSlotAvailability({selected,count,active,revision,day}){
+export function usePickupSlotAvailability({selected,count,active,revision,day,alwaysOpen=false}){
   const [expanded,setExpanded]=useState(false);
   const [view,setView]=useState(null);
   const [reload,setReload]=useState(0);
   const today=useBusinessToday();
-  const opened=expanded||selected!==null||!!day;
+  const opened=alwaysOpen||expanded||selected!==null||!!day;
   const checking=active&&opened&&!!today;
   const key=[today,day,revision,reload].join(":");
   useEffect(()=>{
