@@ -2,10 +2,11 @@ import {latestState} from "./payment-api.mjs";
 import {numberOf} from "../lib/menu.mjs";
 import {methods} from "../lib/payments.mjs";
 
-const legacyTimestamp="json_extract(status_history,'$[#-1].at')";
-const legacyStatus="json_extract(status_history,'$[#-1].from')";
-const timedLegacyRefund=`orders.status='cancelled' AND json_extract(status_history,'$[#-1].actor')='demo_refund'
-  AND ${legacyStatus} IN ('pending','preparing','ready') AND json_type(status_history,'$[#-1].at')='integer'`;
+const legacyHistory="(CASE WHEN json_valid(orders.status_history) THEN orders.status_history ELSE '[]' END)";
+const legacyTimestamp=`json_extract(${legacyHistory},'$[#-1].at')`;
+const legacyStatus=`json_extract(${legacyHistory},'$[#-1].from')`;
+const timedLegacyRefund=`orders.status='cancelled' AND json_extract(${legacyHistory},'$[#-1].actor')='demo_refund'
+  AND ${legacyStatus} IN ('pending','preparing','ready') AND json_type(${legacyHistory},'$[#-1].at')='integer'`;
 const demoPayment="orders.payment_env='demo' AND orders.payment_method<>'cash'";
 
 export const demoRefundReceiptColumn=`CASE WHEN ${demoPayment} AND ${latestState}='refunded' THEN COALESCE(
@@ -36,4 +37,22 @@ export async function demoRefundReport(db,date,[start,end],capturedAt){
     count:refunds.length,amount:refunds.reduce((sum,refund)=>sum+refund.amount,0),
     completed:refunds.filter(refund=>refund.previousStatus==="completed").length,
   }};
+}
+
+export async function demoRefundDetail(db,id,capturedAt){
+  const row=await db.prepare(`SELECT orders.id,orders.mode,orders.created AS createdAt,orders.status,
+    orders.total,orders.items,orders.payment_method AS paymentMethod,${latestState} AS paymentState,
+    COALESCE(r.amount,orders.total) AS amount,
+    COALESCE(r.refunded_at,CASE WHEN ${timedLegacyRefund} THEN ${legacyTimestamp} END) AS refundedAt,
+    COALESCE(r.previous_status,CASE WHEN ${timedLegacyRefund} THEN ${legacyStatus} END) AS previousStatus,
+    CASE WHEN r.order_id IS NOT NULL THEN 'recorded'
+      WHEN ${timedLegacyRefund} THEN 'cancellation_history' ELSE 'legacy_payment' END AS source
+    FROM orders LEFT JOIN demo_refunds r ON r.order_id=orders.id
+    WHERE orders.id=? AND ${demoPayment} AND (r.order_id IS NOT NULL OR ${latestState}='refunded')`)
+    .bind(id).first();
+  if(!row)return null;
+  const {amount,refundedAt,previousStatus,source,items,...order}=row;
+  return {format:"hey-table.demo-refund-detail.v1",timeZone:"Asia/Taipei",capturedAt,
+    order:{...order,items:JSON.parse(items).map(({name,qty})=>({name,qty}))},
+    refund:{amount,refundedAt,previousStatus,source}};
 }

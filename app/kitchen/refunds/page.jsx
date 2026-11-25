@@ -1,21 +1,30 @@
 "use client";
 
-import {useEffect,useState} from "react";
+import {useEffect,useState,useSyncExternalStore} from "react";
 import {Header,Footer,request} from "../../shared";
 import {useBusinessToday} from "../../use-business-today.mjs";
 import {labels,numberOf} from "../../../lib/menu.mjs";
 import {methods} from "../../../lib/payments.mjs";
 import {downloadJson} from "../../../lib/download-json.mjs";
+import {businessDayRange} from "../../../lib/business-day.mjs";
 import "../daily/daily.css";
 
 const taipeiTime=new Intl.DateTimeFormat("zh-TW",{timeZone:"Asia/Taipei",timeStyle:"medium",hourCycle:"h23"});
 const taipeiCapture=new Intl.DateTimeFormat("zh-TW",{timeZone:"Asia/Taipei",dateStyle:"short",timeStyle:"medium"});
 const amount=value=>"NT$ "+value.toLocaleString("zh-TW");
+const browserDate=()=>new URLSearchParams(window.location.search).get("date")??"";
+const serverDate=()=>null;
+function subscribeToDate(notify){
+  window.addEventListener("popstate",notify);
+  return ()=>window.removeEventListener("popstate",notify);
+}
 
 export default function Refunds(){
   const today=useBusinessToday();
+  const linkedDate=useSyncExternalStore(subscribeToDate,browserDate,serverDate);
   const [day,setDay]=useState(null),[revision,setRevision]=useState(0),[view,setView]=useState(null);
-  const date=day??today;
+  const date=day??(linkedDate===null?"":businessDayRange(linkedDate)?linkedDate:today);
+  const signInPath="/kitchen/refunds"+(date?"?"+new URLSearchParams({date}):"");
   useEffect(()=>{
     if(!date)return;
     const controller=new AbortController();
@@ -43,8 +52,13 @@ export default function Refunds(){
       }}/></label>
       <button className="outline" disabled={!date||!current} onClick={()=>setRevision(value=>value+1)}>重新擷取</button>
     </div>
+    <form className="actions dailyDate dailyControl" action="/kitchen/refunds/detail">
+      <label>退款餐號<input name="id" type="text" inputMode="numeric" pattern="[0-9]+" maxLength={16} required/></label>
+      {date&&<input type="hidden" name="date" value={date}/>}
+      <button className="outline">查詢餐號</button>
+    </form>
     {current?.error&&<p className="error" role="alert">{current.error}</p>}
-    {current?.denied&&<a className="outline dailyControl" href="/signin-with-chatgpt?return_to=%2Fkitchen%2Frefunds" target="_top">使用 ChatGPT 登入</a>}
+    {current?.denied&&<a className="outline dailyControl" href={"/signin-with-chatgpt?return_to="+encodeURIComponent(signInPath)} target="_top">使用 ChatGPT 登入</a>}
     {date&&!current&&<p role="status">正在讀取退款紀錄…</p>}
     {report&&<>
       <div className="actions dailyCapture">
@@ -59,7 +73,8 @@ export default function Refunds(){
           <table aria-label="示範退款明細">
             <thead><tr><th scope="col">餐單</th><th scope="col">退款前</th><th scope="col">時間</th><th scope="col">金額</th></tr></thead>
             <tbody>{report.refunds.map(refund=><tr key={refund.orderId}>
-              <th scope="row">#{numberOf(refund.orderId)}<br/><small>{methods[refund.paymentMethod]} · {refund.mode==="table"?"內用":"自取"}</small></th>
+              <th scope="row"><a className="textLink" href={"/kitchen/refunds/detail?"+new URLSearchParams({id:numberOf(refund.orderId),date:report.date})}>
+                #{numberOf(refund.orderId)}</a><br/><small>{methods[refund.paymentMethod]} · {refund.mode==="table"?"內用":"自取"}</small></th>
               <td>{refund.previousStatus==="completed"?"已交餐":labels[refund.previousStatus]}</td>
               <td><time dateTime={new Date(refund.refundedAt).toISOString()}>{taipeiTime.format(refund.refundedAt)}</time></td>
               <td>{amount(refund.amount)}</td>

@@ -637,6 +637,29 @@ test("refund handoff uses Taiwan transaction dates, preserves the first refund t
     assert.equal(contents.includes("退款時間（台灣） 未記錄"),at===null);
     assert.ok(!contents.includes(tokenFor(id))&&!contents.includes("不應匯出的備註")&&!contents.includes("older-"));
   }
+  const detail="/api/kitchen/demo-refund-detail?id=";
+  assert.equal((await call(detail+today,{})).status,403);
+  for(const invalid of ["","1e3","0","1&id=2","9007199254740992"])
+    assert.equal((await call(detail+invalid)).status,400);
+  for(const id of [purchase(),production,10000])assert.equal((await call(detail+id)).status,404);
+  const items=[{name:"日式熱煎茶",qty:2,price:45,note:"不應匯出的單品備註"}];
+  db.sqlite.prepare("UPDATE orders SET items=? WHERE id=?").run(JSON.stringify(items),today);
+  const current=await call(detail+String(today).padStart(4,"0"));
+  assert.equal(current.status,200);
+  assert.equal(current.headers.get("cache-control"),"no-store");
+  const currentRaw=await current.text();
+  assert.ok(!currentRaw.includes(tokenFor(today))&&!currentRaw.includes("不應匯出")&&!currentRaw.includes("newer-"));
+  assert.deepEqual(JSON.parse(currentRaw),{format:"hey-table.demo-refund-detail.v1",timeZone:"Asia/Taipei",capturedAt:now,
+    order:{id:today,mode:"pickup",createdAt:boundary-86_400_000,status:"completed",total:90,paymentMethod:"px_pay_plus",
+      paymentState:"refunded",items:[{name:"日式熱煎茶",qty:2}]},
+    refund:{amount:90,refundedAt:boundary,previousStatus:"completed",source:"recorded"}});
+  const historic=await (await call(detail+cancelledId)).json();
+  assert.deepEqual(historic.refund,{amount:45,refundedAt:boundary,previousStatus:"ready",source:"cancellation_history"});
+  assert.equal(historic.order.status,"cancelled");
+  db.sqlite.prepare("UPDATE orders SET status='cancelled',status_history=? WHERE id=?").run("damaged legacy history",undatedId);
+  const unknown=await (await call(detail+undatedId)).json();
+  assert.deepEqual(unknown.refund,{amount:45,refundedAt:null,previousStatus:null,source:"legacy_payment"});
+  assert.ok((await call(endpoint)).ok);
 });
 
 test("pickup display omits refunded orders even if their kitchen status is still ready",async t=>{

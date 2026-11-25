@@ -542,9 +542,41 @@ test("mobile staff can print and download the same dated refund handoff after a 
 
   await page.getByRole("button",{name:"重新擷取"}).click();
   await expect(row(newer)).toContainText("全支付");
+  const number="#"+String(newer).padStart(4,"0");
+  await row(newer).getByRole("link",{name:number}).click();
+  await expect(page.getByRole("heading",{name:"示範退款餐單"})).toBeVisible();
+  const refundInfo=page.getByRole("region",{name:"退款資料"});
+  await expect(refundInfo).toContainText("全支付");
+  await expect(refundInfo).toContainText("已退款");
+  await expect(page.getByRole("region",{name:"餐單資料"})).toContainText("已取消");
+  await expect(page.getByRole("region",{name:"原餐單品項"})).toContainText("日式熱煎茶");
+  await expect(page.getByText("交班下載不可包含這段備註")).toHaveCount(0);
+  const detailDownload=page.getByRole("button",{name:"下載退款餐單 JSON"});
+  const [detailFile]=await Promise.all([page.waitForEvent("download"),detailDownload.click()]);
+  const detailReport=JSON.parse(await readFile(await detailFile.path(),"utf8"));
+  expect(detailFile.suggestedFilename()).toContain("hey-table-demo-refund-"+number.slice(1)+"-");
+  expect(detailReport).toMatchObject({order:{id:newer,total:45,status:"cancelled",items:[{name:"日式熱煎茶",qty:1}]},
+    refund:{amount:45,previousStatus:"pending",source:"recorded"}});
+  await expect(refundInfo.getByText("全支付")).toBeVisible();
+  await page.getByRole("button",{name:"列印退款餐單"}).click();
+  await expect(page.locator("body")).toHaveAttribute("data-printed","yes");
+  await page.emulateMedia({media:"print"});
+  await expect(detailDownload).toBeHidden();
+  await expect(refundInfo).toBeVisible();
+  await page.emulateMedia({media:"screen"});
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBe(360);
+  const back=page.getByRole("link",{name:"返回示範退款交班紀錄"});
+  await back.click();
+  await expect(page.getByLabel("退款日期")).toHaveValue(date);
   await page.getByLabel("退款日期").fill("2001-01-01");
   await expect(page.getByText("這一天沒有可查詢的示範退款。")).toBeVisible();
   await expect(row(first)).toHaveCount(0);
+  await page.getByLabel("退款餐號").fill(String(first));
+  await page.getByRole("button",{name:"查詢餐號"}).click();
+  await expect(refundInfo).toContainText("LINE Pay");
+  await back.click();
+  await expect(page.getByLabel("退款日期")).toHaveValue("2001-01-01");
+  await expect(page.getByText("這一天沒有可查詢的示範退款。")).toBeVisible();
 });
 
 test("table checkout simulates failure, retries and restores the paid LINE Pay receipt",async({page,request})=>{

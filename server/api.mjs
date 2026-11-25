@@ -30,7 +30,7 @@ const fail = (message,status=400) => json({error:message},status);
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 import {latestState,payableForKitchen,paymentApi,checkKitchenPayment,refundDemoPayment} from "./payment-api.mjs";
-import {demoRefundReport,demoRefundReceiptColumn,demoRefundReceiptText} from "./demo-refund-report.mjs";
+import {demoRefundDetail,demoRefundReport,demoRefundReceiptColumn,demoRefundReceiptText} from "./demo-refund-report.mjs";
 import {settings} from "./tappay.mjs";
 import {canPrepare,methods} from "../lib/payments.mjs";
 import {estimate} from "@peca12968/pickup-window";
@@ -175,6 +175,12 @@ export async function api(request, env) {
     const range=businessDayRange(date);
     if(!range)return fail("請選擇有效的退款日期。");
     return json(await demoRefundReport(db,date,range,capturedAt));
+  }
+  if(path==="/api/kitchen/demo-refund-detail"&&method==="GET"){
+    const id=collectionId(url);
+    if(id===null||url.searchParams.getAll("id").length!==1)return fail("請輸入有效的餐號。");
+    const detail=await demoRefundDetail(db,id,Date.now());
+    return detail?json(detail):fail("找不到這張餐單的示範退款。",404);
   }
   if(path==="/api/kitchen/cash-receipt"&&method==="POST"){
     const {id,operationId,expectedTotal,tendered}=input;
