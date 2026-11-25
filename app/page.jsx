@@ -20,8 +20,9 @@ export default function Menu(){
   const [table,setTable]=useState(null),[scope,setScope]=useState(""),[group,setGroup]=useState("全部");
   const [selection,setSelection]=useState({cart:{},lineNotes:{}});
   const {cart,lineNotes}=selection;
-  const [note,setNote]=useState(""),[sold,setSold]=useState([]),[loaded,setLoaded]=useState(false);
+  const [note,setNote]=useState(""),[sold,setSold]=useState([]),[availability,setAvailability]=useState(null);
   const [remaining,setRemaining]=useState({});
+  const [supplyReview,setSupplyReview]=useState(null);
   const [draft,setDraft]=useState(null),[busy,setBusy]=useState(false),[error,setError]=useState(""),[panel,setPanel]=useState(false);
   const [announcement,setAnnouncement]=useState(""); const sending=useRef(false);
   const [method,setMethod]=useState("cash"),[payments,setPayments]=useState({methods:["cash"]});
@@ -36,12 +37,20 @@ export default function Menu(){
   const [pickupPaused,setPickupPaused]=useState(false);
   const today=useBusinessToday();
   const bookingDay=pickupDate===today?"":pickupDate;
-  const refreshMenu=useCallback(async()=>{
+  const supplyDay=bookingDay||today;
+  const loaded=availability?.date===supplyDay&&availability.status==="ready";
+  const menuFailed=availability?.date===supplyDay&&availability.status==="failed";
+  const refreshMenu=useCallback(async(replace=false)=>{
+    if(!supplyDay||(!replace&&activeMenuRequest.current))return;
     activeMenuRequest.current?.abort();
     const controller=new AbortController();
     activeMenuRequest.current=controller;
+    if(replace)setAvailability(current=>current?.date===supplyDay&&current.status==="failed"?
+      {date:supplyDay,status:"loading"}:current);
     try{
-      const data=await request("/api/menu"+(bookingDay?"?date="+bookingDay:""),{signal:controller.signal});
+      const data=await request("/api/menu"+(bookingDay?"?date="+bookingDay:""),{
+        signal:AbortSignal.any([controller.signal,AbortSignal.timeout(10_000)]),
+      });
       if(controller.signal.aborted)return;
       setSold(data.unavailable);
       setRemaining(data.remaining??{});
@@ -49,11 +58,13 @@ export default function Menu(){
       setIntake(data.accepting??{});
       setTableIntake(data.acceptingTables??{});
       setPickupPaused(data.pickupPaused===true);
-      setLoaded(true);
+      setAvailability({date:supplyDay,status:"ready"});
     }catch{
-      if(!controller.signal.aborted)setLoaded(false);
+      if(!controller.signal.aborted)setAvailability({date:supplyDay,status:"failed"});
+    }finally{
+      if(activeMenuRequest.current===controller)activeMenuRequest.current=null;
     }
-  },[bookingDay]);
+  },[bookingDay,supplyDay]);
   useEffect(()=>{
     const param=new URLSearchParams(location.search).get("table"), key=cartKey(param);
     const old=read(key,{});
@@ -73,14 +84,19 @@ export default function Menu(){
   },[]);
   useEffect(()=>{
     refreshMenu();
-    const timer=setInterval(refreshMenu,15000);
-    window.addEventListener("online",refreshMenu);
+    const online=()=>refreshMenu(true);
+    const returnToMenu=()=>{if(document.visibilityState==="visible")online();};
+    const timer=setInterval(()=>{if(document.visibilityState==="visible")refreshMenu();},15000);
+    window.addEventListener("online",online);
+    document.addEventListener("visibilitychange",returnToMenu);
     return ()=>{
       activeMenuRequest.current?.abort();
+      activeMenuRequest.current=null;
       clearInterval(timer);
-      window.removeEventListener("online",refreshMenu);
+      window.removeEventListener("online",online);
+      document.removeEventListener("visibilitychange",returnToMenu);
     };
-  },[refreshMenu,today]);
+  },[refreshMenu]);
   useEffect(()=>{if(scope)save(scope,{cart,lineNotes,note,draft,method,useCombo,pickupSlot,pickupDate});},[scope,cart,lineNotes,note,draft,method,useCombo,pickupSlot,pickupDate]);
   useEffect(()=>{
     if(!draft||busy||!scope)return;
@@ -120,6 +136,11 @@ export default function Menu(){
   const bookingPaused=pickupPaused&&(!!bookingDay||pickupSlot!==null);
   const blocked=limitBlocked||lines.some(({id})=>sold.includes(id));
   const cannotAdd=id=>sold.includes(id)||(cart[id]||0)>=maxFor(id);
+  const adjustments=blocked?lines.flatMap(({id,name})=>{
+    const from=cart[id],to=sold.includes(id)?0:maxFor(id);
+    return from>to?[{id,name,from,to}]:[];
+  }):[];
+  const adjustmentKey=JSON.stringify([supplyDay,adjustments]);
   function change(id,delta){
     if(draft||busy||(delta>0&&cannotAdd(id)))return;
     setSelection(current=>{
@@ -130,7 +151,7 @@ export default function Menu(){
       if(!next)delete lineNotes[id];
       return {cart:{...current.cart,[id]:next},lineNotes};
     });
-    setError("");setAnnouncement((dishes.find(d=>d.id===id)?.name??"")+"數量已更新");
+    setError("");setSupplyReview(null);setAnnouncement((dishes.find(d=>d.id===id)?.name??"")+"數量已更新");
   }
   function dismissRepeat(){
     setRepeat("");
@@ -147,11 +168,29 @@ export default function Menu(){
       return {...current,cart:next};
     });
     dismissRepeat();
+    setSupplyReview(null);
     setAnnouncement("先前餐點已加入餐單，請確認後送出。");
     return true;
   }
   function selectPickupDate(day){
-    setPickupDate(day);setPickupSlot(null);setError("");setRemaining({});setPickupPaused(false);setLoaded(false);
+    setPickupDate(day);setPickupSlot(null);setError("");setSupplyReview(null);
+    if((day||today)!==supplyDay){
+      setRemaining({});setPickupPaused(false);setAvailability(null);
+    }
+  }
+  function applySupplyReview(){
+    if(!loaded||draft||busy||sending.current||!adjustments.length||supplyReview?.key!==adjustmentKey)return;
+    setSelection(current=>{
+      if(adjustments.some(({id,from})=>current.cart[id]!==from))return current;
+      const nextCart={...current.cart},nextNotes={...current.lineNotes};
+      for(const {id,to} of adjustments){
+        nextCart[id]=to;
+        if(to===0)delete nextNotes[id];
+      }
+      return {cart:nextCart,lineNotes:nextNotes};
+    });
+    setError("");setSupplyReview(null);
+    setAnnouncement("已依供應調整餐單，請確認新的份數和金額。");
   }
   async function submit(){
     if(sending.current||invalid||!scope||!count||(!draft&&(paused||blocked||needsPickupSlot||bookingPaused||!loaded)))return;
@@ -169,7 +208,7 @@ export default function Menu(){
         else if(e.code==="table_paused")setTableIntake(current=>({...current,[table]:false}));
         else setError(e.message);
         if(["pickup_slot_closed","pickup_slot_full","pickup_day_paused"].includes(e.code))setSlotRevision(value=>value+1);
-        refreshMenu();
+        refreshMenu(true);
       }
       sending.current=false;setBusy(false);
     }
@@ -210,8 +249,27 @@ export default function Menu(){
     <div className="total"><span>合計</span><b>NT$ {total}</b></div>
     {paused&&!invalid&&count>0&&!draft&&<p className="error">餐單已保留，恢復接單後可再送出。</p>}
     {limitBlocked&&!draft&&!error&&<p className="error" role="status">部分餐點已超過{supplyLabel}剩餘份數，請調整餐單。</p>}
+    {loaded&&!draft&&!busy&&!invalid&&adjustments.length>0&&<section className="supplyReview" aria-label="供應份數調整">
+      {!supplyReview||supplyReview.key!==adjustmentKey?<>
+        {supplyReview&&<p role="status">餐點供應有更新，請重新核對。</p>}
+        <button className="outline" onClick={()=>setSupplyReview({key:adjustmentKey})}>
+          {supplyReview?"更新調整預覽":"查看份數調整"}
+        </button>
+      </>:<>
+        <ul>{adjustments.map(({id,name,from,to})=><li key={id}>
+          <strong>{name}</strong><span>{from} 份 → {to===0?"移除":to+" 份"}</span>
+        </li>)}</ul>
+        <div className="actions">
+          <button className="outline" onClick={()=>setSupplyReview(null)}>取消調整</button>
+          <button className="primary" onClick={applySupplyReview}>確認份數調整</button>
+        </div>
+      </>}
+    </section>}
     {count>0&&loaded&&!invalid&&!blocked&&!paused&&!draft&&!busy&&!bookingDay&&pickupSlot===null&&<CartQuote key={quoteBody} body={quoteBody}/>}
-    {error&&<p className="error" role="alert">{error}</p>}{draft&&!busy&&lookup&&<p role="status">{lookup}</p>}{scope&&!loaded&&<p role="status">正在確認餐點供應狀態…</p>}
+    {error&&<p className="error" role="alert">{error}</p>}{draft&&!busy&&lookup&&<p role="status">{lookup}</p>}
+    {scope&&!loaded&&(menuFailed?<div className="supplyReview"><p role="status">暫時無法確認餐點供應，餐單已保留。</p>
+      <button className="outline" onClick={()=>refreshMenu(true)}>重新檢查供應</button></div>:
+      <p role="status">正在確認餐點供應狀態…</p>)}
     <button className="primary full" disabled={busy||!count||invalid||(!draft&&(paused||blocked||needsPickupSlot||bookingPaused||!loaded||!payments.methods.includes(method)))} onClick={submit}><Check size={17}/>{busy?"送單中…":draft?"重試同一張訂單":paused?"暫停接單":"確認送出訂單"}</button></aside></div>
     <span className="sr" aria-live="polite">{announcement}</span></main><Footer/>
     <button className="mobileCart" onClick={()=>setPanel(true)}><ShoppingBag size={18}/> 我的餐單 · {count} 件 <b>NT$ {total}</b></button></>;

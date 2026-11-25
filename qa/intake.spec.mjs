@@ -84,6 +84,72 @@ test("daily portions serialize the last serving across pickup and tables and rel
   }
 });
 
+test("mobile cart reviews changing availability before reducing quantities and sending",async({page,request})=>{
+  const date=businessDate(Date.now()),endpoint="/api/kitchen/daily-limits";
+  const settings=async()=>(await (await request.get(endpoint+"?date="+date,{headers:staff})).json()).limits.gyoza;
+  const set=(capacity,revision)=>request.patch(endpoint,{headers:staff,data:{date,dish:"gyoza",capacity,revision}});
+  const tea=available=>request.patch("/api/kitchen/availability",{headers:staff,data:{id:"sencha",available}});
+  const original=await settings();
+  const teaAvailable=!(await (await request.get("/api/menu")).json()).unavailable.includes("sencha");
+  let receiptId;
+  try{
+    expect((await tea(true)).ok()).toBe(true);
+    expect((await set(original.used+3,original.revision)).ok()).toBe(true);
+    await page.setViewportSize({width:360,height:780});
+    await page.goto("/?table=A04");
+    for(let count=0;count<3;count++)await page.getByRole("button",{name:"加入海苔柴魚煎餃",exact:true}).click();
+    await page.getByRole("button",{name:"加入日式熱煎茶",exact:true}).click();
+    await page.getByRole("button",{name:/我的餐單/}).click();
+    await page.getByText("品項備註",{exact:true}).click();
+    await page.getByLabel("海苔柴魚煎餃備註").fill("醬料分開");
+    await page.getByLabel("日式熱煎茶備註").fill("不用吸管");
+    await page.getByPlaceholder("例如：餐具數量").fill("兩人用餐");
+    expect((await set(original.used+1,original.revision+1)).ok()).toBe(true);
+    expect((await tea(false)).ok()).toBe(true);
+    await page.evaluate(()=>document.dispatchEvent(new Event("visibilitychange")));
+    const review=page.getByRole("region",{name:"供應份數調整"});
+    const submit=page.getByRole("button",{name:"確認送出訂單"});
+    await expect(submit).toBeDisabled();
+    await review.getByRole("button",{name:"查看份數調整"}).click();
+    await expect(review).toContainText("3 份 → 1 份");
+    await expect(review).toContainText("1 份 → 移除");
+    await review.getByRole("button",{name:"取消調整"}).click();
+    await expect(page.getByText("4 件",{exact:true})).toBeVisible();
+    await review.getByRole("button",{name:"查看份數調整"}).click();
+
+    await page.route("**/api/menu",route=>route.fulfill({status:503,json:{error:"暫時無法讀取"}}),{times:1});
+    await page.evaluate(()=>window.dispatchEvent(new Event("online")));
+    await expect(page.getByText("暫時無法確認餐點供應，餐單已保留。")).toBeVisible();
+    await expect(review.getByRole("button",{name:"確認份數調整"})).toHaveCount(0);
+    expect((await set(original.used+2,original.revision+2)).ok()).toBe(true);
+    await page.getByRole("button",{name:"重新檢查供應"}).click();
+    await expect(review).toContainText("餐點供應有更新，請重新核對。");
+    await review.getByRole("button",{name:"更新調整預覽"}).click();
+    await expect(review).toContainText("3 份 → 2 份");
+    expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBe(360);
+    await review.getByRole("button",{name:"確認份數調整"}).click();
+    await expect(page.getByText("2 件",{exact:true})).toBeVisible();
+    await expect(page.getByLabel("海苔柴魚煎餃備註")).toHaveValue("醬料分開");
+    await expect(page.getByLabel("日式熱煎茶備註")).toHaveCount(0);
+    await expect(page.getByPlaceholder("例如：餐具數量")).toHaveValue("兩人用餐");
+    await expect(page.locator(".total")).toContainText("NT$ 170");
+    const sent=page.waitForRequest(request=>new URL(request.url()).pathname==="/api/orders");
+    await submit.click();
+    await expect(page.getByRole("heading",{name:/取餐號碼/})).toBeVisible();
+    const {token}=(await sent).postDataJSON();
+    const fetched=await request.get("/api/ticket",{headers:{"X-Ticket":token}});
+    expect(fetched.ok()).toBe(true);
+    const receipt=await fetched.json();
+    receiptId=receipt.id;
+    expect(receipt).toMatchObject({table:"A04",note:"兩人用餐",total:170,items:[{id:"gyoza",qty:2,note:"醬料分開"}]});
+  }finally{
+    const current=await settings();
+    if(current.capacity!==original.capacity)await set(original.capacity,current.revision);
+    await tea(teaAvailable);
+    if(receiptId)await request.patch("/api/kitchen/status",{headers:staff,data:{id:receiptId,from:"pending",to:"cancelled"}});
+  }
+});
+
 test("mobile restocking resumes a lost reply and preserves newer supply revisions",async({page,request})=>{
   const date=businessDate(Date.now()),dish="gyoza",endpoint="/api/kitchen/daily-limits";
   const settings=async()=>(await (await request.get(endpoint+"?date="+date,{headers:staff})).json()).limits[dish];
