@@ -4,7 +4,7 @@ import qrcode from "qrcode-generator";
 import {dishes, itemNoteLimit, numberOf, tables, transitions} from "../lib/menu.mjs";
 import {intakeLabels,intakeNotice} from "../lib/order-intake.mjs";
 import {businessDate,businessDayRange} from "../lib/business-day.mjs";
-import {dailyLimits,exceededOrderPortions,exceededPortions,readRemaining,restockHistory,restockPortions,supplyTime} from "./daily-limits.mjs";
+import {copyPortionLimits,dailyLimits,exceededOrderPortions,exceededPortions,readRemaining,restockHistory,restockPortions,supplyTime} from "./daily-limits.mjs";
 import {expirePaymentHolds,noBlockingPayment,paymentHoldMs} from "./payment-holds.mjs";
 import {dailyTiming,dailyTimingRows} from "./daily-timing.mjs";
 import {kitchenOverdue} from "./kitchen-overdue.mjs";
@@ -265,6 +265,23 @@ export async function api(request, env) {
       .bind(date,dish,capacity,revision+1,date,dish,revision).run();
     return meta.changes?json({date,dish,capacity,revision:revision+1}):
       fail("供應上限已由其他店員更新，請重新載入後再儲存。",409);
+  }
+  if(path==="/api/kitchen/daily-limits/copy"&&method==="POST"){
+    const {sourceDate,date,items}=input;
+    if(typeof sourceDate!=="string"||typeof date!=="string"||sourceDate===date||
+      !businessDayRange(sourceDate)||!businessDayRange(date)||!Array.isArray(items)||
+      !items.length||items.length>dishes.length)return fail("請選擇不同的來源與目的日期及要複製的品項。");
+    const chosen=new Set();
+    for(const item of items){
+      if(!item||!dishes.some(dish=>dish.id===item.dish)||chosen.has(item.dish)||
+        !Number.isSafeInteger(item.sourceRevision)||item.sourceRevision<0||
+        !Number.isSafeInteger(item.targetRevision)||item.targetRevision<0||item.targetRevision>=Number.MAX_SAFE_INTEGER)
+        return fail("請確認品項與其版本，且每個品項只能選一次。");
+      chosen.add(item.dish);
+    }
+    const limits=await copyPortionLimits(db,sourceDate,date,items);
+    return limits.length?json({sourceDate,date,limits}):
+      fail("來源或目的設定已變更，請重新讀取後核對。這次沒有套用任何品項。",409);
   }
   if(path==="/api/kitchen/daily-limits/restock"&&method==="GET"){
     const dates=url.searchParams.getAll("date"),dishesRequested=url.searchParams.getAll("dish");

@@ -167,6 +167,69 @@ test("mobile restocking resumes a lost reply and preserves newer supply revision
   }
 });
 
+test("staff copy selected daily caps together and a stale source or destination never leaves a partial copy",async({page,request})=>{
+  const sourceDate="2001-03-07",date="2001-03-08",endpoint="/api/kitchen/daily-limits";
+  const read=async day=>(await (await request.get(endpoint+"?date="+day,{headers:staff})).json()).limits;
+  const set=(day,dish,capacity,revision)=>request.patch(endpoint,{headers:staff,data:{date:day,dish,capacity,revision}});
+  for(const [day,caps] of [[sourceDate,{gyoza:12,sencha:0,edamame:8}],[date,{gyoza:3,sencha:5,edamame:2}]]){
+    const before=await read(day);
+    for(const [dish,capacity] of Object.entries(caps))expect((await set(day,dish,capacity,before[dish].revision)).ok()).toBe(true);
+  }
+  const initial=await read(date);
+  const source=await read(sourceDate);
+  const selected=[{dish:"gyoza",sourceRevision:source.gyoza.revision,targetRevision:initial.gyoza.revision}];
+  const send=(payload,headers=staff)=>request.post(endpoint+"/copy",{headers,data:payload});
+  expect((await send({sourceDate,date,items:selected},{})).status()).toBe(403);
+  for(const invalid of [{sourceDate:date,date,items:selected},{sourceDate,date,items:[]},
+    {sourceDate,date,items:[selected[0],selected[0]]},{sourceDate,date,items:[{...selected[0],targetRevision:-1}]}]){
+    expect((await send(invalid)).status()).toBe(400);
+  }
+
+  await page.setViewportSize({width:360,height:780});
+  await page.addInitScript(()=>sessionStorage.setItem("he-ri-staff","local-test-kitchen"));
+  await page.goto("/kitchen/daily-limits");
+  await page.getByLabel("供應日期").fill(date);
+  await page.getByText("從其他日期複製上限",{exact:true}).click();
+  await page.getByLabel("來源日期").fill(sourceDate);
+  const readSource=page.getByRole("button",{name:"讀取來源設定"});
+  const compare=page.getByRole("region",{name:"複製上限比較"});
+  const confirm=compare.getByRole("button",{name:"套用已選上限"});
+  const gyoza=compare.getByRole("checkbox",{name:/海苔柴魚煎餃/});
+  const tea=compare.getByRole("checkbox",{name:/日式熱煎茶/});
+  const beans=compare.getByRole("checkbox",{name:/鹽味毛豆/});
+  await readSource.click();
+  await expect(gyoza).toHaveAccessibleName(/目的上限 3 份 → 12 份/);
+  await expect(confirm).toBeDisabled();
+  await gyoza.check();
+  await tea.check();
+  expect((await set(sourceDate,"sencha",7,source.sencha.revision)).ok()).toBe(true);
+  await confirm.click();
+  await expect(page.getByRole("alert")).toContainText("這次沒有套用任何品項");
+  expect(await read(date)).toEqual(initial);
+
+  await readSource.click();
+  await expect(tea).toHaveAccessibleName(/目的上限 5 份 → 7 份/);
+  await compare.getByRole("button",{name:"選取全部差異"}).click();
+  await beans.uncheck();
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBe(360);
+  await confirm.click();
+  await expect(page.getByText("已複製 2 個品項上限。")).toBeVisible();
+  const copied=await read(date);
+  expect(copied.gyoza).toEqual({...initial.gyoza,capacity:12,revision:initial.gyoza.revision+1});
+  expect(copied.sencha).toEqual({...initial.sencha,capacity:7,revision:initial.sencha.revision+1});
+  expect(copied.edamame).toEqual(initial.edamame);
+  const latestSource=await read(sourceDate);
+  expect((await set(sourceDate,"gyoza",18,latestSource.gyoza.revision)).ok()).toBe(true);
+  const items=[{dish:"gyoza",sourceRevision:latestSource.gyoza.revision+1,targetRevision:copied.gyoza.revision},
+    {dish:"edamame",sourceRevision:latestSource.edamame.revision,targetRevision:copied.edamame.revision}];
+  const [copy,manual]=await Promise.all([send({sourceDate,date,items}),set(date,"gyoza",20,copied.gyoza.revision)]);
+  expect([copy.status(),manual.status()].sort()).toEqual([200,409]);
+  const finished=await read(date);
+  expect(finished.gyoza.capacity).toBe(copy.ok()?18:20);
+  expect(finished.edamame.capacity).toBe(copy.ok()?8:2);
+  expect((await read(sourceDate)).edamame.capacity).toBe(8);
+});
+
 test("mobile guest keeps a draft through a pause and a second staff browser needs a fresh revision",async({browser,context,page,request})=>{
   const guest=await browser.newContext({viewport:{width:390,height:844}});
   try{

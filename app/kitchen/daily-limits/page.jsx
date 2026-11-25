@@ -4,6 +4,7 @@ import {Header,Footer,request} from "../../shared";
 import {useBusinessToday} from "../../use-business-today.mjs";
 import {downloadJson} from "../../../lib/download-json.mjs";
 import {dishes} from "../../../lib/menu.mjs";
+import CopyLimits from "./copy-limits";
 import "./limits.css";
 
 const endpoint="/api/kitchen/daily-limits";
@@ -12,6 +13,7 @@ function staffHeaders(){
   const key=sessionStorage.getItem("he-ri-staff");
   return key?{Authorization:"Bearer "+key}:{};
 }
+const readLimits=(date,signal)=>request(endpoint+"?date="+encodeURIComponent(date),{headers:staffHeaders(),signal});
 
 function restockDraft(key){
   try{return JSON.parse(sessionStorage.getItem(key));}
@@ -135,8 +137,7 @@ export default function DailyLimits(){
   useEffect(()=>{
     if(!date)return;
     const controller=new AbortController();
-    request(endpoint+"?date="+encodeURIComponent(date),{headers:staffHeaders(),
-      signal:AbortSignal.any([controller.signal,AbortSignal.timeout(10_000)])})
+    readLimits(date,AbortSignal.any([controller.signal,AbortSignal.timeout(10_000)]))
       .then(value=>{if(!controller.signal.aborted)setSnapshot(value);})
       .catch(failure=>{if(!controller.signal.aborted){setSnapshot(null);setError(failure.message);}});
     return ()=>controller.abort();
@@ -148,28 +149,41 @@ export default function DailyLimits(){
   function refresh(){
     setError("");setMessage("");setReload(value=>value+1);
   }
-  async function write(dish,operation,restocking){
+  async function write({path=endpoint,method,operation,describe,uncertain,refreshOnError=false}){
     if(inFlight.current)return null;
     inFlight.current=true;
     setBusy(true);setMessage("");setError("");
     try{
-      const saved=await request(restocking?endpoint+"/restock":endpoint,{method:restocking?"POST":"PATCH",
+      const saved=await request(path,{method,
         headers:{"Content-Type":"application/json",...staffHeaders()},
         signal:AbortSignal.timeout(15_000),body:JSON.stringify(operation)});
-      setSnapshot(old=>old?.date===operation.date&&old.limits[dish.id].revision<saved.revision?
-        {...old,limits:{...old.limits,[dish.id]:{...old.limits[dish.id],capacity:saved.capacity,revision:saved.revision}}}:old);
-      setMessage(restocking?"已為 "+operation.date+" 的 "+dish.name+" 補貨 "+saved.quantity+" 份。":
-        "已儲存 "+dish.name+" 的供應上限。");
+      setSnapshot(old=>{
+        if(old?.date!==operation.date)return old;
+        const limits={...old.limits};
+        for(const {dish,capacity,revision} of saved.limits??[saved]){
+          if(limits[dish].revision<revision)limits[dish]={...limits[dish],capacity,revision};
+        }
+        return {...old,limits};
+      });
+      setMessage(describe(saved));
       setReload(value=>value+1);
       return saved;
     }catch(failure){
-      setError(restocking&&![400,403,409].includes(failure.status)?"尚未收到補貨結果，請重試同一筆補貨。":failure.message);
+      setError(uncertain&&![400,403,409].includes(failure.status)?uncertain:failure.message);
+      if(refreshOnError)setReload(value=>value+1);
       throw failure;
     }finally{
       inFlight.current=false;
       setBusy(false);
     }
   }
+  const writeLimit=(dish,operation,restocking)=>restocking?write({path:endpoint+"/restock",method:"POST",operation,
+    describe:saved=>"已為 "+operation.date+" 的 "+dish.name+" 補貨 "+saved.quantity+" 份。",
+    uncertain:"尚未收到補貨結果，請重試同一筆補貨。"}):
+    write({method:"PATCH",operation,describe:()=>"已儲存 "+dish.name+" 的供應上限。"});
+  const copy=operation=>write({path:endpoint+"/copy",method:"POST",operation,
+    describe:saved=>"已複製 "+saved.limits.length+" 個品項上限。",
+    uncertain:"尚未收到套用結果，請重新讀取兩個日期確認。",refreshOnError:true});
   return <><Header/><main className="shell section dailyLimits">
     <a className="textLink" href="/kitchen">返回店家接單台</a>
     <h1>每日限量供應</h1>
@@ -181,8 +195,9 @@ export default function DailyLimits(){
     {error&&<p className="error" role="alert">{error}</p>}
     {message&&<p role="status">{message}</p>}
     {date&&!current&&!error&&<p role="status">正在讀取供應份數…</p>}
+    {current&&<CopyLimits key={date} date={date} limits={current.limits} disabled={busy} loadSource={readLimits} onCopy={copy}/>}
     {current&&<div className="kGrid">{dishes.map(dish=><LimitCard
       key={date+":"+dish.id} date={date} dish={dish} data={current.limits[dish.id]}
-      disabled={busy} onWrite={write}/>)}</div>}
+      disabled={busy} onWrite={writeLimit}/>)}</div>}
   </main><Footer/></>;
 }

@@ -66,3 +66,24 @@ export async function restockHistory(db,date,dish,before){
   const records=results.slice(0,restockPageSize);
   return {date,dish,capturedAt:Date.now(),records,nextBefore:results.length>restockPageSize?records.at(-1).revision:null};
 }
+
+export async function copyPortionLimits(db,sourceDate,date,items){
+  const {results}=await db.prepare(`WITH plan AS MATERIALIZED (
+    SELECT json_extract(chosen.value,'$.dish') AS dish,
+      json_extract(chosen.value,'$.sourceRevision') AS expectedSource,
+      json_extract(chosen.value,'$.targetRevision') AS expectedTarget,
+      COALESCE(source.revision,0) AS sourceRevision,
+      COALESCE(target.revision,0) AS targetRevision,
+      source.capacity AS capacity,target.capacity AS previousCapacity
+    FROM json_each(?) AS chosen
+    LEFT JOIN daily_portion_limits AS source ON source.date=? AND source.dish=json_extract(chosen.value,'$.dish')
+    LEFT JOIN daily_portion_limits AS target ON target.date=? AND target.dish=json_extract(chosen.value,'$.dish')
+  )
+  INSERT INTO daily_portion_limits(date,dish,capacity,revision)
+    SELECT ?,dish,capacity,targetRevision+1 FROM plan
+    WHERE NOT EXISTS (SELECT 1 FROM plan
+      WHERE sourceRevision<>expectedSource OR targetRevision<>expectedTarget OR capacity IS previousCapacity)
+  ON CONFLICT(date,dish) DO UPDATE SET capacity=excluded.capacity,revision=excluded.revision
+  RETURNING dish,capacity,revision`).bind(JSON.stringify(items),sourceDate,date,date).all();
+  return results;
+}

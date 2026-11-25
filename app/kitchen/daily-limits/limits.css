@@ -14,3 +14,11 @@
 .restockRecords li>div{display:flex;flex-wrap:wrap;gap:6px 12px;justify-content:space-between}
 .restockRecords time,.restockRecords li>div span{font-size:.85rem;color:var(--muted)}
 .restockRecords li p{margin:2px 0 0}
+.limitCopy{margin-bottom:16px}
+.limitCopy summary{cursor:pointer;font-weight:700}
+.limitCopyChanges{padding:0;list-style:none;margin:10px 0}
+.limitCopyChanges li{padding:9px 0;border-bottom:1px solid var(--line)}
+.limitCopyChanges label{display:flex;align-items:flex-start;gap:8px;cursor:pointer}
+.limitCopyChanges label>span{display:grid;gap:2px}
+.limitCopyChanges input{margin-top:5px;accent-color:var(--green)}
+.limitCopyChanges small{color:var(--muted)}
