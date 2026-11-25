@@ -46,6 +46,19 @@ class ReservedItem(Order):
     id: str
 
 
+class ReplacementReservation(BaseModel):
+    id: str
+    sku: str
+    quantity: int
+    expires_at_ms: int
+
+
+class ReplacementReceipt(BaseModel):
+    source_id: str
+    created_at_ms: int
+    reservation: ReplacementReservation
+
+
 class ReservationBatchReceipt(BaseModel):
     batch_id: str
     expires_at_ms: int
@@ -458,6 +471,20 @@ def create_app(path: Path, *, ttl_seconds=900, clock=time.time):
     @app.delete("/reservations/{key}", response_model=Reservation)
     def release(key: str):
         return store.release(key)
+
+    @app.post("/reservations/{key}/replacement", response_model=ReplacementReceipt, status_code=201,
+              responses={200: {"model": ReplacementReceipt, "description": "Original replacement receipt"}})
+    def replace_expired(key: str, response: Response, idempotency_key: RequestKey):
+        receipt, created = store.replace_expired(key, idempotency_key)
+        response.headers["Cache-Control"] = "no-store"
+        if not created:
+            response.status_code = 200
+        return receipt
+
+    @app.get("/reservations/{key}/replacement", response_model=ReplacementReceipt)
+    def replacement_receipt(key: str, response: Response):
+        response.headers["Cache-Control"] = "no-store"
+        return store.get_replacement(key)
 
     @app.post("/reservations/{key}/renewals", response_model=RenewalReceipt, status_code=201,
               responses={200: {"model": RenewalReceipt, "description": "Original renewal receipt"}})

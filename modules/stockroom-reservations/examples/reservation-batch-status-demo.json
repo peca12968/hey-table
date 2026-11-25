@@ -303,5 +303,33 @@
         }
       ]
     }
+  },
+  "replacement": {
+    "source": {
+      "quantity": 8,
+      "sku": "KIT-01",
+      "id": "cart-recovered",
+      "state": "expired",
+      "expires_at_ms": 403000,
+      "shipped": 1,
+      "held": 0,
+      "returned": 7
+    },
+    "held_before_expiry": 5,
+    "released_before_expiry": 2,
+    "shortage_status": 409,
+    "missing_receipt_status": 404,
+    "accepted_status": 201,
+    "replay_status": 200,
+    "same_receipt": true,
+    "created_at_ms": 403000,
+    "new_expires_at_ms": 406000,
+    "new_hold": 5,
+    "new_id": true,
+    "stock": {
+      "sku": "KIT-01",
+      "capacity": 18,
+      "available": 13
+    }
   }
 }

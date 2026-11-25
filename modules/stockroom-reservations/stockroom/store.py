@@ -30,6 +30,14 @@ CREATE TABLE IF NOT EXISTS reservations (
     quantity INTEGER NOT NULL CHECK (quantity > 0),
     state TEXT NOT NULL CHECK (state IN ('held', 'released'))
 );
+CREATE TABLE IF NOT EXISTS reservation_replacements (
+    source_id TEXT PRIMARY KEY REFERENCES reservations(id),
+    replacement_id TEXT NOT NULL UNIQUE REFERENCES reservations(id),
+    request_id TEXT NOT NULL,
+    created_at_ms INTEGER NOT NULL,
+    initial_expires_at_ms INTEGER NOT NULL,
+    CHECK (source_id <> replacement_id AND created_at_ms < initial_expires_at_ms)
+);
 CREATE TABLE IF NOT EXISTS reservation_batch_items (
     batch_id TEXT NOT NULL,
     reservation_id TEXT NOT NULL UNIQUE REFERENCES reservations(id),
@@ -276,6 +284,55 @@ class Store:
             raise Conflict("Insufficient stock")
         conn.execute("""INSERT INTO reservations (id, sku, quantity, state, expires_at_ms)
                         VALUES (?, ?, ?, 'held', ?)""", (key, sku, quantity, expires_at_ms))
+
+    @staticmethod
+    def replacement_record(conn, key):
+        return conn.execute("""
+            SELECT link.source_id,link.request_id,link.created_at_ms,link.initial_expires_at_ms,
+                   replacement.id,replacement.sku,replacement.quantity
+            FROM reservation_replacements link JOIN reservations replacement ON replacement.id=link.replacement_id
+            WHERE link.source_id=?
+        """, (key,)).fetchone()
+
+    @staticmethod
+    def replacement_receipt(row):
+        return {
+            "source_id": row["source_id"], "created_at_ms": row["created_at_ms"],
+            "reservation": {"id": row["id"], "sku": row["sku"], "quantity": row["quantity"],
+                            "expires_at_ms": row["initial_expires_at_ms"]},
+        }
+
+    def replace_expired(self, key, request_id):
+        with self.current_inventory() as (conn, now):
+            existing = self.replacement_record(conn, key)
+            if existing:
+                if existing["request_id"] != request_id:
+                    raise Conflict("Reservation already has a replacement")
+                return self.replacement_receipt(existing), False
+            original = self.find_reservation(conn, key)
+            if not original["timed_out"]:
+                raise Conflict("Only an expired reservation can be replaced")
+            if conn.execute("""SELECT 1 FROM reservation_batch_items
+                               JOIN reservation_batch_cancellations USING (batch_id, reservation_id)
+                               WHERE reservation_id=?""", (key,)).fetchone():
+                raise Conflict("Reservation batch was cancelled")
+            quantity = original["quantity"] - original["shipped"] - original["reduced"]
+            if quantity <= 0:
+                raise Conflict("No expired units to replace")
+            replacement_id = uuid4().hex
+            expires_at_ms = now + self.ttl_ms
+            self.create_hold(conn, replacement_id, original["sku"], quantity, expires_at_ms)
+            conn.execute("""INSERT INTO reservation_replacements
+                            (source_id,replacement_id,request_id,created_at_ms,initial_expires_at_ms)
+                            VALUES (?,?,?,?,?)""", (key, replacement_id, request_id, now, expires_at_ms))
+            return self.replacement_receipt(self.replacement_record(conn, key)), True
+
+    def get_replacement(self, key):
+        with closing(self.connect()) as conn:
+            record = self.replacement_record(conn, key)
+            if record is None:
+                raise Missing("Unknown reservation replacement")
+            return self.replacement_receipt(record)
 
     @staticmethod
     def reservation_batch(conn, batch_id):
