@@ -24,6 +24,71 @@ def renew(client, batch_id, items, seconds=10):
                        json={"items": items, "extend_seconds": seconds})
 
 
+def test_history_pages_across_single_and_batch_receipts_even_when_a_new_renewal_is_inserted(tmp_path):
+    database = tmp_path / "history.db"
+    now = 100
+    clock = lambda: now
+    with TestClient(create_app(database, ttl_seconds=5, clock=clock)) as client:
+        hold(client, "a")
+        hold(client, "b")
+        path = "/reservations/a/renewals"
+
+        def single(receipt, previous, seconds):
+            return client.post(path, headers={"Idempotency-Key": receipt},
+                               json={"expected_expires_at_ms": previous, "extend_seconds": seconds})
+
+        assert single("dispatch", 105_000, 5).status_code == 201
+        assert renew(client, "stale", [item("a", 105_000), item("b")]).status_code == 409
+        assert renew(client, "dispatch", [item("a", 110_000), item("b")]).status_code == 201
+        assert renew(client, "dispatch", [item("b"), item("a", 110_000)]).status_code == 200
+        assert single("dispatch", 105_000, 5).status_code == 200
+        assert single("pickup", 120_000, 15).status_code == 201
+
+        first = client.get(path, params={"limit": 2})
+        assert first.status_code == 200 and first.headers["Cache-Control"] == "no-store"
+        history = first.json()
+        assert history == {
+            "reservation": client.get("/reservations/a").json(),
+            "renewals": [
+                {"source": "single", "receipt_id": "pickup", "previous_expires_at_ms": 120_000, "expires_at_ms": 135_000},
+                {"source": "batch", "receipt_id": "dispatch", "previous_expires_at_ms": 110_000, "expires_at_ms": 120_000},
+            ],
+            "next_before_expires_at_ms": 120_000,
+        }
+        assert single("late", 135_000, 10).status_code == 201
+        last = client.get(path, params={"limit": 2, "before_expires_at_ms": history["next_before_expires_at_ms"]}).json()
+        assert last["renewals"] == [
+            {"source": "single", "receipt_id": "dispatch", "previous_expires_at_ms": 105_000, "expires_at_ms": 110_000},
+        ]
+        assert last["next_before_expires_at_ms"] is None
+        assert last["reservation"]["expires_at_ms"] == 145_000
+        assert client.get("/reservations/b/renewals").json()["renewals"] == [
+            {"source": "batch", "receipt_id": "dispatch", "previous_expires_at_ms": 105_000, "expires_at_ms": 115_000},
+        ]
+        assert client.get("/reservations/missing/renewals").status_code == 404
+        for params in ({"limit": 0}, {"limit": 101}, {"before_expires_at_ms": -1}, {"before_expires_at_ms": 2**63}):
+            assert client.get(path, params=params).status_code == 422
+
+    # Simulate opening a database written before these two read indexes were installed.
+    with Store(database).transaction() as conn:
+        conn.execute("DROP INDEX renewal_timeline")
+        conn.execute("DROP INDEX renewal_batch_timeline")
+    now = 145
+    with TestClient(create_app(database, ttl_seconds=5, clock=clock)) as client:
+        expired = client.get(path).raise_for_status().json()
+        assert expired["reservation"]["state"] == "expired"
+        assert expired["reservation"]["held"] == 0
+        assert [row["receipt_id"] for row in expired["renewals"]] == ["late", "pickup", "dispatch", "dispatch"]
+        assert expired["next_before_expires_at_ms"] is None
+
+        with Store(database).transaction() as conn:
+            conn.execute("INSERT INTO reservations(id,sku,quantity,state) VALUES ('old','KIT-01',1,'held')")
+            conn.execute("UPDATE products SET available=available-1 WHERE sku='KIT-01'")
+        legacy = client.get("/reservations/old/renewals").raise_for_status().json()
+        assert legacy["reservation"]["expires_at_ms"] is None
+        assert legacy["renewals"] == [] and legacy["next_before_expires_at_ms"] is None
+
+
 def test_renewal_batch_rejects_stale_member_and_replays_an_original_receipt_after_expiry(tmp_path):
     database = tmp_path / "renew.db"
     now = 100

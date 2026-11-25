@@ -80,6 +80,8 @@ CREATE TABLE IF NOT EXISTS reservation_renewal_batches (
     expires_at_ms INTEGER NOT NULL CHECK (expires_at_ms > previous_expires_at_ms),
     PRIMARY KEY (batch_id, reservation_id)
 );
+CREATE INDEX IF NOT EXISTS renewal_timeline ON reservation_renewals(reservation_id, expires_at_ms DESC);
+CREATE INDEX IF NOT EXISTS renewal_batch_timeline ON reservation_renewal_batches(reservation_id, expires_at_ms DESC);
 CREATE TABLE IF NOT EXISTS shipment_returns (
     reservation_id TEXT NOT NULL,
     shipment_id TEXT NOT NULL,
@@ -415,6 +417,22 @@ class Store:
             if not items:
                 raise Missing("Unknown renewal batch")
             return {"batch_id": batch_id, "items": items}
+
+    def renewal_history(self, key, limit, before):
+        through = 2**63 - 1 if before is None else before - 1
+        with self.current_inventory() as (conn, _):
+            reservation = self.progress_row(self.find_reservation(conn, key))
+            rows = [dict(row) for row in conn.execute("""
+                SELECT 'single' AS source, renewal_id AS receipt_id, previous_expires_at_ms, expires_at_ms
+                FROM reservation_renewals WHERE reservation_id=? AND expires_at_ms<=?
+                UNION ALL
+                SELECT 'batch', batch_id, previous_expires_at_ms, expires_at_ms
+                FROM reservation_renewal_batches WHERE reservation_id=? AND expires_at_ms<=?
+                ORDER BY expires_at_ms DESC LIMIT ?
+            """, (key, through, key, through, limit + 1))]
+            page = rows[:limit]
+            return {"reservation": reservation, "renewals": page,
+                    "next_before_expires_at_ms": page[-1]["expires_at_ms"] if len(rows) > limit else None}
 
     def release(self, key):
         with self.current_inventory() as (conn, _):

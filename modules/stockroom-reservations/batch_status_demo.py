@@ -83,6 +83,18 @@ def capture(db):
                       for row in new_batch["items"]],
         }
 
+        focus = new_batch["items"][0]
+        key = focus["id"]
+        history_path = f"/reservations/{key}/renewals"
+        api.post(history_path, headers={"Idempotency-Key": "loading-buffer"},
+                 json={"expected_expires_at_ms": by_id[key]["expires_at_ms"], "extend_seconds": 5}).raise_for_status()
+        history = api.get(history_path).raise_for_status().json()
+        renewal_batch["history"] = {
+            "sku": history["reservation"]["sku"],
+            "expires_at_ms": history["reservation"]["expires_at_ms"],
+            "renewals": history["renewals"],
+        }
+
     return {"stages": stages, "renewal_batch": renewal_batch}
 
 

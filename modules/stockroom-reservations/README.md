@@ -83,6 +83,12 @@ python -m uvicorn stockroom.api:app
 
 服務先結算到期，再在同一筆交易核對期限、延長仍有效的保留並保存整批收據。任一筆不存在、已結單或期限過期，整批退回，回應會指出保留編號。首次回 201，改變順序重送相同內容回 200；同批號更換內容回 409。可用 `GET /renewal-batches/{batch_id}` 查回原收據。[並行續期與收據回滾測試](tests/test_renewal_batches.py)
 
+### 按保留單查續期紀錄
+
+`GET /reservations/{key}/renewals?limit=25` 回傳同一次 SQLite 交易中的保留現況，以及該單成功的單張與批次續期。每筆包含 `source`、`receipt_id` 和續期前後的截止時間。回應按新截止時間由晚到早排列；批次項可用收據 ID 再查整批。保留釋回或到期後仍可查紀錄。
+
+若帶有 `next_before_expires_at_ms`，用該值作為 `before_expires_at_ms` 繼續查詢。後續新增續期會出現在更新的頁面，原游標仍能接續往前查。既有收據只保存期限，紀錄以截止時間呈現。[舊資料、重送及續頁測試](tests/test_renewal_batches.py)
+
 ## 同車退回的多箱商品一起驗收
 
 倉庫同時收到東區和西區兩張訂單的退貨。在各箱驗收後，將可重新入庫的數量送到 `POST /return-batches`，以 `Idempotency-Key` 傳入此次驗收批號。以下範例假設兩張訂單各已有一箱出貨，箱號都叫 `box`。

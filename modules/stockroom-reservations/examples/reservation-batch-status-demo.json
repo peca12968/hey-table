@@ -212,6 +212,24 @@
         "after_rejected_expires_at_ms": 203000,
         "expires_at_ms": 213000
       }
-    ]
+    ],
+    "history": {
+      "sku": "KIT-01",
+      "expires_at_ms": 218000,
+      "renewals": [
+        {
+          "source": "single",
+          "receipt_id": "loading-buffer",
+          "previous_expires_at_ms": 213000,
+          "expires_at_ms": 218000
+        },
+        {
+          "source": "batch",
+          "receipt_id": "delay-truck",
+          "previous_expires_at_ms": 203000,
+          "expires_at_ms": 213000
+        }
+      ]
+    }
   }
 }

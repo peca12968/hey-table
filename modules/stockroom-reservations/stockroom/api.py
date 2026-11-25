@@ -4,7 +4,7 @@ from io import StringIO
 from pathlib import Path
 import os
 import time
-from typing import Annotated
+from typing import Annotated, Literal
 
 from fastapi import FastAPI, Header, HTTPException, Query, Response
 from fastapi.responses import JSONResponse
@@ -213,6 +213,19 @@ class RenewalReceipt(BaseModel):
     expires_at_ms: int
 
 
+class RenewalHistoryItem(BaseModel):
+    source: Literal["single", "batch"]
+    receipt_id: str
+    previous_expires_at_ms: int
+    expires_at_ms: int
+
+
+class RenewalHistory(BaseModel):
+    reservation: Progress
+    renewals: list[RenewalHistoryItem]
+    next_before_expires_at_ms: int | None
+
+
 class RenewalBatchItem(BaseModel):
     model_config = ConfigDict(extra="forbid")
     reservation_id: BoxKey
@@ -392,6 +405,13 @@ def create_app(path: Path, *, ttl_seconds=900, clock=time.time):
         if not created:
             response.status_code = 200
         return receipt
+
+    @app.get("/reservations/{key}/renewals", response_model=RenewalHistory)
+    def renewal_history(key: str, response: Response,
+                        limit: Annotated[int, Query(ge=1, le=100)] = 25,
+                        before_expires_at_ms: Annotated[int | None, Query(ge=0, le=2**63 - 1)] = None):
+        response.headers["Cache-Control"] = "no-store"
+        return store.renewal_history(key, limit, before_expires_at_ms)
 
     @app.post("/reservations/{key}/releases", response_model=ReleaseReceipt, status_code=201,
               responses={200: {"model": ReleaseReceipt, "description": "Original release receipt"}})
