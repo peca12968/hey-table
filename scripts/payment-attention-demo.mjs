@@ -32,17 +32,21 @@ export async function buildPaymentAttentionDemo(){
     const scenes=[];
     async function capture(stage,capturedAt){
       const queue=await paymentAttention(env,{},capturedAt);
+      const due=await paymentAttention(env,{followUp:"due",summary:true},capturedAt);
       const {target,notes,nextBefore}=await readPaymentAttentionNotes(db,orderId);
       assert.equal(nextBefore,null);
-      const history={target:target?{state:target.state,startedAt:target.startedAt}:null,
-        notes:notes.map(({id,state,note,recordedAt,startedAt})=>({id,state,note,recordedAt,startedAt}))};
-      scenes.push({stage,queue,history});
+      const history={target:target?{state:target.state,startedAt:target.startedAt,
+        ...(target.followUpAt?{followUpAt:target.followUpAt}:{})}:null,notes};
+      assert.deepEqual(due.orders.map(order=>order.id),stage==="retried"?[orderId]:[]);
+      assert.equal(due.summary.totals.orders,due.orders.length);
+      scenes.push({stage,queue,history,dueOrderIds:due.orders.map(order=>order.id)});
     }
     await capture("waiting",waitingAt);
     const payload={id:orderId,attemptId:101,state:"pending",operationId:uuid(2000),
-      note:"已告知顧客稍候，下一班先核對這筆 LINE Pay。"};
+      note:"已告知顧客稍候，下一班先核對這筆 LINE Pay。",followUpAt:waitingAt+120_000,followUpVersion:null};
     const saved=await recordPaymentAttentionNote(db,payload,waitingAt+60_000);
     assert.equal(saved.note,payload.note);
+    assert.equal(saved.followUpAt,payload.followUpAt);
     await capture("saved",waitingAt+90_000);
     const retried=await recordPaymentAttentionNote(db,payload,waitingAt+120_000);
     assert.deepEqual(retried,saved);

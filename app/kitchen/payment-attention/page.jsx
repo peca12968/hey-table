@@ -72,6 +72,7 @@ function PaymentRow({order,capturedAt,returnPath,onCheck,checking}){
     <p>{environmentLabel(order.environment)||"環境未記錄"} · {labels[order.status]??order.status}</p>
     <p>{order.startedAt>0?<>付款開始 {timeLabel(order.startedAt)} · 已等 {wait} 分鐘</>:"付款開始時間未記錄"}</p>
     {overdue&&<p role="note">已到保留時間，付款仍待確認。</p>}
+    {order.followUpAt&&<p>{order.followUpAt<=capturedAt?"已到追蹤時間":"下次追蹤"} {timeLabel(order.followUpAt)}</p>}
     <p>{order.checkedAt===null?"尚未發出金流查詢":<>上次發出查詢 {timeLabel(order.checkedAt)}</>}</p>
     {order.latestNote&&<p className="paymentAttentionLatestNote">交班備註 {timeLabel(order.latestNote.recordedAt)} · {order.latestNote.note}</p>}
     <a className="textLink paymentAttentionNoteLink" href={"/kitchen/order-detail?"+new URLSearchParams({...detailQuery,notes:"1"})+"#payment-attention-notes"}>
@@ -133,6 +134,7 @@ export default function PaymentAttention(){
       <Filter name="state" title="付款狀態" choices={paymentAttentionStates.map(value=>[value,paymentStates[value]])} current={params.get("state")}/>
       <Filter name="method" title="付款工具" choices={Object.entries(methods).filter(([key])=>key!=="cash")} current={params.get("method")}/>
       <Filter name="environment" title="金流環境" choices={onlinePaymentEnvironments.map(value=>[value,environmentName[value]])} current={params.get("environment")}/>
+      <Filter name="followUp" title="付款追蹤" choices={[["due","已到追蹤時間"]]} current={params.get("followUp")}/>
       <button className="outline">套用篩選</button>
     </form>
     {activeAction?.message&&<p role={activeAction.error?"alert":"status"} className={activeAction.error?"error":undefined}>

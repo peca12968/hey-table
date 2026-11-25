@@ -7,7 +7,7 @@ import {methods} from "../../../lib/payments.mjs";
 const metrics=[["orders","待核對"],["amount","原餐單金額"],["pending","付款確認中"],
   ["authorized","已授權待請款"],["overdue","已到保留時間"]];
 const comparisonErrors={
-  filters:"兩份摘要的付款工具、付款狀態或金流環境篩選不同。請使用相同篩選條件。",
+  filters:"兩份摘要的篩選不同。請使用相同付款工具、付款狀態、金流環境和追蹤條件。",
   time:"匯入摘要的擷取時間晚於目前畫面。請重新擷取後再比較。"
 };
 

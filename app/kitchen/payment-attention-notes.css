@@ -4,5 +4,10 @@
 .paymentAttentionNoteList li { border-bottom: 1px solid var(--line); padding: .35rem 0; }
 .paymentAttentionNoteList p { margin: .25rem 0; }
 .paymentAttentionNoteText { white-space: pre-wrap; overflow-wrap: anywhere; }
+.paymentAttentionNotes select, .paymentAttentionNotes input[type="datetime-local"] {
+  display: block;
+  max-width: 100%;
+  min-height: 40px;
+}
 .paymentAttentionNotesRefresh { display: block; margin-top: .7rem; }
 .paymentAttemptPages { margin: .7rem 0; }

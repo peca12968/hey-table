@@ -543,6 +543,65 @@ test("staff payment notes follow one attempt, are retry-safe after settlement, a
   assert.deepEqual((await (await read("?id=1&before="+page.nextBefore)).json()).notes,[saved]);
 });
 
+test("staff payment follow-up filters change at the deadline and concurrent edits preserve history",async t=>{
+  const db=database();
+  t.after(()=>db.sqlite.close());
+  const start=Date.parse("2026-11-25T23:55:00+08:00"),deadline=start+10*60_000;
+  let now=deadline-1;
+  t.mock.method(Date,"now",()=>now);
+  const endpoint="https://order.example/api/kitchen/";
+  const runtime={DB:db,STAFF_KEY:"staff"},headers={Authorization:"Bearer staff","Content-Type":"application/json"};
+  const call=(path,options={})=>api(new Request(endpoint+path,{headers,...options}),runtime);
+  const submit=data=>call("payment-attention-notes",{method:"POST",body:JSON.stringify(data)});
+  const history=async()=>await (await call("payment-attention-notes?id=1")).json();
+  const due=async()=>await (await call("payment-attention?method=line_pay&followUp=due&summary=1")).json();
+  const all=async()=>await (await call("payment-attention?summary=1")).json();
+  db.sqlite.prepare(`INSERT INTO orders(id,token,mode,note,items,total,created,payment_method,payment_env)
+    VALUES (1,?,'pickup','','[]',45,?,'line_pay','demo')`).run(crypto.randomUUID(),start-60_000);
+  const addAttempt=db.sqlite.prepare(`INSERT INTO payment_attempts(id,order_id,reference,merchant,state,created)
+    VALUES (?,1,?,'demo','pending',?)`);
+  addAttempt.run(101,crypto.randomUUID(),start);
+  const form={id:1,attemptId:101,state:"pending",note:"跨日追蹤",operationId:crypto.randomUUID()};
+  const plan={...form,followUpAt:deadline,followUpVersion:null};
+  for(const invalid of [{...form,followUpAt:deadline},{...plan,followUpAt:0},{...plan,followUpVersion:"1"}])
+    assert.equal((await submit(invalid)).status,400);
+  for(const query of ["followUp=all","followUp=due&followUp=due"])
+    assert.equal((await call("payment-attention?"+query)).status,400);
+  const [created,competing]=await Promise.all([submit(plan),submit({...plan,followUpAt:deadline+1000,operationId:crypto.randomUUID()})]);
+  assert.equal(created.status,200);
+  assert.equal(competing.status,409);
+  const saved=await created.json();
+  assert.equal(saved.followUpAt,deadline);
+  assert.deepEqual(await (await submit(plan)).json(),saved);
+  assert.equal((await submit({...plan,followUpAt:deadline+1000})).status,409);
+  assert.equal((await all()).orders[0].followUpAt,deadline);
+  assert.equal((await due()).summary.totals.orders,0);
+  now=deadline;
+  assert.equal((await submit({...form,note:"已通知值班同事",operationId:crypto.randomUUID()})).status,200);
+  const report=await due();
+  assert.deepEqual(report.orders.map(({id,followUpAt})=>[id,followUpAt]),[[1,deadline]]);
+  assert.equal(report.summary.totals.amount,"45");
+  const before=readPaymentHandoffSummary(report.summary);
+  assert.equal(comparePaymentHandoffSummaries(before,(await all()).summary).kind,"filters");
+  const cancel={...form,operationId:crypto.randomUUID(),followUpAt:null,followUpVersion:saved.id};
+  assert.equal((await submit(cancel)).status,200);
+  assert.equal((await due()).orders.length,0);
+  assert.equal((await all()).orders[0].followUpAt,undefined);
+  assert.equal(comparePaymentHandoffSummaries(before,readPaymentHandoffSummary((await due()).summary)).totals.delta.orders,-1);
+  const updated=await history();
+  assert.equal(updated.target.followUpAt,null);
+  assert.deepEqual(updated.notes.map(note=>note.followUpAt),[null,undefined,deadline]);
+  assert.equal((await submit({...plan,operationId:crypto.randomUUID()})).status,409);
+  const rescheduled={...plan,operationId:crypto.randomUUID(),followUpVersion:updated.target.followUpVersion};
+  assert.equal((await submit(rescheduled)).status,200);
+  assert.equal((await due()).orders.length,1);
+  db.sqlite.prepare("UPDATE payment_attempts SET state='failed' WHERE id=101").run();
+  addAttempt.run(102,crypto.randomUUID(),now);
+  assert.equal((await due()).orders.length,0);
+  assert.equal((await history()).target.attemptId,102);
+  assert.deepEqual(await (await submit(plan)).json(),saved);
+});
+
 test("staff payment attempt history paginates stable ordinals and isolates notes by order and attempt",async t=>{
   const db=database();
   t.after(()=>db.sqlite.close());

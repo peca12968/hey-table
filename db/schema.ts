@@ -53,8 +53,10 @@ export const paymentAttentionNotes = sqliteTable("payment_attention_notes", {
   state: text("state",{enum:["pending","authorized"]}).notNull(),
   note: text("note").notNull(),
   recordedAt: integer("recorded_at").notNull(),
+  followUpAt: integer("follow_up_at"),
 }, t => [
   index("payment_attention_notes_attempt").on(t.attemptId,t.id),
+  index("payment_attention_notes_follow_up").on(t.attemptId,t.id).where(sql`${t.followUpAt} IS NOT NULL`),
   check("payment_attention_note_state",sql`${t.state} IN ('pending','authorized')`),
 ]);
 export const pickupPasses = sqliteTable("pickup_passes", {

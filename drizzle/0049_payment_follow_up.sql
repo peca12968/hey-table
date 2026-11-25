@@ -1,0 +1,2 @@
+ALTER TABLE `payment_attention_notes` ADD `follow_up_at` integer;--> statement-breakpoint
+CREATE INDEX `payment_attention_notes_follow_up` ON `payment_attention_notes` (`attempt_id`,`id`) WHERE "payment_attention_notes"."follow_up_at" IS NOT NULL;

@@ -41,7 +41,8 @@
           "startedAt": 1795534620000
         },
         "notes": []
-      }
+      },
+      "dueOrderIds": []
     },
     {
       "stage": "saved",
@@ -63,6 +64,7 @@
               "note": "已告知顧客稍候，下一班先核對這筆 LINE Pay。",
               "recordedAt": 1795536300000
             },
+            "followUpAt": 1795536360000,
             "canCheck": false
           },
           {
@@ -83,7 +85,8 @@
       "history": {
         "target": {
           "state": "pending",
-          "startedAt": 1795534620000
+          "startedAt": 1795534620000,
+          "followUpAt": 1795536360000
         },
         "notes": [
           {
@@ -91,10 +94,12 @@
             "state": "pending",
             "note": "已告知顧客稍候，下一班先核對這筆 LINE Pay。",
             "recordedAt": 1795536300000,
-            "startedAt": 1795534620000
+            "startedAt": 1795534620000,
+            "followUpAt": 1795536360000
           }
         ]
-      }
+      },
+      "dueOrderIds": []
     },
     {
       "stage": "retried",
@@ -116,6 +121,7 @@
               "note": "已告知顧客稍候，下一班先核對這筆 LINE Pay。",
               "recordedAt": 1795536300000
             },
+            "followUpAt": 1795536360000,
             "canCheck": false
           },
           {
@@ -136,7 +142,8 @@
       "history": {
         "target": {
           "state": "pending",
-          "startedAt": 1795534620000
+          "startedAt": 1795534620000,
+          "followUpAt": 1795536360000
         },
         "notes": [
           {
@@ -144,10 +151,14 @@
             "state": "pending",
             "note": "已告知顧客稍候，下一班先核對這筆 LINE Pay。",
             "recordedAt": 1795536300000,
-            "startedAt": 1795534620000
+            "startedAt": 1795534620000,
+            "followUpAt": 1795536360000
           }
         ]
-      }
+      },
+      "dueOrderIds": [
+        895
+      ]
     },
     {
       "stage": "settled",
@@ -178,10 +189,12 @@
             "state": "pending",
             "note": "已告知顧客稍候，下一班先核對這筆 LINE Pay。",
             "recordedAt": 1795536300000,
-            "startedAt": 1795534620000
+            "startedAt": 1795534620000,
+            "followUpAt": 1795536360000
           }
         ]
-      }
+      },
+      "dueOrderIds": []
     }
   ]
 }

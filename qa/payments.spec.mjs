@@ -399,6 +399,9 @@ test("mobile staff recover a lost payment note reply and find the note after a d
   const input=notes.getByRole("textbox",{name:"交班備註"});
   await expect(input).toBeVisible();
   await input.fill("已告知顧客稍候，下一班再查。");
+  const localDeadline=new Date(Date.now()+8*3_600_000-120_000).toISOString().slice(0,16);
+  await notes.getByLabel("追蹤時間處理").selectOption("set");
+  await notes.getByLabel("追蹤時間（台灣）").fill(localDeadline);
   let written;
   await page.route("**"+api,async route=>{
     written=route.request().postDataJSON();
@@ -410,6 +413,8 @@ test("mobile staff recover a lost payment note reply and find the note after a d
   const retry=page.waitForRequest(req=>req.method()==="POST"&&new URL(req.url()).pathname===api);
   await notes.getByRole("button",{name:"重試儲存同一筆備註"}).click();
   expect((await retry).postDataJSON()).toEqual(written);
+  expect(written.followUpAt).toBe(Date.parse(localDeadline+":00+08:00"));
+  expect(written.followUpVersion).toBeNull();
   await expect(notes.getByText("已儲存交班備註。")).toBeVisible();
   const history=notes.getByRole("list",{name:"付款交班備註歷程"});
   await expect(history.getByRole("listitem")).toHaveCount(1);
@@ -418,6 +423,11 @@ test("mobile staff recover a lost payment note reply and find the note after a d
   await page.getByRole("link",{name:"返回待核對付款"}).click();
   const row=page.getByRole("listitem").filter({has:page.getByRole("link",{name:"餐單 #"+number,exact:true})});
   await expect(row).toContainText(written.note);
+  await expect(row).toContainText("已到追蹤時間");
+  await page.getByLabel("付款追蹤").selectOption("due");
+  await page.getByRole("button",{name:"套用篩選"}).click();
+  await expect(page).toHaveURL(/followUp=due/);
+  await expect(row).toBeVisible();
 
   expect((await request.post("/api/payments/demo",{headers:customer,data:{ref:attempt.ref,outcome:"paid"}})).status()).toBe(200);
   await page.getByRole("button",{name:"重新擷取"}).click();
@@ -425,9 +435,11 @@ test("mobile staff recover a lost payment note reply and find the note after a d
   await expect(row).toHaveCount(0);
   await page.goto("/kitchen/order-detail?id="+number+"&notes=1");
   await expect(history.getByText(written.note,{exact:true})).toBeVisible();
+  await expect(history.getByText(/追蹤時間/)).toBeVisible();
   await expect(input).toHaveCount(0);
   const customerView=await (await request.get("/api/ticket",{headers:customer})).json();
   expect(JSON.stringify(customerView)).not.toContain(written.note);
+  expect(JSON.stringify(customerView)).not.toContain("followUpAt");
 });
 
 test("mobile order history distinguishes failed and settled payment attempts and opens only the chosen notes",async({page,request})=>{

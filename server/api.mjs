@@ -197,13 +197,18 @@ export async function api(request, env) {
     return result?json(result):fail("找不到這張線上付款餐單或指定的付款嘗試。",404);
   }
   if(path==="/api/kitchen/payment-attention-notes"&&method==="POST"){
-    const {id,attemptId,state,note,operationId}=input;
+    const {id,attemptId,state,note,operationId,followUpAt,followUpVersion}=input;
     if(!Number.isSafeInteger(id)||id<1||!Number.isSafeInteger(attemptId)||attemptId<1||
       !paymentAttentionStates.includes(state)||typeof operationId!=="string"||!uuid.test(operationId)||
       typeof note!=="string"||!note.trim()||note.trim().length>240)
       return fail("請核對付款狀態並填寫 240 字以內的交班備註。");
-    const result=await recordPaymentAttentionNote(db,{id,attemptId,state,note:note.trim(),operationId:operationId.toLowerCase()},Date.now());
-    return result?json(result):fail("付款嘗試或狀態已更新，請重新核對後再儲存備註。",409);
+    if((followUpAt===undefined)!==(followUpVersion===undefined)||
+      (followUpAt!==undefined&&followUpAt!==null&&(!Number.isSafeInteger(followUpAt)||followUpAt<1||followUpAt>8_640_000_000_000_000))||
+      (followUpVersion!==undefined&&followUpVersion!==null&&(!Number.isSafeInteger(followUpVersion)||followUpVersion<1)))
+      return fail("請重新選擇有效的付款追蹤時間。");
+    const result=await recordPaymentAttentionNote(db,{id,attemptId,state,note:note.trim(),operationId:operationId.toLowerCase(),
+      followUpAt,followUpVersion},Date.now());
+    return result?json(result):fail("付款狀態或追蹤時間已更新，請重新核對後再儲存備註。",409);
   }
   if(path==="/api/kitchen/demo-refund" && method==="PATCH")return refundDemoPayment(env,input);
   if(path==="/api/kitchen/demo-refunds"&&method==="GET"){
