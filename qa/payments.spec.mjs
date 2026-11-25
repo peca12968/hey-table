@@ -361,7 +361,7 @@ test("staff can refund a ready demo pickup and the mobile receipt withdraws its 
     await expect(page.getByText("店家退款並取消",{exact:true})).toHaveCount(1);
     await expect(page.getByText("出示取餐 QR 碼",{exact:true})).toHaveCount(0);
     await expect(page.getByRole("button",{name:/開始模擬付款/})).toHaveCount(0);
-    const replay=await request.patch(refund,{headers:staff,data:payload});
+    const replay=await request.patch(refund,{headers:staff,data:payload,maxRetries:1});
     expect(replay.ok()).toBe(true);
     expect(await replay.json()).toEqual({id,total,status:"cancelled",paymentState:"refunded"});
     expect((await status("ready","completed")).status()).toBe(409);
