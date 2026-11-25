@@ -1543,7 +1543,7 @@ test("printable kitchen snapshot exports the displayed orders to Prep Sheet",asy
   const compare=arrivals.getByRole("button",{name:"比較到貨前後"});
   const after=arrivals.getByRole("region",{name:"到貨試算結果"});
   await expect(compare).toBeDisabled();
-  await arrivals.getByLabel("食材 1",{exact:true}).selectOption("beans");
+  await arrivals.getByRole("combobox",{name:"食材 1",exact:true}).selectOption("beans");
   await arrivals.getByLabel("數量 1 (g)",{exact:true}).fill("400");
   await compare.click();
   await expect(after.getByRole("status")).toHaveText("可先做 1 張 · 轉為可做 1 張 · 轉為缺料 0 張");
@@ -1552,7 +1552,7 @@ test("printable kitchen snapshot exports the displayed orders to Prep Sheet",asy
   await expect(after.getByText("缺 毛豆 200 g")).toBeVisible();
   await arrivals.getByRole("button",{name:"新增到貨食材"}).click();
   await expect(after).toHaveCount(0);
-  await arrivals.getByLabel("食材 2",{exact:true}).selectOption("beans");
+  await arrivals.getByRole("combobox",{name:"食材 2",exact:true}).selectOption("beans");
   await arrivals.getByLabel("數量 2 (g)",{exact:true}).fill("200");
   await compare.click();
   await expect(arrivals.getByRole("alert")).toContainText("請合併 毛豆");
