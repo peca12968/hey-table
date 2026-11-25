@@ -35,7 +35,7 @@ import {settings} from "./tappay.mjs";
 import {canPrepare,methods} from "../lib/payments.mjs";
 import {estimate} from "@peca12968/pickup-window";
 import {activeKitchen,demoKitchen,importTiming,stationLabels,timingChanges} from "../lib/kitchen-timing.mjs";
-import {finishStation,remainingStationItems,stationQueue} from "./station-work.mjs";
+import {finishStation,preparationByStation,remainingStationItems,stationQueue} from "./station-work.mjs";
 const timingRows = "SELECT revision,config FROM kitchen_timing ORDER BY revision DESC";
 const fromTimingRow = row => ({revision:row?.revision??0, kitchen:activeKitchen(row ? JSON.parse(row.config) : null)});
 const orderColumns = `SELECT orders.*, ${latestState} AS payment_state, ${cashReceiptColumn} AS cash_receipt`;
@@ -764,9 +764,10 @@ export async function api(request, env) {
     const now=Date.now(),today=businessDate(now),date=url.searchParams.get("date")??today;
     if(!pickupBookingDays(now).includes(date))return fail("請選擇七天內的備料日期。");
     const includeRemaining=url.searchParams.get("stationProgress")==="1";
+    const includeStations=url.searchParams.get("stationBreakdown")==="1";
     const [start,end]=businessDayRange(date);
     const from=date===today?"":` AND ${supplyTime}>=?`;
-    const {results} = await db.prepare(`SELECT id, created, status, items${includeRemaining?", station_progress":""} FROM orders
+    const {results} = await db.prepare(`SELECT id, created, status, items${includeRemaining||includeStations?", station_progress":""} FROM orders
       WHERE status IN ('pending','preparing') AND ${payableForKitchen}
       AND ${supplyTime}<?${from} ORDER BY id`).bind(end,...(from?[start]:[])).all();
     const portions=items=>items.map(({id,qty})=>({id,qty}));
@@ -777,7 +778,8 @@ export async function api(request, env) {
       const items=portions(remainingStationItems(row));
       return items.length?[{...order,items}]:[];
     }):undefined;
-    return json({capturedAt:now,date,orders,...(includeRemaining?{remainingOrders}:{})});
+    return json({capturedAt:now,date,orders,...(includeRemaining?{remainingOrders}:{}),
+      ...(includeStations?{stationOrders:preparationByStation(results,orders)}:{})});
   }
   if(path==="/api/kitchen/station-work"&&method==="GET"){
     const station=url.searchParams.get("station");

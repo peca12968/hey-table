@@ -4,6 +4,8 @@
 .prepScope legend {font-weight: 650; padding-inline: 4px}
 .prepScope label {display: inline-flex; align-items: center; gap: 6px; min-height: 40px; cursor: pointer}
 .prepScope input {accent-color: var(--green)}
+.prepStations {margin: 12px 0}
+.prepStations span {white-space: nowrap}
 .prep table {width: 100%; border-collapse: collapse; margin: 1.5rem 0; background: #fff}
 .prep caption {text-align: left; font-weight: 700; padding: .65rem 0}
 .prep th, .prep td {text-align: right; padding: .8rem; border-bottom: 1px solid #d8d2c7}

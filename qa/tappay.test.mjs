@@ -646,6 +646,50 @@ test("receipt timing and remaining prep use completed station work while legacy 
   assert.equal((await (await cook(older,"other")).json()).status,"ready");
   assert.deepEqual((await prep("?stationProgress=1")).remainingOrders,[]);
 });
+test("prep station views use saved assignments and group old stations without exposing order notes",async t=>{
+  const db=database();
+  t.after(()=>db.sqlite.close());
+  const date="2026-11-25",now=Date.parse(date+"T12:00:00+08:00");
+  t.mock.method(Date,"now",()=>now);
+  const runtime={DB:db,STAFF_KEY:"staff"},staff={Authorization:"Bearer staff"};
+  const item=(id,qty)=>({id,qty,note:"private fixture note"});
+  const insert=db.sqlite.prepare(`INSERT INTO orders(token,mode,note,items,total,created,status,station_progress)
+    VALUES (?,'pickup','private guest note',?,100,?,?,?)`);
+  const add=(status,items,progress=null)=>Number(insert.run(crypto.randomUUID(),JSON.stringify(items),now,status,
+    progress&&JSON.stringify(progress)).lastInsertRowid);
+  const current=add("pending",[item("katsudon",1),item("sencha",1)]);
+  const groups={hot:[item("katsudon",3)],cold:[item("sencha",2)],legacy:[item("old-tofu",4)]};
+  const existing=add("preparing",Object.values(groups).flat(),{groups,done:{hot:now-1000}});
+  const ready=add("ready",[item("sencha",1)]);
+  const read=(params,headers=staff)=>api(new Request("https://order.example/api/kitchen/prep?date="+date+params,{headers}),runtime);
+  assert.equal((await read("&stationBreakdown=1",{})).status,403);
+  const response=await read("&stationBreakdown=1&stationProgress=1");
+  assert.equal(response.status,200);
+  assert.equal(response.headers.get("cache-control"),"no-store");
+  const raw=await response.text();
+  assert.ok(!raw.includes("private"));
+  const report=JSON.parse(raw);
+  assert.equal(report.capturedAt,now);
+  const order=(id,status,dish,qty)=>({id,created:now,status,items:[{id:dish,qty}]});
+  const hot=order(current,"pending","katsudon",1),bar=order(current,"pending","sencha",1);
+  const hotDone=order(existing,"preparing","katsudon",3),cold=order(existing,"preparing","sencha",2);
+  const other=order(existing,"preparing","old-tofu",4);
+  assert.deepEqual(report.stationOrders,{
+    hot:{orders:[hot,hotDone],remainingOrders:[hot]},cold:{orders:[cold],remainingOrders:[cold]},
+    bar:{orders:[bar],remainingOrders:[bar]},other:{orders:[other],remainingOrders:[other]},
+  });
+  assert.ok(report.orders.every(row=>row.id!==ready));
+  const portions=rows=>rows.flatMap(row=>row.items).reduce((count,item)=>count+item.qty,0);
+  for(const key of ["orders","remainingOrders"])
+    assert.equal(Object.values(report.stationOrders).reduce((sum,station)=>sum+portions(station[key]),0),portions(report[key]));
+  const standard=await (await read("")).json();
+  assert.equal(standard.stationOrders,undefined);
+  assert.equal(standard.remainingOrders,undefined);
+  const stationsOnly=await (await read("&stationBreakdown=1")).json();
+  assert.equal(stationsOnly.remainingOrders,undefined);
+  assert.deepEqual(stationsOnly.stationOrders,report.stationOrders);
+});
+
 test("staff demo refunds commit with cancellation, release a booking, preserve completed orders and roll back on failure",async t=>{
   const db=database();
   t.after(()=>db.sqlite.close());

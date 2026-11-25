@@ -1,4 +1,4 @@
-import {demoKitchen} from "../lib/kitchen-timing.mjs";
+import {demoKitchen,stationLabels} from "../lib/kitchen-timing.mjs";
 import {payableForKitchen} from "./payment-api.mjs";
 
 function stationProgress(row) {
@@ -15,6 +15,27 @@ export function remainingStationItems(row) {
   if(!row.station_progress)return JSON.parse(row.items);
   const {groups,done}=stationProgress(row);
   return Object.entries(groups).flatMap(([station,items])=>Object.hasOwn(done,station)?[]:items);
+}
+
+export function preparationByStation(rows,orders) {
+  const stations=Object.fromEntries(Object.keys(stationLabels).map(key=>[key,{orders:[],remainingOrders:[]}]));
+  rows.forEach((row,index)=>{
+    const {groups,done}=stationProgress(row.status==="preparing"?row:{items:row.items});
+    const assigned=new Map();
+    for(const [station,items] of Object.entries(groups)){
+      const key=Object.hasOwn(stations,station)?station:"other";
+      if(!assigned.has(key))assigned.set(key,{items:[],remaining:[]});
+      const portions=items.map(({id,qty})=>({id,qty})),group=assigned.get(key);
+      group.items.push(...portions);
+      if(!Object.hasOwn(done,station))group.remaining.push(...portions);
+    }
+    const order=orders[index];
+    for(const [key,{items,remaining}] of assigned){
+      if(items.length)stations[key].orders.push({...order,items});
+      if(remaining.length)stations[key].remainingOrders.push({...order,items:remaining});
+    }
+  });
+  return stations;
 }
 
 export async function stationQueue(db,station) {
