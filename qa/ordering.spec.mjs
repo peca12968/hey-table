@@ -1271,6 +1271,97 @@ test("a stalled checkout and lookup can find the original committed order withou
   }
 });
 
+test("same-table checkout shares one in-flight order and stale tabs cannot resubmit a completed cart",async({context,page,request})=>{
+  const path="/?table=A07",scope="he-ri-cart-v1:A07";
+  await page.goto(path);
+  await page.evaluate(scope=>localStorage.setItem(scope,JSON.stringify({cart:{oyakodon:1},note:"共用分頁測試",method:"cash"})),scope);
+  const other=await context.newPage(),stale=await context.newPage();
+  const responseReady=Promise.withResolvers(),released=Promise.withResolvers(),posts=[];
+  await context.route("**/api/orders",async route=>{
+    posts.push(route.request().postDataJSON());
+    const response=await route.fetch();
+    const json=await response.json();
+    if(posts.length===1){
+      responseReady.resolve(json);
+      await released.promise;
+    }
+    return route.fulfill({status:response.status(),json});
+  });
+  const submit=tab=>tab.getByRole("button",{name:"確認送出訂單"});
+  try{
+    await Promise.all([page.reload(),other.goto(path),stale.goto(path)]);
+    await Promise.all([page,other,stale].map(tab=>expect(submit(tab)).toBeEnabled()));
+    expect(await page.evaluate(()=>Boolean(navigator.locks))).toBe(true);
+    await Promise.all([submit(page).click(),submit(other).click()]);
+    const order=await responseReady.promise;
+    const token=posts[0].token;
+    await Promise.all([page,other].map(tab=>expect(tab.getByRole("button",{name:"送單中…"})).toBeDisabled()));
+    expect(posts).toHaveLength(1);
+    released.resolve();
+    await Promise.all([page,other].map(tab=>expect(tab).toHaveURL(new RegExp("/ticket#"+token+"$"))));
+    const original=await stale.evaluate(scope=>JSON.parse(localStorage.getItem(scope)),scope);
+    expect(original).toEqual({checkout:{token,state:"completed"}});
+    await stale.getByRole("textbox",{name:/訂單備註/}).fill("舊分頁把備註改掉");
+    await submit(stale).click();
+    await stale.waitForURL("**/ticket#"+token);
+    expect(posts).toHaveLength(1);
+    const headers={Authorization:"Bearer local-test-kitchen"};
+    const all=await (await request.get("/api/kitchen",{headers})).json();
+    expect(all.filter(row=>row.note==="共用分頁測試").map(row=>row.id)).toEqual([order.id]);
+    await page.goto(path);
+    await expect(page.getByText("餐單還是空的")).toBeVisible();
+    await page.getByRole("button",{name:"加入雞肉親子丼",exact:true}).click();
+    await submit(page).click();
+    await page.waitForURL(url=>url.pathname==="/ticket"&&url.hash!=="#"+token);
+    expect(posts).toHaveLength(2);
+    expect(posts[1].token).not.toBe(token);
+  }finally{
+    released.resolve();
+    await Promise.all([other.close(),stale.close()]);
+  }
+});
+
+test("a second table tab adopts an unresolved checkout and finds its receipt without resubmitting",async({context,page})=>{
+  const path="/?table=A08",scope="he-ri-cart-v1:A08";
+  await page.goto(path);
+  await page.evaluate(scope=>localStorage.setItem(scope,JSON.stringify({cart:{sencha:1},note:"分頁斷線核對",method:"cash"})),scope);
+  const other=await context.newPage();
+  const checks=[],posts=[];
+  let allowLookup=false;
+  await context.route("**/api/orders",async route=>{
+    posts.push(route.request().postDataJSON());
+    expect((await route.fetch()).ok()).toBe(true);
+    await route.abort("connectionreset");
+  });
+  await context.route("**/api/ticket",route=>{
+    checks.push(route.request().headers()["x-ticket"]);
+    return allowLookup?route.continue():route.fulfill({status:503,json:{error:"暫時無法查詢"}});
+  });
+  const submit=tab=>tab.getByRole("button",{name:"確認送出訂單"});
+  try{
+    await Promise.all([page.reload(),other.goto(path)]);
+    await Promise.all([page,other].map(tab=>expect(submit(tab)).toBeEnabled()));
+    await submit(page).click();
+    await expect(page.getByText(/目前無法確認送單結果/)).toBeVisible();
+    await other.getByRole("textbox",{name:/訂單備註/}).fill("舊分頁的暫存備註");
+    await submit(other).click();
+    await expect(other.getByText("已載入另一個分頁正在處理的餐單。")).toBeVisible();
+    await expect(other.getByRole("textbox",{name:/訂單備註/})).toHaveValue("分頁斷線核對");
+    await expect(other.getByRole("textbox",{name:/訂單備註/})).toBeDisabled();
+    expect(posts).toHaveLength(1);
+    const token=posts[0].token;
+    const retry=other.getByRole("button",{name:"重新查詢送單結果"});
+    await expect(retry).toBeEnabled();
+    allowLookup=true;
+    await retry.click();
+    await other.waitForURL("**/ticket#"+token);
+    await expect(other.getByText(/備註\s*分頁斷線核對/)).toBeVisible();
+    expect(posts).toHaveLength(1);
+    expect(checks.length).toBeGreaterThanOrEqual(3);
+    expect(new Set(checks)).toEqual(new Set([token]));
+  }finally{await other.close();}
+});
+
 test("an undelivered pickup remains editable only after a definitive rejection",async({context,page,request})=>{
   const attempts=[];
   await context.route("**/api/orders",async route=>{

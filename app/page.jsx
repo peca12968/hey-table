@@ -3,7 +3,7 @@ import {useCallback,useEffect,useRef,useState} from "react";
 import {Plus,Minus,ShoppingBag,X,Utensils,Check} from "lucide-react";
 import {dishes,itemNoteLimit,tables,withItemNotes} from "../lib/menu.mjs";
 import {Header,Footer,Mode,request} from "./shared";
-import {cartKey,openReceipt,read,save} from "../lib/order-storage.mjs";
+import {cartKey,claimCart,dispatchCart,openReceipt,persistCart,read,settleCart} from "../lib/order-storage.mjs";
 import {comboVersion,priceCombos} from "../lib/combo-pricing.mjs";
 import {intakeNotice} from "../lib/order-intake.mjs";
 import CartAddOn from "./cart-add-on";
@@ -51,6 +51,8 @@ export default function Menu(){
   const [useCombo,setUseCombo]=useState(false);
   const [lookup,setLookup]=useState(null),[lookupRevision,setLookupRevision]=useState(0);
   const [sendTimedOut,setSendTimedOut]=useState(false);
+  const [sharedCheckout,setSharedCheckout]=useState(false);
+  const checkoutSeen=useRef(null);
   const [repeat,setRepeat]=useState("");
   const [pickupSlot,setPickupSlot]=useState(null),[slotRevision,setSlotRevision]=useState(0);
   const [pickupDate,setPickupDate]=useState("");
@@ -85,23 +87,27 @@ export default function Menu(){
       if(activeMenuRequest.current===controller)activeMenuRequest.current=null;
     }
   },[bookingDay,supplyDay]);
-  useEffect(()=>{
-    const param=new URLSearchParams(location.search).get("table"), key=cartKey(param);
-    const old=read(key,{});
+  const loadCart=useCallback((old,param)=>{
     const cart=Object.fromEntries(dishes.filter(d=>Number.isInteger(old.cart?.[d.id])&&old.cart[d.id]>0&&old.cart[d.id]<=20).map(d=>[d.id,old.cart[d.id]]));
     const lineNotes=Object.fromEntries(Object.keys(cart).filter(id=>typeof old.lineNotes?.[id]==="string")
       .map(id=>[id,old.lineNotes[id].slice(0,itemNoteLimit)]));
-    setTable(param);setScope(key);setSelection({cart,lineNotes});setUseCombo(old.useCombo===true);
+    checkoutSeen.current=old.checkout??null;
+    setSelection({cart,lineNotes});setUseCombo(old.useCombo===true);
     setNote(old.note??"");setDraft(old.draft??null);setMethod(old.draft?.paymentMethod??old.method??'cash');
     const savedSlot=old.draft?old.draft.pickupSlot:old.pickupSlot;
     const days=pickupBookingDays(Date.now());
     const validDay=!old.pickupDate||days.includes(old.pickupDate);
-    if(!param&&(validDay||old.draft)&&Number.isSafeInteger(savedSlot)&&savedSlot>0&&savedSlot<=8_640_000_000_000_000-pickupSlotDuration)setPickupSlot(savedSlot);
-    if(!param&&validDay&&old.pickupDate)setPickupDate(old.pickupDate);
+    const validSlot=!param&&(validDay||old.draft)&&Number.isSafeInteger(savedSlot)&&savedSlot>0&&savedSlot<=8_640_000_000_000_000-pickupSlotDuration;
+    setPickupSlot(validSlot?savedSlot:null);
+    setPickupDate(!param&&validDay?old.pickupDate??"":"");
+  },[]);
+  useEffect(()=>{
+    const param=new URLSearchParams(location.search).get("table"),key=cartKey(param),old=read(key,{});
+    setTable(param);setScope(key);loadCart(old,param);
     const token=new URLSearchParams(location.hash.slice(1)).get("reorder")??"";
     setRepeat(token);
     if((old.draft||token)&&window.matchMedia("(max-width: 680px)").matches) setPanel(true);
-  },[]);
+  },[loadCart]);
   useEffect(()=>{
     refreshMenu();
     const online=()=>refreshMenu(true);
@@ -117,7 +123,9 @@ export default function Menu(){
       document.removeEventListener("visibilitychange",returnToMenu);
     };
   },[refreshMenu]);
-  useEffect(()=>{if(scope)save(scope,{cart,lineNotes,note,draft,method,useCombo,pickupSlot,pickupDate});},[scope,cart,lineNotes,note,draft,method,useCombo,pickupSlot,pickupDate]);
+  useEffect(()=>{
+    if(scope)persistCart(scope,{cart,lineNotes,note,draft,method,useCombo,pickupSlot,pickupDate},checkoutSeen.current);
+  },[scope,cart,lineNotes,note,draft,method,useCombo,pickupSlot,pickupDate]);
   useEffect(()=>{
     if(!draft||busy||!scope)return;
     let current;
@@ -128,7 +136,7 @@ export default function Menu(){
       setLookup({token:draft.token,status:"checking"});
       try{
         const order=await checkoutRequest("/api/ticket",{headers:{"X-Ticket":draft.token},signal:controller.signal},10000);
-        if(!controller.signal.aborted && !sending.current) openReceipt(scope,draft.token,order);
+        if(!controller.signal.aborted && !sending.current)await openReceipt(scope,draft.token,order);
       }catch(e){
         if(controller.signal.aborted || sending.current)return;
         setLookup({token:draft.token,status:e.status===404?"missing":e.name==="TimeoutError"?"timeout":"unavailable"});
@@ -225,24 +233,58 @@ export default function Menu(){
   }
   async function submit(){
     if(sending.current||invalid||!scope||!count||(!draft&&(paused||blocked||pickupBlocked||!loaded)))return;
-    sending.current=true;setBusy(true);setError("");setLookup(null);setSendTimedOut(false);
+    sending.current=true;setBusy(true);setError("");setLookup(null);setSendTimedOut(false);setSharedCheckout(false);
     const payload=draft??{token:crypto.randomUUID(),...(method==='cash'?{}:{paymentMethod:method}),mode,table,note,
       items:withItemNotes(items,lineNotes),...(applied?{comboVersion,expectedTotal:total}:{}),...(pickupSlot!==null?{pickupSlot}:{})};
-    setDraft(payload);save(scope,{cart,lineNotes,note,draft:payload,method,useCombo,pickupSlot,pickupDate});
-    try{
-      const order=await checkoutRequest("/api/orders",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(payload)},15000);
-      openReceipt(scope,payload.token,order);
-    }catch(e){
-      if(e.name==="TimeoutError")setSendTimedOut(true);
-      if([400,409,415].includes(e.status)){
-        setDraft(null);
-        if(e.code==="intake_paused")setIntake(current=>({...current,[mode]:false}));
-        else if(e.code==="table_paused")setTableIntake(current=>({...current,[table]:false}));
-        else setError(e.message);
-        if(["pickup_slot_closed","pickup_slot_full","pickup_day_paused"].includes(e.code))setSlotRevision(value=>value+1);
-        refreshMenu(true);
+    const snapshot={cart,lineNotes,note,draft:payload,method,useCombo,pickupSlot,pickupDate};
+    let leaving=false;
+    async function dispatch(){
+      const claimed=await claimCart(scope,snapshot,checkoutSeen.current);
+      if(!claimed.send){
+        const {record}=claimed;
+        if(!record.draft&&record.checkout?.state==="completed"){
+          location.replace("/ticket#"+record.checkout.token);
+          leaving=true;
+        }else{
+          loadCart(record,table);
+          if(record.draft)setSharedCheckout(true);
+          else setError("另一個分頁已更新這張餐單，請核對後再送出。");
+        }
+        return;
       }
-      sending.current=false;setBusy(false);
+      setDraft(payload);
+      try{
+        const order=await checkoutRequest("/api/orders",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(payload)},15000);
+        await openReceipt(scope,payload.token,order);
+        leaving=true;
+      }catch(e){
+        if(e.name==="TimeoutError")setSendTimedOut(true);
+        if([400,409,415].includes(e.status)){
+          const stored=await settleCart(scope,payload.token,"rejected");
+          if(stored.checkout?.token===payload.token&&stored.checkout.state==="completed"){
+            location.replace("/ticket#"+payload.token);
+            leaving=true;
+            return;
+          }
+          if(stored.draft)loadCart(stored,table);
+          else{
+            checkoutSeen.current=stored.checkout??checkoutSeen.current;
+            setDraft(null);
+          }
+          if(e.code==="intake_paused")setIntake(current=>({...current,[mode]:false}));
+          else if(e.code==="table_paused")setTableIntake(current=>({...current,[table]:false}));
+          else setError(e.message);
+          if(["pickup_slot_closed","pickup_slot_full","pickup_day_paused"].includes(e.code))setSlotRevision(value=>value+1);
+          refreshMenu(true);
+        }
+      }
+    }
+    try{
+      await dispatchCart(scope,dispatch);
+    }catch{
+      setError("暫時無法確認其他分頁的送單狀態，請稍後重試。");
+    }finally{
+      if(!leaving){sending.current=false;setBusy(false);}
     }
   }
   const hero=dishes[0],unavailableForAddOn=dishes.filter(d=>cannotAdd(d.id)).map(d=>d.id);
@@ -305,6 +347,7 @@ export default function Menu(){
     {count>0&&loaded&&!invalid&&!blocked&&!paused&&!draft&&!busy&&!bookingDay&&pickupSlot===null&&<CartQuote key={quoteBody} body={quoteBody}/>}
     {error&&<p className="error" role="alert">{error}</p>}
     {draft&&!busy&&<div className="supplyReview">
+      {sharedCheckout&&<p>已載入另一個分頁正在處理的餐單。</p>}
       {sendTimedOut&&<p>送單回覆逾時，已保留原餐單。</p>}
       <p role="status">{lookupMessages[lookupStatus]}</p>
       <button className="outline" disabled={lookupStatus==="checking"} onClick={()=>{
