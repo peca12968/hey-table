@@ -9,8 +9,8 @@ import {intakeNotice} from "../lib/order-intake.mjs";
 import CartAddOn from "./cart-add-on";
 import CartQuote from "./cart-quote";
 import Reorder from "./reorder";
-import {ReviewSharedCart,ShareCart} from "./cart-share";
-import {readCartShare} from "../lib/cart-share.mjs";
+import {PasteSharedCart,ReviewSharedCart,ShareCart} from "./cart-share";
+import {readCartShareHash} from "../lib/cart-share.mjs";
 import {reorderPlan} from "../lib/reorder.mjs";
 import {ItemNotesEditor} from "./item-notes";
 import PickupSlots,{PickupDate,usePickupSlotAvailability} from "./pickup-slots";
@@ -119,12 +119,12 @@ export default function Menu(){
   },[loadCart]);
   useEffect(()=>{
     function readLinkedList(){
-      const values=new URLSearchParams(location.hash.slice(1)),links=values.getAll("cart");
-      const token=links.length?"":values.get("reorder")??"";
+      const values=new URLSearchParams(location.hash.slice(1)),hasShare=values.has("cart");
+      const token=hasShare?"":values.get("reorder")??"";
       setRepeat(token);
-      setShare(links.length?{lines:links.length===1?readCartShare(links[0]):null}:null);
+      setShare(hasShare?{lines:readCartShareHash(location.hash)}:null);
       setShareNotice("");
-      if((links.length||token)&&window.matchMedia("(max-width: 680px)").matches)setPanel(true);
+      if((hasShare||token)&&window.matchMedia("(max-width: 680px)").matches)setPanel(true);
     }
     readLinkedList();
     window.addEventListener("hashchange",readLinkedList);
@@ -376,7 +376,9 @@ export default function Menu(){
     <div className="cartMode"><Mode table={table}/><span>{methods[method]}</span></div>
     {repeat&&scope&&!invalid&&<Reorder token={repeat} table={table} sold={sold} remaining={remaining} loaded={loaded} cart={cart}
       blocked={!!draft||busy} onAdd={addRepeat} onClose={dismissRepeat}/>}
-    {share&&scope&&!invalid&&<ReviewSharedCart share={share} plan={sharedPlan} cart={cart} busy={busy}
+    {scope&&!invalid&&!share&&!repeat&&<PasteSharedCart table={table} busy={busy}
+      onRead={lines=>{setShare({lines});setShareNotice("");}}/>}
+    {share&&scope&&!invalid&&<ReviewSharedCart share={share} plan={sharedPlan} cart={cart} table={table} busy={busy}
       pending={!!draft} notice={shareNotice} onAdd={addSharedCart} onClose={dismissShare}/>}
     {!count?<div className="empty"><Utensils size={30}/><strong>餐單還是空的</strong><p>從菜單加入想吃的餐點</p></div>:<ul className="orderLines">{lines.map(d=><li key={d.id}><div><b>{d.name}{sold.includes(d.id)||remaining[d.id]===0?"（售完）":""}</b><small>NT$ {d.price*cart[d.id]}</small></div><div className="stepper"><button disabled={!!draft||busy} aria-label={"減少"+d.name} onClick={()=>change(d.id,-1)}><Minus size={14}/></button><span>{cart[d.id]}</span><button disabled={!!draft||busy||cannotAdd(d.id)} aria-label={"增加"+d.name} onClick={()=>change(d.id,1)}><Plus size={14}/></button></div></li>)}</ul>}
     {count>0&&!draft&&!invalid&&<ShareCart items={items} disabled={busy}/>}

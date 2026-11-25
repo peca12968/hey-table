@@ -13,7 +13,7 @@ import {sqliteD1} from "../scripts/sqlite-d1.mjs";
 import {applyDemoMigrations} from "../scripts/apply-demo-migrations.mjs";
 import {bookablePickupSlots} from "../lib/pickup-slots.mjs";
 import {stationReview,stationReviewDigest} from "../lib/kitchen-timing.mjs";
-import {cartShareLink,readCartShare} from "../lib/cart-share.mjs";
+import {cartShareLink,readCartShare,readCartShareAddress} from "../lib/cart-share.mjs";
 
 const env={TAPPAY_MODE:"sandbox",TAPPAY_APP_ID:"123",TAPPAY_APP_KEY:"test-public",TAPPAY_PARTNER_KEY:"test-only",
   TAPPAY_SITE_ORIGIN:"https://order.example",TAPPAY_NOTIFY_URL:"https://notify.example/api/payments/notify"};
@@ -33,6 +33,15 @@ test("shared carts encode only item IDs and quantities and reject malformed or o
   for(const invalid of ["1.","2.sencha:2","1.sencha:0","1.sencha:21","1.sencha:1e1","1.sencha:01",
     "1.sencha:1:2","1.sencha:1,sencha:1","1.<b>:1","1.__proto__:1","1."+("x".repeat(1300))+":1",
     "1."+Array.from({length:25},(_,i)=>"dish-"+i+":1").join(",")])assert.equal(readCartShare(invalid),null);
+});
+test("pasted cart links must use the menu origin and return only reviewed items",()=>{
+  const origin="https://order.example",fragment="#cart=1.sencha%3A2";
+  assert.deepEqual(readCartShareAddress("  "+origin+"/?table=A08"+fragment+"  ",origin),[{id:"sencha",qty:2}]);
+  for(const invalid of ["https://another.example/"+fragment,origin+"/ticket"+fragment,
+    "https://user:password@order.example/"+fragment,"javascript:"+fragment,
+    "http://order.example/"+fragment,origin+":444/"+fragment,"/"+fragment,
+    origin+"/#reorder=example",origin+"/"+fragment+"&cart=1.sencha%3A1",
+    origin+"/?extra="+"x".repeat(4100)+fragment])assert.equal(readCartShareAddress(invalid,origin),null);
 });
 test("enable only configured methods and expose only SDK keys",()=>{
   assert.deepEqual(settings({...env,TAPPAY_MERCHANT_PX_PAY_PLUS:"test"}),{mode:"sandbox",methods:["cash","px_pay_plus"],appId:123,appKey:"test-public"});
