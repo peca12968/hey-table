@@ -20,34 +20,56 @@ export function PickupDate({value,disabled,onChange,label="取餐日期",paused=
   </div>;
 }
 
-export default function PickupSlots({selected,count,disabled,onChange,revision,day=""}){
+export function usePickupSlotAvailability({selected,count,active,revision,day}){
   const [expanded,setExpanded]=useState(false);
-  const [snapshot,setSnapshot]=useState(null);
-  const [error,setError]=useState("");
+  const [view,setView]=useState(null);
   const [reload,setReload]=useState(0);
+  const today=useBusinessToday();
   const opened=expanded||selected!==null||!!day;
+  const checking=active&&opened&&!!today;
+  const key=[today,day,revision,reload].join(":");
   useEffect(()=>{
-    if(!opened)return;
+    if(!checking)return;
     const controller=new AbortController();
-    request("/api/pickup-slots"+(day?"?date="+day:""),{signal:controller.signal}).then(({slots,paused})=>{
-      if(!controller.signal.aborted){setSnapshot({day,slots,paused});setError("");}
+    request("/api/pickup-slots"+(day?"?date="+encodeURIComponent(day):""),{
+      signal:AbortSignal.any([controller.signal,AbortSignal.timeout(10_000)]),
+    }).then(({slots,paused})=>{
+      if(!controller.signal.aborted)setView({key,snapshot:{slots,paused:paused===true}});
     }).catch(()=>{
-      if(!controller.signal.aborted){setSnapshot(null);setError("暫時無法讀取自取時段。");}
+      if(!controller.signal.aborted)setView({key,error:"暫時無法讀取自取時段。"});
     });
     return ()=>controller.abort();
-  },[day,opened,reload,revision]);
-  if(!opened)return <button type="button" className="outline pickupSlotsButton" disabled={disabled}
-    onClick={()=>setExpanded(true)}>預約取餐時段</button>;
-
-  const current=snapshot?.day===day?snapshot:null;
-  const slots=current?.slots??[];
+  },[day,key,checking]);
+  useEffect(()=>{
+    if(!checking)return;
+    const reloadSlots=()=>setReload(value=>value+1);
+    const onVisible=()=>{if(document.visibilityState==="visible")reloadSlots();};
+    window.addEventListener("online",reloadSlots);
+    document.addEventListener("visibilitychange",onVisible);
+    return ()=>{
+      window.removeEventListener("online",reloadSlots);
+      document.removeEventListener("visibilitychange",onVisible);
+    };
+  },[checking]);
+  const current=checking&&view?.key===key?view:null;
+  const slots=current?.snapshot?.slots??[];
   const match=slots.find(slot=>slot.start===selected);
+  const canFit=!!match&&match.remaining>=count;
+  return {opened,expand:()=>setExpanded(true),refresh:()=>setReload(value=>value+1),slots,match,
+    snapshot:current?.snapshot,error:current?.error,selectedBlocked:selected!==null&&(!canFit||!!current?.snapshot?.paused)};
+}
+
+export default function PickupSlots({selected,count,disabled,onChange,availability,day=""}){
+  const {opened,expand,refresh,slots,match,snapshot,error,selectedBlocked}=availability;
+  if(!opened)return <button type="button" className="outline pickupSlotsButton" disabled={disabled}
+    onClick={expand}>預約取餐時段</button>;
+
   const available=slots.some(slot=>slot.remaining>=count);
-  const needsChoice=current!==null&&selected!==null&&(!match||match.remaining<count);
+  const needsChoice=!!snapshot&&selectedBlocked;
   return <section className="pickupSlots" aria-label="預約取餐">
     {day&&<p className="muted">預約日期 {day}</p>}
     <label>自取時段<select value={selected??""} disabled={disabled} onChange={event=>{
-      setExpanded(true);
+      expand();
       onChange(event.target.value===""?null:Number(event.target.value));
     }}>
       <option value="">{day?"選擇時段":"盡快自取"}</option>
@@ -58,11 +80,13 @@ export default function PickupSlots({selected,count,disabled,onChange,revision,d
     </select></label>
     {disabled?null:<>
       <p className="muted">台灣時間，至少提前 30 分鐘。</p>
-      {current?.paused&&<p role="status">這個日期已暫停時段預約。</p>}
-      {!current?.paused&&needsChoice&&<p role="status">請重新選擇可容納這張餐單的時段。</p>}
-      {!needsChoice&&current&&!available&&!current.paused&&<p role="status">目前沒有可容納這張餐單的預約時段。</p>}
-      {error?<p role="status">{error} <button className="outline" type="button" onClick={()=>setReload(value=>value+1)}>重讀時段</button></p>:
-        !current&&<p role="status">正在讀取時段…</p>}
+      {snapshot?.paused&&<p role="status">這個日期已暫停時段預約。</p>}
+      {!snapshot?.paused&&needsChoice&&<p role="status">請重新選擇可容納這張餐單的時段。</p>}
+      {!needsChoice&&snapshot&&!available&&!snapshot.paused&&<p role="status">目前沒有可容納這張餐單的預約時段。</p>}
+      {error?<p role="status">{error} <button className="outline" type="button" onClick={refresh}>重讀時段</button></p>:
+        !snapshot&&<p role="status">正在讀取時段…</p>}
+      {snapshot&&(needsChoice||!available||snapshot.paused)&&
+        <button className="outline" type="button" onClick={refresh}>重新檢查時段</button>}
     </>}
   </section>;
 }

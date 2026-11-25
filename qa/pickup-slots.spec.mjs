@@ -66,6 +66,76 @@ test("mobile guest books a future day despite today's sellout and moves the rece
   }
 });
 
+test("customer and staff pickup recheck the selected slot before sending while preserving both drafts",async({page,request})=>{
+  const headers={Authorization:"Bearer local-test-kitchen"};
+  const date=businessDate(Date.now()+86_400_000),start=Date.parse(date+"T18:45:00+08:00");
+  const limit="/api/kitchen/pickup-slots",slots="/api/pickup-slots";
+  const setting=async()=>(await (await request.get(limit+"?date="+date,{headers})).json()).slots.find(slot=>slot.start===start);
+  const set=(capacity,revision)=>request.patch(limit,{headers,data:{date,start,capacity,revision}});
+  const original=await setting();
+  const operator=await page.context().newPage();
+  const booking={token:randomUUID(),mode:"pickup",table:null,note:"",items:[{id:"sencha",qty:1}],pickupSlot:start};
+  const cancel=()=>request.post("/api/ticket/cancel",{headers:{"X-Ticket":booking.token},data:{}});
+  let acquired=false;
+  try{
+    expect((await set(original.used+2,original.revision)).ok()).toBe(true);
+    await page.setViewportSize({width:360,height:780});
+    await operator.setViewportSize({width:360,height:780});
+    await operator.addInitScript(()=>sessionStorage.setItem("he-ri-staff","local-test-kitchen"));
+    await page.goto("/");
+    await page.getByLabel("取餐日期",{exact:true}).selectOption(date);
+    const tea=page.getByRole("button",{name:"加入日式熱煎茶",exact:true});
+    await tea.click();
+    await tea.click();
+    await page.getByRole("button",{name:/我的餐單/}).click();
+    const guestNote=page.getByPlaceholder("例如：餐具數量");
+    await guestNote.fill("外帶餐具兩份");
+    const guestSlot=page.getByLabel("自取時段"),submit=page.getByRole("button",{name:"確認送出訂單"});
+    await guestSlot.selectOption(String(start));
+    await expect(submit).toBeEnabled();
+
+    await operator.goto("/kitchen/create-pickup");
+    await operator.getByLabel("取餐日期",{exact:true}).selectOption(date);
+    await operator.getByRole("spinbutton",{name:/日式熱煎茶/}).fill("2");
+    const staffNote=operator.getByLabel("訂單備註");
+    await staffNote.fill("來店自取");
+    const staffSlot=operator.getByLabel("自取時段"),create=operator.getByRole("button",{name:"確認建立自取單"});
+    await staffSlot.selectOption(String(start));
+    await expect(create).toBeEnabled();
+
+    expect((await request.post("/api/orders",{data:booking})).ok()).toBe(true);
+    acquired=true;
+    await page.bringToFront();
+    await page.evaluate(()=>document.dispatchEvent(new Event("visibilitychange")));
+    await operator.evaluate(()=>window.dispatchEvent(new Event("online")));
+    for(const [browser,chooser,button,note,value] of [[page,guestSlot,submit,guestNote,"外帶餐具兩份"],
+      [operator,staffSlot,create,staffNote,"來店自取"]]){
+      await expect(browser.getByText("請重新選擇可容納這張餐單的時段。")).toBeVisible();
+      await expect(chooser).toHaveValue(String(start));
+      await expect(button).toBeDisabled();
+      await expect(note).toHaveValue(value);
+    }
+    await page.route(url=>url.pathname===slots,route=>route.fulfill({status:503,json:{error:"暫時中斷"}}),{times:1});
+    await page.evaluate(()=>window.dispatchEvent(new Event("online")));
+    await expect(page.getByText("暫時無法讀取自取時段。")).toBeVisible();
+    await expect(submit).toBeDisabled();
+    expect((await cancel()).ok()).toBe(true);
+    acquired=false;
+    await page.getByRole("button",{name:"重讀時段"}).click();
+    await expect(submit).toBeEnabled();
+    await operator.evaluate(()=>window.dispatchEvent(new Event("online")));
+    await expect(create).toBeEnabled();
+    await expect(guestSlot).toHaveValue(String(start));
+    await expect(staffSlot).toHaveValue(String(start));
+    expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBe(360);
+  }finally{
+    if(acquired)await cancel();
+    const current=await setting();
+    if(current.capacity!==original.capacity)await set(original.capacity,current.revision);
+    await operator.close();
+  }
+});
+
 test("mobile guests recover a full pickup slot and the kitchen sees when preparation can start",async({page})=>{
   const start=Date.parse("2026-11-25T12:00:00+08:00"),duration=900_000;
   const next=start+duration;

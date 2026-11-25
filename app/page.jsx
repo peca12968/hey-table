@@ -10,7 +10,7 @@ import CartAddOn from "./cart-add-on";
 import CartQuote from "./cart-quote";
 import Reorder from "./reorder";
 import {ItemNotesEditor} from "./item-notes";
-import PickupSlots,{PickupDate} from "./pickup-slots";
+import PickupSlots,{PickupDate,usePickupSlotAvailability} from "./pickup-slots";
 import {useBusinessToday} from "./use-business-today.mjs";
 import {pickupBookingDays,pickupSlotDuration} from "../lib/pickup-slots.mjs";
 
@@ -133,7 +133,11 @@ export default function Menu(){
   const maxFor=id=>Math.min(20,remaining[id]??20);
   const limitBlocked=lines.some(({id})=>cart[id]>(remaining[id]??20));
   const needsPickupSlot=!!bookingDay&&pickupSlot===null;
-  const bookingPaused=pickupPaused&&(!!bookingDay||pickupSlot!==null);
+  const pickupAvailability=usePickupSlotAvailability({selected:pickupSlot,count,day:bookingDay,revision:slotRevision,
+    active:count>0&&!!scope&&mode==="pickup"&&!draft});
+  const dayPaused=pickupAvailability.snapshot?.paused??pickupPaused;
+  const bookingPaused=dayPaused&&(!!bookingDay||pickupSlot!==null);
+  const pickupBlocked=needsPickupSlot||bookingPaused||pickupAvailability.selectedBlocked;
   const blocked=limitBlocked||lines.some(({id})=>sold.includes(id));
   const cannotAdd=id=>sold.includes(id)||(cart[id]||0)>=maxFor(id);
   const adjustments=blocked?lines.flatMap(({id,name})=>{
@@ -193,7 +197,7 @@ export default function Menu(){
     setAnnouncement("已依供應調整餐單，請確認新的份數和金額。");
   }
   async function submit(){
-    if(sending.current||invalid||!scope||!count||(!draft&&(paused||blocked||needsPickupSlot||bookingPaused||!loaded)))return;
+    if(sending.current||invalid||!scope||!count||(!draft&&(paused||blocked||pickupBlocked||!loaded)))return;
     sending.current=true;setBusy(true);setError("");
     const payload=draft??{token:crypto.randomUUID(),...(method==='cash'?{}:{paymentMethod:method}),mode,table,note,
       items:withItemNotes(items,lineNotes),...(applied?{comboVersion,expectedTotal:total}:{}),...(pickupSlot!==null?{pickupSlot}:{})};
@@ -223,7 +227,7 @@ export default function Menu(){
     {invalid&&<p className="error" role="alert">桌號無效，請重新掃描桌牌。也可<a href="/">改為線上自取</a>。</p>}
     {paused&&!invalid&&<p className="error" role="status">{intakeNotice(mode,intake[mode]===false?null:pausedTable)}</p>}
     <div className="columns"><section><div className="menuTitle"><div><p className="eyebrow">OUR MENU</p><h2>點餐菜單</h2></div><Mode table={table}/></div>
-    {scope&&mode==="pickup"&&<PickupDate value={pickupDate} disabled={busy||!!draft} paused={pickupPaused} onChange={selectPickupDate}/>}
+    {scope&&mode==="pickup"&&<PickupDate value={pickupDate} disabled={busy||!!draft} paused={dayPaused} onChange={selectPickupDate}/>}
     <nav className="tabs" aria-label="餐點分類">{groups.map(g=><button key={g} aria-pressed={group===g} onClick={()=>setGroup(g)}>{g}</button>)}</nav>
     <div className="grid">{dishes.filter(d=>group==="全部"||d.group===group).map(d=><article className="dish" key={d.id}><img src={"/food/"+d.id+".webp"} alt={d.name} loading="lazy"/><div className="dishInfo"><small>{d.group}</small><h3>{d.name}</h3><p>{d.description}</p>
       {!sold.includes(d.id)&&remaining[d.id]>0&&<p className="muted">{supplyLabel}剩餘 {remaining[d.id]} 份</p>}
@@ -240,7 +244,7 @@ export default function Menu(){
       setSelection(current=>({...current,lineNotes:{...current.lineNotes,[id]:value}}))}/>}
     {count>0&&<label className="note">訂單備註 <small>選填</small><textarea placeholder="例如：餐具數量" value={note} maxLength={160} disabled={!!draft||busy} onChange={e=>setNote(e.target.value)}/></label>}
     {count>0&&scope&&mode==="pickup"&&<PickupSlots selected={pickupSlot} count={count} day={bookingDay} disabled={!!draft||busy||paused}
-      onChange={value=>{setPickupSlot(value);setError("");}} revision={slotRevision}/>}
+      onChange={value=>{setPickupSlot(value);setError("");}} availability={pickupAvailability}/>}
     {count>0&&<label className="payChoice">付款方式<select value={method} disabled={!!draft||busy} onChange={e=>setMethod(e.target.value)}>
       {payments.methods.map(m=><option key={m} value={m}>{methods[m]}</option>)}</select>
       {method!=="cash"&&<small>{environmentLabel(payments.mode)}</small>}</label>}
@@ -270,7 +274,7 @@ export default function Menu(){
     {scope&&!loaded&&(menuFailed?<div className="supplyReview"><p role="status">暫時無法確認餐點供應，餐單已保留。</p>
       <button className="outline" onClick={()=>refreshMenu(true)}>重新檢查供應</button></div>:
       <p role="status">正在確認餐點供應狀態…</p>)}
-    <button className="primary full" disabled={busy||!count||invalid||(!draft&&(paused||blocked||needsPickupSlot||bookingPaused||!loaded||!payments.methods.includes(method)))} onClick={submit}><Check size={17}/>{busy?"送單中…":draft?"重試同一張訂單":paused?"暫停接單":"確認送出訂單"}</button></aside></div>
+    <button className="primary full" disabled={busy||!count||invalid||(!draft&&(paused||blocked||pickupBlocked||!loaded||!payments.methods.includes(method)))} onClick={submit}><Check size={17}/>{busy?"送單中…":draft?"重試同一張訂單":paused?"暫停接單":"確認送出訂單"}</button></aside></div>
     <span className="sr" aria-live="polite">{announcement}</span></main><Footer/>
     <button className="mobileCart" onClick={()=>setPanel(true)}><ShoppingBag size={18}/> 我的餐單 · {count} 件 <b>NT$ {total}</b></button></>;
 }

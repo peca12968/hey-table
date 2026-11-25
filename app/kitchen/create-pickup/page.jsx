@@ -3,7 +3,7 @@ import {useEffect,useState} from "react";
 import {Header,Footer,PickupAppointment,request} from "../../shared";
 import {dishes,numberOf,withItemNotes} from "../../../lib/menu.mjs";
 import {ItemNotesEditor} from "../../item-notes";
-import PickupSlots,{PickupDate} from "../../pickup-slots";
+import PickupSlots,{PickupDate,usePickupSlotAvailability} from "../../pickup-slots";
 import {useBusinessToday} from "../../use-business-today.mjs";
 import {pickupBookingDays} from "../../../lib/pickup-slots.mjs";
 import "./pickup.css";
@@ -63,13 +63,18 @@ export default function CreatePickup(){
   const total=lines.reduce((amount,dish)=>amount+dish.price*Number(quantities[dish.id]),0);
   const exceedsSupply=menu&&lines.some(dish=>Number(quantities[dish.id])>availableQuantity(menu,dish.id));
   const needsPickupSlot=!!bookingDay&&pickupSlot===null;
-  const bookingPaused=menu?.pickupPaused&&(!!bookingDay||pickupSlot!==null);
+  const selected=attempt?attempt.pickupSlot??null:pickupSlot;
+  const pickupAvailability=usePickupSlotAvailability({selected,count,day:bookingDay,revision,
+    active:count>0&&!!menu&&!attempt&&!result});
+  const pickupPaused=pickupAvailability.snapshot?.paused??menu?.pickupPaused;
+  const bookingPaused=pickupPaused&&(!!bookingDay||pickupSlot!==null);
+  const pickupBlocked=needsPickupSlot||bookingPaused||pickupAvailability.selectedBlocked;
   const locked=busy||Boolean(attempt);
   const receiptLink=result?"/ticket#"+result.token:"";
 
   async function submit(event){
     event.preventDefault();
-    if(busy||!menu||(!attempt&&(!lines.length||exceedsSupply||needsPickupSlot||bookingPaused)))return;
+    if(busy||!menu||(!attempt&&(!lines.length||exceedsSupply||pickupBlocked)))return;
     setError("");
     const payload=attempt??{token:crypto.randomUUID(),note:note.trim(),expectedTotal:total,
       items:withItemNotes(lines.map(dish=>({id:dish.id,qty:Number(quantities[dish.id])})),lineNotes),
@@ -126,7 +131,7 @@ export default function CreatePickup(){
       </div>
       {message&&<p role="status">{message}</p>}
     </section>}
-    {draft&&!result&&!denied&&<PickupDate value={pickupDate} disabled={locked} paused={menu?.pickupPaused} onChange={day=>{
+    {draft&&!result&&!denied&&<PickupDate value={pickupDate} disabled={locked} paused={pickupPaused} onChange={day=>{
       setError("");setMenuError("");setDraft({...draft,pickupDate:day,pickupSlot:null});
     }}/>}
     {menu&&draft&&!result&&<form className="sheet pickupForm" onSubmit={submit}>
@@ -147,13 +152,13 @@ export default function CreatePickup(){
         onChange={(id,value)=>setDraft({...draft,lineNotes:{...lineNotes,[id]:value}})}/>}
       <label className="note">訂單備註<textarea maxLength={160} value={note} disabled={locked}
         placeholder="例如：不要餐具" onChange={event=>setDraft({...draft,note:event.target.value})}/></label>
-      {count>0&&<PickupSlots selected={attempt?attempt.pickupSlot??null:pickupSlot} count={count} day={bookingDay} disabled={locked}
-        revision={revision} onChange={value=>{setError("");setDraft({...draft,pickupSlot:value});}}/>}
+      {count>0&&<PickupSlots selected={selected} count={count} day={bookingDay} disabled={locked}
+        availability={pickupAvailability} onChange={value=>{setError("");setDraft({...draft,pickupSlot:value});}}/>}
       <div className="total"><span>合計</span><b>NT$ {attempt?.expectedTotal??total}</b></div>
       {error&&<p className="error" role="alert">{error}</p>}
       {attempt&&!busy&&!error&&<p role="status">這張餐單的送單結果尚待確認。</p>}
       {exceedsSupply&&!attempt&&<p className="error" role="status">部分餐點已超過可供應份數，請調整餐單。</p>}
-      <button className="primary full" disabled={busy||(!attempt&&(!lines.length||exceedsSupply||needsPickupSlot||bookingPaused))}>
+      <button className="primary full" disabled={busy||(!attempt&&(!lines.length||exceedsSupply||pickupBlocked))}>
         {busy?"送單中…":attempt?"重試同一張自取單":"確認建立自取單"}
       </button>
     </form>}
