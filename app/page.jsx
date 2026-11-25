@@ -11,6 +11,7 @@ import CartQuote from "./cart-quote";
 import Reorder from "./reorder";
 import {ItemNotesEditor} from "./item-notes";
 import PickupSlots,{PickupDate,usePickupSlotAvailability} from "./pickup-slots";
+import PickupSuggestion from "./pickup-suggestion";
 import {useBusinessToday} from "./use-business-today.mjs";
 import {pickupBookingDays,pickupSlotDuration} from "../lib/pickup-slots.mjs";
 
@@ -139,6 +140,8 @@ export default function Menu(){
   const bookingPaused=dayPaused&&(!!bookingDay||pickupSlot!==null);
   const pickupBlocked=needsPickupSlot||bookingPaused||pickupAvailability.selectedBlocked;
   const blocked=limitBlocked||lines.some(({id})=>sold.includes(id));
+  const suggestPickup=loaded&&!invalid&&!draft&&!busy&&!paused&&(blocked||dayPaused||
+    (pickupAvailability.snapshot&&(pickupAvailability.selectedBlocked||!pickupAvailability.slots.some(slot=>slot.remaining>=count))));
   const cannotAdd=id=>sold.includes(id)||(cart[id]||0)>=maxFor(id);
   const adjustments=blocked?lines.flatMap(({id,name})=>{
     const from=cart[id],to=sold.includes(id)?0:maxFor(id);
@@ -176,8 +179,8 @@ export default function Menu(){
     setAnnouncement("先前餐點已加入餐單，請確認後送出。");
     return true;
   }
-  function selectPickupDate(day){
-    setPickupDate(day);setPickupSlot(null);setError("");setSupplyReview(null);
+  function selectPickupDate(day,start=null){
+    setPickupDate(day);setPickupSlot(start);setError("");setSupplyReview(null);
     if((day||today)!==supplyDay){
       setRemaining({});setPickupPaused(false);setAvailability(null);
     }
@@ -245,6 +248,10 @@ export default function Menu(){
     {count>0&&<label className="note">訂單備註 <small>選填</small><textarea placeholder="例如：餐具數量" value={note} maxLength={160} disabled={!!draft||busy} onChange={e=>setNote(e.target.value)}/></label>}
     {count>0&&scope&&mode==="pickup"&&<PickupSlots selected={pickupSlot} count={count} day={bookingDay} disabled={!!draft||busy||paused}
       onChange={value=>{setPickupSlot(value);setError("");}} availability={pickupAvailability}/>}
+    {count>0&&scope&&mode==="pickup"&&suggestPickup&&<PickupSuggestion key={JSON.stringify([supplyDay,items])}
+      date={supplyDay} items={items} onChoose={({date,start})=>{
+        selectPickupDate(date,start);setAnnouncement("已帶入新的預約時段，請核對餐單後再送出。");
+      }}/>}
     {count>0&&<label className="payChoice">付款方式<select value={method} disabled={!!draft||busy} onChange={e=>setMethod(e.target.value)}>
       {payments.methods.map(m=><option key={m} value={m}>{methods[m]}</option>)}</select>
       {method!=="cash"&&<small>{environmentLabel(payments.mode)}</small>}</label>}

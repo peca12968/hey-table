@@ -4,6 +4,7 @@ import {Header,Footer,PickupAppointment,request} from "../../shared";
 import {dishes,numberOf,withItemNotes} from "../../../lib/menu.mjs";
 import {ItemNotesEditor} from "../../item-notes";
 import PickupSlots,{PickupDate,usePickupSlotAvailability} from "../../pickup-slots";
+import PickupSuggestion from "../../pickup-suggestion";
 import {useBusinessToday} from "../../use-business-today.mjs";
 import {pickupBookingDays} from "../../../lib/pickup-slots.mjs";
 import "./pickup.css";
@@ -59,6 +60,7 @@ export default function CreatePickup(){
   }
 
   const lines=dishes.filter(dish=>Number(quantities[dish.id])>0);
+  const items=lines.map(dish=>({id:dish.id,qty:Number(quantities[dish.id])}));
   const count=lines.reduce((amount,dish)=>amount+Number(quantities[dish.id]),0);
   const total=lines.reduce((amount,dish)=>amount+dish.price*Number(quantities[dish.id]),0);
   const exceedsSupply=menu&&lines.some(dish=>Number(quantities[dish.id])>availableQuantity(menu,dish.id));
@@ -70,6 +72,8 @@ export default function CreatePickup(){
   const bookingPaused=pickupPaused&&(!!bookingDay||pickupSlot!==null);
   const pickupBlocked=needsPickupSlot||bookingPaused||pickupAvailability.selectedBlocked;
   const locked=busy||Boolean(attempt);
+  const canSuggest=!locked&&(exceedsSupply||pickupPaused||
+    (pickupAvailability.snapshot&&(pickupAvailability.selectedBlocked||!pickupAvailability.slots.some(slot=>slot.remaining>=count))));
   const receiptLink=result?"/ticket#"+result.token:"";
 
   async function submit(event){
@@ -77,7 +81,7 @@ export default function CreatePickup(){
     if(busy||!menu||(!attempt&&(!lines.length||exceedsSupply||pickupBlocked)))return;
     setError("");
     const payload=attempt??{token:crypto.randomUUID(),note:note.trim(),expectedTotal:total,
-      items:withItemNotes(lines.map(dish=>({id:dish.id,qty:Number(quantities[dish.id])})),lineNotes),
+      items:withItemNotes(items,lineNotes),
       ...(pickupSlot===null?{}:{pickupSlot})};
     const pending={...draft,attempt:payload};
     if(!saveDraft(pending)){
@@ -154,6 +158,9 @@ export default function CreatePickup(){
         placeholder="例如：不要餐具" onChange={event=>setDraft({...draft,note:event.target.value})}/></label>
       {count>0&&<PickupSlots selected={selected} count={count} day={bookingDay} disabled={locked}
         availability={pickupAvailability} onChange={value=>{setError("");setDraft({...draft,pickupSlot:value});}}/>}
+      {count>0&&canSuggest&&<PickupSuggestion key={JSON.stringify([bookingDay||today,items])}
+        date={bookingDay||today} items={items} endpoint="/api/kitchen/pickup-suggestion" staffHeaders={staffHeaders}
+        onChoose={({date,start})=>{setError("");setDraft({...draft,pickupDate:date,pickupSlot:start});}}/>}
       <div className="total"><span>合計</span><b>NT$ {attempt?.expectedTotal??total}</b></div>
       {error&&<p className="error" role="alert">{error}</p>}
       {attempt&&!busy&&!error&&<p role="status">這張餐單的送單結果尚待確認。</p>}

@@ -199,6 +199,75 @@ test("customer and staff pickup recheck the selected slot before sending while p
   }
 });
 
+test("new guest and staff pickup drafts keep their contents when adopting the next suggested slot",async({page,request})=>{
+  const now=Date.now(),date=businessDate(now+86_400_000),next=businessDate(now+2*86_400_000);
+  const start=Date.parse(date+"T15:00:00+08:00"),alternative=Date.parse(next+"T11:00:00+08:00");
+  const headers={Authorization:"Bearer local-test-kitchen"},endpoint="/api/kitchen/daily-limits",dish="sencha";
+  const read=async day=>(await (await request.get(endpoint+"?date="+day,{headers})).json()).limits[dish];
+  const set=async(day,capacity)=>request.patch(endpoint,{headers,data:{date:day,dish,capacity,revision:(await read(day)).revision}});
+  const prior=await read(date),priorNext=await read(next);
+  const operator=await page.context().newPage();
+  let ticket;
+  try{
+    expect((await set(date,prior.used+2)).ok()).toBe(true);
+    expect((await set(next,priorNext.used+3)).ok()).toBe(true);
+    await page.setViewportSize({width:360,height:780});
+    await operator.setViewportSize({width:360,height:780});
+    await operator.addInitScript(()=>sessionStorage.setItem("he-ri-staff","local-test-kitchen"));
+    await page.goto("/");
+    await page.getByLabel("取餐日期",{exact:true}).selectOption(date);
+    const tea=page.getByRole("button",{name:"加入日式熱煎茶",exact:true});
+    await tea.click();
+    await tea.click();
+    await page.getByRole("button",{name:/我的餐單/}).click();
+    await page.getByPlaceholder("例如：餐具數量").fill("保留外帶備註");
+    await page.getByLabel("付款方式").selectOption("line_pay");
+    await page.getByLabel("自取時段").selectOption(String(start));
+    const submit=page.getByRole("button",{name:"確認送出訂單"});
+    await expect(submit).toBeEnabled();
+
+    await operator.goto("/kitchen/create-pickup");
+    await operator.getByLabel("取餐日期",{exact:true}).selectOption(date);
+    const qty=operator.getByRole("spinbutton",{name:/日式熱煎茶/});
+    await qty.fill("2");
+    await operator.getByLabel("訂單備註").fill("保留電話預訂備註");
+    await operator.getByLabel("自取時段").selectOption(String(start));
+    const create=operator.getByRole("button",{name:"確認建立自取單"});
+    await expect(create).toBeEnabled();
+
+    expect((await set(date,prior.used+1)).ok()).toBe(true);
+    await page.evaluate(()=>window.dispatchEvent(new Event("online")));
+    await operator.getByRole("button",{name:"更新供應"}).click();
+    for(const [browser,confirm] of [[page,submit],[operator,create]]){
+      const panel=browser.getByRole("region",{name:"其他可用取餐日期"});
+      await expect(confirm).toBeDisabled();
+      await panel.getByRole("button",{name:"找下一個可用日期"}).click();
+      await expect(panel.getByText(next+" · 11:00～11:15",{exact:true})).toBeVisible();
+      await expect(browser.getByLabel("取餐日期",{exact:true})).toHaveValue(date);
+      await panel.getByRole("button",{name:"使用此時段"}).click();
+      await expect(browser.getByLabel("取餐日期",{exact:true})).toHaveValue(next);
+      await expect(browser.getByLabel("自取時段")).toHaveValue(String(alternative));
+      await expect(confirm).toBeEnabled();
+      expect(await browser.evaluate(()=>document.documentElement.scrollWidth)).toBe(360);
+    }
+    await expect(page.getByPlaceholder("例如：餐具數量")).toHaveValue("保留外帶備註");
+    await expect(page.getByLabel("付款方式")).toHaveValue("line_pay");
+    await expect(operator.getByLabel("訂單備註")).toHaveValue("保留電話預訂備註");
+    await expect(qty).toHaveValue("2");
+    expect((await read(next)).used).toBe(priorNext.used);
+    await submit.click();
+    await page.waitForURL("**/ticket#*");
+    ticket={"X-Ticket":new URL(page.url()).hash.slice(1)};
+    const receipt=await (await request.get("/api/ticket",{headers:ticket})).json();
+    expect(receipt).toMatchObject({pickupSlot:alternative,note:"保留外帶備註",paymentMethod:"line_pay",items:[{id:dish,qty:2}]});
+  }finally{
+    if(ticket)await request.post("/api/ticket/cancel",{headers:ticket,data:{}});
+    await set(date,prior.capacity);
+    await set(next,priorNext.capacity);
+    await operator.close();
+  }
+});
+
 test("receipt and kitchen recheck a selected reschedule against shared capacity",async({page,request})=>{
   const staff={Authorization:"Bearer local-test-kitchen"};
   const date=businessDate(Date.now()+86_400_000);

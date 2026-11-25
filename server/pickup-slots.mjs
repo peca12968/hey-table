@@ -1,6 +1,6 @@
 import {businessDate,businessDayRange} from "../lib/business-day.mjs";
 import {bookablePickupSlots,pickupBookingDays,pickupPrepLead,pickupSlotCapacity,pickupSlotDuration,pickupSlotsForDay} from "../lib/pickup-slots.mjs";
-import {exceededOrderPortions} from "./daily-limits.mjs";
+import {exceededOrderPortions,exceededPortions} from "./daily-limits.mjs";
 import {expirePaymentHolds} from "./payment-holds.mjs";
 
 const portions="SUM(json_extract(line.value,'$.qty'))";
@@ -49,24 +49,45 @@ export async function pickupSlots(db,now,day){
   return (await pickupSlotOptions(db,now,day)).availability;
 }
 
+function firstFittingSlot(quantity,exclude=""){
+  return `SELECT candidate.value FROM json_each(?) AS candidate
+    WHERE ${usedAt("candidate.value")}+${quantity}<=${capacityAt("candidate.value")} ${exclude}
+    ORDER BY candidate.value LIMIT 1`;
+}
+
+function firstSuggestion(days,options){
+  const index=options.findIndex(result=>result.results[0]?.start!=null);
+  return index===-1?null:{date:days[index],start:options[index].results[0].start};
+}
+
+export async function suggestCartPickupSlot(db,now,after,items,staff){
+  const days=pickupBookingDays(now).filter(day=>day>after);
+  if(!days.length)return null;
+  const lines=JSON.stringify(items),count=items.reduce((sum,item)=>sum+item.qty,0);
+  const searches=days.map(day=>db.prepare(`SELECT (${firstFittingSlot("?")}) AS start
+    WHERE NOT ${pickupDayPaused}
+    AND (? OR NOT EXISTS(SELECT 1 FROM order_intake WHERE mode='pickup' AND accepting=0))
+    AND NOT EXISTS(SELECT 1 FROM unavailable JOIN json_each(?) AS chosen
+      ON unavailable.dish=json_extract(chosen.value,'$.id'))
+    AND NOT EXISTS (${exceededPortions})`)
+    .bind(JSON.stringify(bookablePickupSlots(now,day)),count,day,Number(staff),lines,lines,day,...businessDayRange(day)));
+  const [, ...options]=await db.batch([expirePaymentHolds(db,now),...searches]);
+  return firstSuggestion(days,options);
+}
+
 export async function suggestPickupSlot(db,now,after,orderKey,ref){
   const days=pickupBookingDays(now).filter(day=>day>after);
   const searches=days.map(day=>{
     const range=businessDayRange(day);
-    return db.prepare(`SELECT (
-      SELECT candidate.value FROM json_each(?) AS candidate
-      WHERE candidate.value<>orders.pickup_slot
-      AND ${usedAt("candidate.value")}+${orderPortions}<=${capacityAt("candidate.value")}
-      ORDER BY candidate.value LIMIT 1
-    ) AS start FROM orders WHERE ${orderKey}=? AND mode='pickup' AND status='pending' AND pickup_slot>?
+    return db.prepare(`SELECT (${firstFittingSlot(orderPortions,"AND candidate.value<>orders.pickup_slot")}) AS start
+    FROM orders WHERE ${orderKey}=? AND mode='pickup' AND status='pending' AND pickup_slot>?
     AND NOT ${pickupDayPaused}
     AND ((pickup_slot>=? AND pickup_slot<?) OR NOT EXISTS (${exceededOrderPortions}))`)
       .bind(JSON.stringify(bookablePickupSlots(now,day)),ref,now+pickupPrepLead,day,...range,day,...range);
   });
   const [,found,...options]=await db.batch([expirePaymentHolds(db,now),
     db.prepare(`SELECT mode,status,pickup_slot FROM orders WHERE ${orderKey}=?`).bind(ref),...searches]);
-  const index=options.findIndex(result=>result.results[0]?.start!=null);
-  return {order:found.results[0],suggestion:index===-1?null:{date:days[index],start:options[index].results[0].start}};
+  return {order:found.results[0],suggestion:firstSuggestion(days,options)};
 }
 
 export async function pickupSlotLimits(db,date,now){
