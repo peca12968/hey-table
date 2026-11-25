@@ -225,6 +225,13 @@
       "when": 1795587416479,
       "tag": "0031_pickup_arrivals",
       "breakpoints": true
+    },
+    {
+      "idx": 32,
+      "version": "6",
+      "when": 1795588142014,
+      "tag": "0032_pickup_arrival_index",
+      "breakpoints": true
     }
   ]
 }

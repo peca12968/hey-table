@@ -37,6 +37,14 @@ function formatDuration(ms) {
   return minutes?minutes+" 分 "+seconds%60+" 秒":seconds+" 秒";
 }
 
+function DurationValue({stage}){
+  return <dd>
+    {stage.samples>0?<><strong>中位數 {formatDuration(stage.medianMs)}</strong>
+      <span>第 90 百分位數 {formatDuration(stage.p90Ms)}</span></>:<span>目前無可用時間紀錄</span>}
+    <small>可用紀錄 {stage.samples}／{stage.eligible} 張</small>
+  </dd>;
+}
+
 function DurationSummary({timing}) {
   return <section className="sheet dailyTiming" aria-labelledby="daily-timing-title">
     <h2 id="daily-timing-title">製作與交餐耗時</h2>
@@ -44,16 +52,22 @@ function DurationSummary({timing}) {
     <div className="dailyTimingGrid">
       {[["pickup","自取"],["table","掃碼內用"]].map(([mode,name])=><article key={mode} aria-label={name+"耗時"}>
         <h3>{name}</h3>
-        <dl>{[["preparation","製作"],["handoff","交餐等候"]].map(([key,label])=>{
-          const stage=timing[mode][key];
-          return <div key={key}><dt>{label}</dt><dd>
-            {stage.samples>0?<><strong>中位數 {formatDuration(stage.medianMs)}</strong>
-              <span>第 90 百分位數 {formatDuration(stage.p90Ms)}</span></>:<span>目前無可用時間紀錄</span>}
-            <small>可用紀錄 {stage.samples}／{stage.eligible} 張</small>
-          </dd></div>;
-        })}</dl>
+        <dl>{[["preparation","製作"],["handoff","交餐等候"]].map(([key,label])=>
+          <div key={key}><dt>{label}</dt><DurationValue stage={timing[mode][key]}/></div>)}</dl>
       </article>)}
     </div>
+  </section>;
+}
+
+function ArrivalSummary({timing}){
+  return <section className="sheet dailyTiming" aria-labelledby="daily-arrival-title">
+    <h2 id="daily-arrival-title">自取到店後等候</h2>
+    <p>按台灣到店日期統計。{timing.reported} 張回報到店，{timing.overall.eligible} 張已交餐。</p>
+    <div className="dailyTimingGrid">
+      {[["overall","全部到店等候"],["readyAtArrival","到店時已備妥"],["preparingAtArrival","到店時尚未備妥"]].map(([key,label])=>
+        <article key={key} aria-label={label}><dl><div><dt>{label}</dt><DurationValue stage={timing[key]}/></div></dl></article>)}
+    </div>
+    {timing.unknownReadiness>0&&<p>有 {timing.unknownReadiness} 張缺少有效的備妥時間，等候時間計入全部到店等候。</p>}
   </section>;
 }
 
@@ -116,6 +130,7 @@ export default function DailyOperations() {
         <ChannelSummary name="掃碼內用" summary={report.channels.table}/>
       </div>
       {report.timing&&<DurationSummary timing={report.timing}/>}
+      {report.arrivalTiming&&<ArrivalSummary timing={report.arrivalTiming}/>}
       <section className="sheet dailyDishes">
         <div className="actions dailyDishesHeader">
           <h2>已交餐品項</h2>

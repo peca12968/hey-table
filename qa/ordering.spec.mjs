@@ -310,11 +310,14 @@ test("staff can view a Taiwan-date summary and download the displayed snapshot o
   await expect(page.getByRole("button",{name:"下載摘要 JSON"})).toHaveCount(0);
   await page.addInitScript(()=>sessionStorage.setItem("he-ri-staff","local-test-kitchen"));
   const headers={Authorization:"Bearer local-test-kitchen"};
-  const response=await request.post("/api/orders",{data:{token:randomUUID(),mode:"pickup",note:"交班測試備註",items:[{id:"sencha",qty:2}]}});
+  const token=randomUUID();
+  const response=await request.post("/api/orders",{data:{token,mode:"pickup",note:"交班測試備註",items:[{id:"sencha",qty:2}]}});
   expect(response.ok()).toBe(true);
   const {id,created}=await response.json();
-  for(const [from,to] of [["pending","preparing"],["preparing","ready"],["ready","completed"]])
+  for(const [from,to] of [["pending","preparing"],["preparing","ready"]])
     expect((await request.patch("/api/kitchen/status",{headers,data:{id,from,to}})).ok()).toBe(true);
+  expect((await request.post("/api/ticket/arrival",{headers:{"X-Ticket":token},data:{}})).ok()).toBe(true);
+  expect((await request.patch("/api/kitchen/status",{headers,data:{id,from:"ready",to:"completed"}})).ok()).toBe(true);
   const table=await request.post("/api/orders",{data:{token:randomUUID(),mode:"table",table:"A03",note:"",items:[{id:"sencha",qty:1}]}});
   expect(table.ok(),await table.text()).toBe(true);
   const tableOrder=await table.json();
@@ -347,6 +350,12 @@ test("staff can view a Taiwan-date summary and download the displayed snapshot o
   await expect(pickup.getByText(/中位數/)).toHaveCount(2);
   const {samples,eligible}=report.timing.pickup.preparation;
   await expect(pickup.locator("dl > div").first()).toContainText("可用紀錄 "+samples+"／"+eligible+" 張");
+  const arrival=page.getByRole("region",{name:"自取到店後等候"});
+  const ready=arrival.getByRole("article",{name:"到店時已備妥",exact:true});
+  const readiness=report.arrivalTiming.readyAtArrival;
+  expect(readiness.samples).toBeGreaterThan(0);
+  await expect(ready).toContainText("可用紀錄 "+readiness.samples+"／"+readiness.eligible+" 張");
+  await expect(ready.getByText(/中位數/)).toBeVisible();
   expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBe(360);
   const pending=page.waitForEvent("download");
   await download.click();
@@ -372,6 +381,7 @@ test("staff can view a Taiwan-date summary and download the displayed snapshot o
   await expect(downloadCsv).toBeHidden();
   await expect(page.locator(".dailyCapture time")).toBeVisible();
   await expect(timing).toBeVisible();
+  await expect(arrival).toBeVisible();
   await expect(teaRow).toBeVisible();
   await page.emulateMedia({media:"screen"});
   await date.fill("2001-03-05");
@@ -381,6 +391,7 @@ test("staff can view a Taiwan-date summary and download the displayed snapshot o
   await expect(page.getByText("這一天沒有已交餐品項。")).toBeVisible();
   await expect(downloadCsv).toHaveCount(0);
   await expect(timing.getByText("目前無可用時間紀錄")).toHaveCount(4);
+  await expect(arrival.getByText("目前無可用時間紀錄")).toHaveCount(3);
 });
 
 test("daily summary rolls over at Taipei midnight and keeps an explicitly selected date",async({page})=>{

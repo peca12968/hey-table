@@ -1311,6 +1311,48 @@ test("staff pickup roster groups one Taipei day and excludes private receipt and
   }
 });
 
+test("daily arrival waits belong to the Taipei arrival date and group only valid readiness timestamps",async t=>{
+  const db=database();
+  t.after(()=>db.sqlite.close());
+  const date="2026-11-23",start=Date.parse(date+"T00:00:00+08:00"),end=start+86_400_000,now=end+3_600_000;
+  t.mock.method(Date,"now",()=>now);
+  const staff={Authorization:"Bearer fixture-staff"},runtime={DB:db,STAFF_KEY:"fixture-staff"};
+  const call=(day,timing=true)=>api(new Request("https://order.example/api/kitchen/daily?date="+day+(timing?"&timing=1":""),{headers:staff}),runtime);
+  const insert=db.sqlite.prepare(`INSERT INTO orders(token,mode,note,items,total,created,status,pickup_arrived_at,status_history)
+    VALUES (?,?,'fixture-private-note','[]',45,?,?,?,?)`);
+  const add=({arrived,ready=null,handedOff=null,created=start-60_000,mode="pickup",status="completed"})=>{
+    const history=[
+      ...(ready===null?[]:[{from:"preparing",status:"ready",at:ready}]),
+      ...(handedOff===null?[]:[{from:"ready",status:"completed",at:handedOff}]),
+    ];
+    insert.run(crypto.randomUUID(),mode,created,status,arrived,JSON.stringify(history));
+  };
+  add({arrived:start,ready:start-10_000,handedOff:start+30_000});
+  add({arrived:end-30_000,ready:end+5000,handedOff:end+15_000});
+  add({arrived:start+2000,handedOff:start+12_000});
+  add({arrived:start+20_000,ready:start+1000,handedOff:start+5000});
+  add({arrived:start+30_000,status:"ready"});
+  add({arrived:start+35_000,status:"cancelled"});
+  add({arrived:start+40_000,ready:start+40_000,handedOff:start+40_000});
+  add({arrived:end,ready:end,handedOff:end+1000});
+  add({arrived:start+1000,ready:start,handedOff:start+2000,mode:"table"});
+  add({arrived:null,ready:start,handedOff:start+1000});
+  add({arrived:start+2000,ready:start+4000,handedOff:start+4000,created:start+3000});
+  const result=await call(date);
+  assert.equal(result.headers.get("Cache-Control"),"no-store");
+  const raw=await result.text();
+  assert.ok(!raw.includes("fixture-private-note"));
+  const report=JSON.parse(raw);
+  assert.deepEqual(report.arrivalTiming,{reported:7,unknownReadiness:1,
+    overall:{eligible:5,samples:4,medianMs:20000,p90Ms:45000},
+    readyAtArrival:{eligible:2,samples:2,medianMs:15000,p90Ms:30000},
+    preparingAtArrival:{eligible:1,samples:1,medianMs:45000,p90Ms:45000},
+  });
+  assert.equal(report.channels.pickup.orders,1);
+  assert.equal((await (await call("2026-11-24")).json()).arrivalTiming.overall.medianMs,1000);
+  assert.equal(Object.hasOwn(await (await call(date,false)).json(),"arrivalTiming"),false);
+});
+
 test("pickup arrival uses the receipt credential and persists the first time through handoff",async t=>{
   const oldToken=crypto.randomUUID();
   let now=Date.parse("2026-11-25T12:00:00+08:00");

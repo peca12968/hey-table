@@ -1,0 +1,1 @@
+CREATE INDEX `orders_pickup_arrival` ON `orders` (`pickup_arrived_at`) WHERE "orders"."pickup_arrived_at" IS NOT NULL;
