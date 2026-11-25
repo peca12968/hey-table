@@ -64,8 +64,10 @@ CREATE TABLE IF NOT EXISTS reservation_releases (
     release_id TEXT NOT NULL,
     quantity INTEGER NOT NULL CHECK (quantity > 0),
     held_after INTEGER NOT NULL CHECK (held_after >= 0),
+    released_at_ms INTEGER,
     PRIMARY KEY (reservation_id, release_id)
 );
+CREATE INDEX IF NOT EXISTS release_timeline ON reservation_releases(reservation_id, held_after);
 CREATE TABLE IF NOT EXISTS reservation_release_batches (
     batch_id TEXT NOT NULL,
     reservation_id TEXT NOT NULL,
@@ -146,6 +148,9 @@ class Store:
             if "reduced" not in columns:
                 conn.execute("""ALTER TABLE reservations ADD COLUMN reduced INTEGER NOT NULL DEFAULT 0
                                 CHECK (reduced BETWEEN 0 AND quantity - shipped)""")
+            release_columns = {row["name"] for row in conn.execute("PRAGMA table_info(reservation_releases)")}
+            if "released_at_ms" not in release_columns:
+                conn.execute("ALTER TABLE reservation_releases ADD COLUMN released_at_ms INTEGER")
             conn.execute("""CREATE INDEX IF NOT EXISTS active_deadlines ON reservations(expires_at_ms)
                             WHERE state='held' AND expires_at_ms IS NOT NULL""")
             conn.execute("INSERT OR IGNORE INTO products VALUES ('KIT-01', 20, 20)")
@@ -463,17 +468,17 @@ class Store:
         return row["quantity"] - row["shipped"] - row["reduced"] if row["state"] == "held" else 0
 
     def release_units(self, key, release_id, quantity):
-        with self.current_inventory() as (conn, _):
+        with self.current_inventory() as (conn, now):
             row = self.find_reservation(conn, key)
-            receipt = conn.execute("""SELECT * FROM reservation_releases
+            receipt = conn.execute("""SELECT reservation_id,release_id,quantity,held_after FROM reservation_releases
                                       WHERE reservation_id=? AND release_id=?""", (key, release_id)).fetchone()
             if receipt:
                 if receipt["quantity"] != quantity:
                     raise Conflict("Release key already used with different quantity")
                 return dict(receipt), False
-            return self.record_release(conn, row, release_id, quantity), True
+            return self.record_release(conn, row, release_id, quantity, now), True
 
-    def record_release(self, conn, row, release_id, quantity):
+    def record_release(self, conn, row, release_id, quantity, released_at_ms=None):
         key = row["id"]
         held_after = self.held_units(row) - quantity
         if held_after < 0:
@@ -481,7 +486,9 @@ class Store:
         conn.execute("UPDATE products SET available=available+? WHERE sku=?", (quantity, row["sku"]))
         conn.execute("UPDATE reservations SET reduced=reduced+?, state=? WHERE id=?",
                      (quantity, "held" if held_after else "released", key))
-        conn.execute("INSERT INTO reservation_releases VALUES (?,?,?,?)", (key, release_id, quantity, held_after))
+        conn.execute("""INSERT INTO reservation_releases
+                        (reservation_id,release_id,quantity,held_after,released_at_ms) VALUES (?,?,?,?,?)""",
+                     (key, release_id, quantity, held_after, released_at_ms))
         return {"reservation_id": key, "release_id": release_id, "quantity": quantity, "held_after": held_after}
 
     @staticmethod
@@ -528,6 +535,23 @@ class Store:
             if receipt is None:
                 raise Missing("Unknown release batch")
             return receipt
+
+    def release_history(self, key, limit, after_held):
+        with self.current_inventory() as (conn, now):
+            reservation = self.progress_row(self.find_reservation(conn, key))
+            # Releases and shipments only decrease a hold, so each release leaves a distinct quantity.
+            rows = [dict(row) for row in conn.execute("""
+                SELECT CASE WHEN b.batch_id IS NULL THEN 'single' ELSE 'batch' END AS source,
+                       COALESCE(b.batch_id,r.release_id) AS receipt_id,
+                       COALESCE(b.released_at_ms,r.released_at_ms) AS released_at_ms,
+                       r.held_after+r.quantity AS held_before,r.quantity,r.held_after
+                FROM reservation_releases r LEFT JOIN reservation_release_batches b
+                  USING (reservation_id, release_id)
+                WHERE r.reservation_id=? AND r.held_after>? ORDER BY r.held_after LIMIT ?
+            """, (key, -1 if after_held is None else after_held, limit + 1))]
+            page = rows[:limit]
+            return {"captured_at_ms": now, "reservation": reservation, "releases": page,
+                    "next_after_held": page[-1]["held_after"] if len(rows) > limit else None}
 
     def progress_row(self, row):
         outstanding = row["quantity"] - row["shipped"]

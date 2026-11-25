@@ -226,6 +226,22 @@ class ReleaseBatchReceipt(BaseModel):
     items: list[ReleasedBatchItem]
 
 
+class ReleaseHistoryItem(BaseModel):
+    source: Literal["single", "batch"]
+    receipt_id: str
+    released_at_ms: int | None
+    held_before: int
+    quantity: int
+    held_after: int
+
+
+class ReleaseHistory(BaseModel):
+    captured_at_ms: int
+    reservation: Progress
+    releases: list[ReleaseHistoryItem]
+    next_after_held: int | None
+
+
 ExpectedDeadline = Annotated[int, Field(strict=True, ge=0, le=2**63 - 1)]
 ExtensionSeconds = Annotated[int, Field(strict=True, ge=1, le=86_400)]
 
@@ -465,6 +481,13 @@ def create_app(path: Path, *, ttl_seconds=900, clock=time.time):
         if not created:
             response.status_code = 200
         return receipt
+
+    @app.get("/reservations/{key}/releases", response_model=ReleaseHistory)
+    def release_history(key: str, response: Response,
+                        limit: Annotated[int, Query(ge=1, le=100)] = 25,
+                        after_held: Annotated[int | None, Query(ge=0, le=2**63 - 1)] = None):
+        response.headers["Cache-Control"] = "no-store"
+        return store.release_history(key, limit, after_held)
 
     @app.get("/reservations/{key}", response_model=Progress)
     def progress(key: str):

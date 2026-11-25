@@ -97,6 +97,9 @@ def capture(db):
 
         now = 300
         release_batch = capture_release_batch(api)
+        now = 301
+        focus_key = release_batch["items"][0]["reservation_id"]
+        release_batch["history"] = capture_release_history(api, focus_key)
 
     return {"stages": stages, "renewal_batch": renewal_batch, "release_batch": release_batch}
 
@@ -137,6 +140,17 @@ def capture_release_batch(api):
                    "available_after": stock_after[sku]["available"],
                    "capacity_before": stock_before[sku]["capacity"], "capacity_after": stock_after[sku]["capacity"]}
                   for line, (key, sku, _, _) in zip(receipt["items"], orders, strict=True)],
+    }
+
+
+def capture_release_history(api, key):
+    path = f"/reservations/{key}/releases"
+    api.post(path, headers={"Idempotency-Key": "remove-one"}, json={"quantity": 1}).raise_for_status()
+    first = api.get(path, params={"limit": 1}).raise_for_status().json()
+    older = api.get(path, params={"limit": 1, "after_held": first["next_after_held"]}).raise_for_status().json()
+    return {
+        "reservation_id": key, "held": first["reservation"]["held"], "captured_at_ms": first["captured_at_ms"],
+        "pages": [{name: page[name] for name in ("releases", "next_after_held")} for page in (first, older)],
     }
 
 

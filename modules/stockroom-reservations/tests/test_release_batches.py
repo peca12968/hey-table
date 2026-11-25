@@ -1,7 +1,7 @@
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import closing
 import sqlite3
-from threading import Barrier
+from threading import Barrier, Event
 
 from fastapi.testclient import TestClient
 
@@ -28,6 +28,11 @@ def release(client, batch_id, items):
 
 def shipment(client, key, quantity):
     return client.post(f"/reservations/{key}/fulfillments", headers={"Idempotency-Key": "box"},
+                       json={"quantity": quantity})
+
+
+def single_release(client, key, receipt, quantity):
+    return client.post(f"/reservations/{key}/releases", headers={"Idempotency-Key": receipt},
                        json={"quantity": quantity})
 
 
@@ -141,3 +146,98 @@ def test_old_holds_and_release_ledger_survive_a_batch_receipt_write_rollback(tmp
     assert report["balanced"]
     assert report["available_changes"]["partial_release"] == 3
     assert report["closing"] == {"capacity": 20, "available": 16, "held": 4}
+
+
+def test_release_history_pages_keep_the_original_order_through_upgrade_and_expiry(tmp_path):
+    database = tmp_path / "history.db"
+    now = 100
+    clock = lambda: now
+    history = "/reservations/a/releases"
+    with TestClient(create_app(database, ttl_seconds=5, clock=clock)) as client:
+        hold(client, "a", 8)
+        hold(client, "z", 2)
+        assert shipment(client, "a", 1).status_code == 201
+        old = single_release(client, "a", "legacy", 1)
+        assert old.status_code == 201
+        assert release(client, "desk", [item("a", 6, 2), item("z", 2, 1)]).status_code == 201
+
+    # Keep both types of existing receipt while simulating the schema before single-release timestamps.
+    with Store(database).transaction() as conn:
+        conn.execute("ALTER TABLE reservation_releases DROP COLUMN released_at_ms")
+    now = 101
+    with TestClient(create_app(database, ttl_seconds=5, clock=clock)) as client:
+        old_replay = single_release(client, "a", "legacy", 1)
+        assert old_replay.status_code == 200 and old_replay.json() == old.json()
+        assert single_release(client, "a", "desk", 1).status_code == 201
+        response = client.get(history, params={"limit": 1}).raise_for_status()
+        assert response.headers["Cache-Control"] == "no-store"
+        expected_head = {"source": "single", "receipt_id": "desk", "released_at_ms": 101_000,
+                         "held_before": 4, "quantity": 1, "held_after": 3}
+        first = response.json()
+        assert first == {"captured_at_ms": 101_000, "reservation": client.get("/reservations/a").json(),
+                         "releases": [expected_head], "next_after_held": 3}
+        now = 102
+        assert single_release(client, "a", "newer", 1).status_code == 201
+        assert single_release(client, "a", "desk", 1).status_code == 200
+        older = client.get(history, params={"after_held": first["next_after_held"]}).raise_for_status().json()
+        assert older["reservation"]["held"] == 2 and older["next_after_held"] is None
+        assert older["releases"] == [
+            {"source": "batch", "receipt_id": "desk", "released_at_ms": 100_000,
+             "held_before": 6, "quantity": 2, "held_after": 4},
+            {"source": "single", "receipt_id": "legacy", "released_at_ms": None,
+             "held_before": 7, "quantity": 1, "held_after": 6},
+        ]
+        now = 105
+        expired = client.get(history).raise_for_status().json()
+        assert expired["reservation"]["state"] == "expired"
+        assert expired["reservation"]["held"] == 0 and expired["reservation"]["returned"] == 7
+        assert expired["releases"][1:] == [expected_head, *older["releases"]]
+        assert client.get("/reservations/missing/releases").status_code == 404
+        for params in ({"limit": 0}, {"limit": 101}, {"after_held": -1}, {"after_held": 2**63}):
+            assert client.get(history, params=params).status_code == 422
+
+
+def test_release_history_waits_for_cross_service_batch_commit(tmp_path, monkeypatch):
+    database = tmp_path / "snapshot.db"
+    writing, reading, proceed = Event(), Event(), Event()
+    connect, record = Store.connect, Store.record_release
+
+    def reader_clock():
+        return 101
+
+    def trace_reader(store):
+        conn = connect(store)
+        if store.clock is reader_clock:
+            conn.set_trace_callback(lambda statement: reading.set() if statement == "BEGIN IMMEDIATE" else None)
+        return conn
+
+    def pause_first_release(store, conn, row, release_id, quantity, released_at_ms=None):
+        result = record(store, conn, row, release_id, quantity, released_at_ms)
+        if row["id"] == "a":
+            writing.set()
+            assert proceed.wait(10)
+        return result
+
+    monkeypatch.setattr(Store, "connect", trace_reader)
+    monkeypatch.setattr(Store, "record_release", pause_first_release)
+    with TestClient(create_app(database, clock=lambda: 100)) as writer, \
+            TestClient(create_app(database, clock=reader_clock)) as observer:
+        hold(writer, "a", 2)
+        hold(writer, "z", 2)
+        reading.clear()
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            pending = pool.submit(release, writer, "desk", [item("a", 2, 2), item("z", 2, 1)])
+            try:
+                assert writing.wait(5)
+                history = pool.submit(observer.get, "/reservations/a/releases", params={"limit": 1})
+                assert reading.wait(5)
+                assert not history.done()
+            finally:
+                proceed.set()
+            assert pending.result(timeout=10).status_code == 201
+            snapshot = history.result(timeout=10).raise_for_status().json()
+        assert snapshot["captured_at_ms"] == 101_000 and snapshot["reservation"]["held"] == 0
+        assert snapshot["next_after_held"] is None
+        assert snapshot["releases"] == [{"source": "batch", "receipt_id": "desk", "released_at_ms": 100_000,
+                                         "held_before": 2, "quantity": 2, "held_after": 0}]
+        assert len(observer.get("/release-batches/desk").json()["items"]) == 2

@@ -26,6 +26,7 @@ python -m uvicorn stockroom.api:app
 | DELETE /reservations/{key} | 釋放保留。重複取消只會歸還一次 |
 | POST /release-batches | 以 Idempotency-Key 批次釋回多張保留單的未出貨數量 |
 | GET /release-batches/{batch_id} | 查回首次批次減量時間、放回量與前後保留件數 |
+| GET /reservations/{key}/releases | 按保留單查單筆與跨單減量紀錄，可分頁 |
 | POST /reservations/{key}/renewals | 依目前期限延長仍有效的保留，以 Idempotency-Key 識別這次續期 |
 | POST /reservations/{key}/releases | 以 Idempotency-Key 指定本次減量單號，將指定的 quantity 件釋放給其他訂單 |
 | POST /reservations/{key}/fulfillments | 傳入本箱的 quantity 與 Idempotency-Key，登記實際出貨。不同保留可使用相同箱號 |
@@ -210,6 +211,12 @@ SQLite 適合本機或單節點展示。此版本的使用情境是可信任的�
 ```
 
 服務在同一筆 SQLite 寫入交易結算到期、核對剩餘量、更新可用量並寫入減量收據。成功後東區仍保留 2 件，西區保留歸零，實體庫存與已出貨件數沿用原值。任一張的期望值過期或釋回量超過保留時整批回 409，查無保留則回 404。換序重送可取得相同的原始收據，也能按批號查回。新舊資料庫都沿用原減量帳供對帳。[重啟、並行與回滾測試](tests/test_release_batches.py) · [Demo 收據](examples/reservation-batch-status-demo.json)
+
+#### 按保留單查減量紀錄
+
+`GET /reservations/order-east/releases?limit=25` 回傳同一筆 SQLite 交易擷取的保留現況與減量收據。每筆包含操作來源、單號或批號、釋回量、操作前後的保留量和時間。舊版單筆收據的時間顯示為 `null`，原有數量與順序仍可查閱。跨單收據可用 `receipt_id` 查整批。
+
+回應帶有 `next_after_held` 時，將它填入下一頁的 `after_held`。同一張單的保留量只會遞減，所以即使下一次請求前發生新的減量，原游標仍能接續查較早的收據。到期或結單後也可讀取減量紀錄。[舊資料、續頁與同一快照測試](tests/test_release_batches.py)
 
 ### 已寄出商品的退貨入庫
 

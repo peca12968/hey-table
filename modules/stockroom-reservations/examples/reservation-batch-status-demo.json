@@ -269,6 +269,39 @@
         "capacity_before": 2,
         "capacity_after": 2
       }
-    ]
+    ],
+    "history": {
+      "reservation_id": "order-east",
+      "held": 1,
+      "captured_at_ms": 301000,
+      "pages": [
+        {
+          "releases": [
+            {
+              "source": "single",
+              "receipt_id": "remove-one",
+              "released_at_ms": 301000,
+              "held_before": 2,
+              "quantity": 1,
+              "held_after": 1
+            }
+          ],
+          "next_after_held": 1
+        },
+        {
+          "releases": [
+            {
+              "source": "batch",
+              "receipt_id": "remove-backorders",
+              "released_at_ms": 300000,
+              "held_before": 4,
+              "quantity": 2,
+              "held_after": 2
+            }
+          ],
+          "next_after_held": null
+        }
+      ]
+    }
   }
 }
