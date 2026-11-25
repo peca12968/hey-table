@@ -7,4 +7,6 @@
 .paymentAttentionRow p { margin: .4rem 0; }
 .paymentAttentionRow h2 a { color: var(--green); }
 .paymentAttentionRow button { margin-top: .5rem; }
+.paymentAttentionNoteLink { display: block; width: fit-content; margin: .4rem 0; }
+.paymentAttentionLatestNote { white-space: pre-wrap; }
 .paymentAttentionPages { margin-top: 1rem; }

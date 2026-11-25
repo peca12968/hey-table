@@ -46,6 +46,17 @@ export const paymentAttempts = sqliteTable("payment_attempts", {
   index("attempt_order").on(t.orderId,t.id),
   index("payment_attempts_attention_age").on(t.created,t.orderId).where(sql`${t.state} IN ('pending','authorized')`),
 ]);
+export const paymentAttentionNotes = sqliteTable("payment_attention_notes", {
+  id: integer("id").primaryKey({autoIncrement:true}),
+  attemptId: integer("attempt_id").notNull().references(()=>paymentAttempts.id),
+  operationId: text("operation_id").notNull().unique(),
+  state: text("state",{enum:["pending","authorized"]}).notNull(),
+  note: text("note").notNull(),
+  recordedAt: integer("recorded_at").notNull(),
+}, t => [
+  index("payment_attention_notes_attempt").on(t.attemptId,t.id),
+  check("payment_attention_note_state",sql`${t.state} IN ('pending','authorized')`),
+]);
 export const pickupPasses = sqliteTable("pickup_passes", {
   orderId: integer("order_id").primaryKey().references(()=>orders.id),
   tokenHash: text("token_hash").unique(),

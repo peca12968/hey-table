@@ -9,6 +9,7 @@ import {labels,numberOf} from "../../../lib/menu.mjs";
 import {environmentLabel,methods,paymentStates} from "../../../lib/payments.mjs";
 import {pickupChangeWindows} from "../../../lib/pickup-slots.mjs";
 import {stationLabels} from "../../../lib/kitchen-timing.mjs";
+import PaymentAttentionNotes from "../payment-attention-notes";
 import "../daily/daily.css";
 
 const pagePath="/kitchen/order-detail";
@@ -45,7 +46,7 @@ function OperationalHistory({order}){
   </>;
 }
 
-function OrderDetails({order}){
+function OrderDetails({order,openPaymentNotes}){
   const payment=order.paymentMethod==="cash"
     ?order.cashReceipt?"已登記":"尚無現金收款紀錄"
     :paymentStates[order.paymentState]??order.paymentState;
@@ -65,6 +66,7 @@ function OrderDetails({order}){
     <p>{methods[order.paymentMethod]??"付款方式未記錄"} · {payment}{paymentEnvironment?" · "+paymentEnvironment:""}</p>
     {order.cashReceipt&&<CashReceipt record={order.cashReceipt}/>}
     {order.demoRefund&&<p>示範退款 {currency(order.demoRefund.amount)} · <ProgressTime at={order.demoRefund.refundedAt}/></p>}
+    {order.paymentMethod!=="cash"&&<PaymentAttentionNotes key={order.id} id={order.id} autoOpen={openPaymentNotes}/>}
     <OrderProgress history={order.statusHistory}/>
     <OperationalHistory order={order}/>
   </article>;
@@ -110,7 +112,7 @@ export default function KitchenOrderDetail(){
     {current?.error&&<p role="alert" className="error">{current.error}</p>}
     {current?.denied&&<a className="outline" target="_top"
       href={"/signin-with-chatgpt?return_to="+encodeURIComponent(pagePath+(search??""))}>使用 ChatGPT 登入</a>}
-    {current?.order&&<OrderDetails order={current.order}/>}
+    {current?.order&&<OrderDetails order={current.order} openPaymentNotes={query.get("notes")==="1"}/>}
     {current&&!current.denied&&<button className="outline orderLookupRefresh" onClick={()=>setRevision(value=>value+1)}>重新查詢</button>}
   </main><Footer/></>;
 }

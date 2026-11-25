@@ -1,0 +1,7 @@
+.paymentAttentionNotes { border-top: 1px solid var(--line); padding-top: .7rem; }
+.paymentAttentionNotes summary { cursor: pointer; font-weight: 650; }
+.paymentAttentionNoteList { list-style: none; margin: .5rem 0; padding: 0; }
+.paymentAttentionNoteList li { border-bottom: 1px solid var(--line); padding: .35rem 0; }
+.paymentAttentionNoteList p { margin: .25rem 0; }
+.paymentAttentionNoteText { white-space: pre-wrap; overflow-wrap: anywhere; }
+.paymentAttentionNotesRefresh { display: block; margin-top: .7rem; }

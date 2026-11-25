@@ -34,14 +34,19 @@ function PaymentRow({order,capturedAt,returnPath,onCheck,checking}){
   const number=numberOf(order.id);
   const wait=Math.max(0,Math.floor((capturedAt-order.startedAt)/60_000));
   const overdue=order.state==="pending"&&order.paymentDueAt!==null&&order.paymentDueAt<=capturedAt;
+  const detailQuery={id:number,from:returnPath};
   return <li className="sheet paymentAttentionRow">
-    <h2><a href={"/kitchen/order-detail?"+new URLSearchParams({id:number,from:returnPath})}>餐單 #{number}</a></h2>
+    <h2><a href={"/kitchen/order-detail?"+new URLSearchParams(detailQuery)}>餐單 #{number}</a></h2>
     <p><strong>{methods[order.method]??"付款方式未記錄"} · {paymentStates[order.state]}</strong>
       {" · NT$ "+order.total.toLocaleString("zh-TW")}</p>
     <p>{environmentLabel(order.environment)||"環境未記錄"} · {labels[order.status]??order.status}</p>
     <p>{order.startedAt>0?<>付款開始 {timeLabel(order.startedAt)} · 已等 {wait} 分鐘</>:"付款開始時間未記錄"}</p>
     {overdue&&<p role="note">已到保留時間，付款仍待確認。</p>}
     <p>{order.checkedAt===null?"尚未發出金流查詢":<>上次發出查詢 {timeLabel(order.checkedAt)}</>}</p>
+    {order.latestNote&&<p className="paymentAttentionLatestNote">交班備註 {timeLabel(order.latestNote.recordedAt)} · {order.latestNote.note}</p>}
+    <a className="textLink paymentAttentionNoteLink" href={"/kitchen/order-detail?"+new URLSearchParams({...detailQuery,notes:"1"})+"#payment-attention-notes"}>
+      付款交班備註 <span className="sr">餐單 {number}</span>
+    </a>
     {order.canCheck?<button className="outline" aria-label={"查詢餐單 "+number+" 的金流"} disabled={checking!==null}
       onClick={()=>onCheck(order.id)}>{checking===order.id?"正在查詢金流…":"查詢金流"}</button>:
       ["sandbox","production"].includes(order.environment)&&<p>請在對應的金流後台核對。</p>}

@@ -390,6 +390,69 @@ test("payment attention pages unresolved latest attempts across dates without ch
   assert.ok(plan.every(row=>!row.detail.includes("TEMP B-TREE")));
 });
 
+test("staff payment notes follow one attempt, are retry-safe after settlement, and keep older notes readable",async t=>{
+  const db=database();
+  t.after(()=>db.sqlite.close());
+  const before=Date.parse("2026-11-25T23:55:00+08:00"),now=before+900_000;
+  t.mock.method(Date,"now",()=>now);
+  const url="https://order.example/api/kitchen/payment-attention-notes";
+  const runtime={DB:db,STAFF_KEY:"staff"},headers={Authorization:"Bearer staff","Content-Type":"application/json"};
+  const read=(query="?id=1",access=headers)=>api(new Request(url+query,{headers:access}),runtime);
+  const submit=(data,access=headers)=>api(new Request(url,{method:"POST",headers:access,body:JSON.stringify(data)}),runtime);
+  const addOrder=db.sqlite.prepare(`INSERT INTO orders(id,token,mode,note,items,total,created,payment_method,payment_env)
+    VALUES (?,?,'pickup','','[]',45,?,?,'demo')`);
+  addOrder.run(1,crypto.randomUUID(),before-500,"line_pay");
+  addOrder.run(2,crypto.randomUUID(),before-500,"cash");
+  const attempt=db.sqlite.prepare(`INSERT INTO payment_attempts(id,order_id,reference,merchant,trade_id,state,created)
+    VALUES (?,1,?,'private-merchant',?,'pending',?)`);
+  attempt.run(101,crypto.randomUUID(),crypto.randomUUID(),before);
+  const base={id:1,attemptId:101,state:"pending",note:"  已通知顧客等候  ",operationId:crypto.randomUUID()};
+  assert.equal((await read("?id=1",{})).status,403);
+  assert.equal((await submit(base,{"Content-Type":"application/json"})).status,403);
+  for(const input of [{...base,note:" "},{...base,note:"x".repeat(241)},{...base,state:"paid"},{...base,attemptId:0}])
+    assert.equal((await submit(input)).status,400);
+  assert.equal((await read("?id=2")).status,404);
+  assert.equal((await read("?id=1&before=invalid")).status,400);
+  assert.deepEqual(await (await read()).json(),{id:1,target:{attemptId:101,state:"pending",startedAt:before},
+    notes:[],nextBefore:null});
+
+  const replies=await Promise.all([submit(base),submit(base)]);
+  assert.deepEqual(replies.map(reply=>reply.status),[200,200]);
+  const saved=await replies[0].json();
+  assert.deepEqual(saved,{id:1,state:"pending",note:"已通知顧客等候",recordedAt:now,startedAt:before});
+  assert.deepEqual(await replies[1].json(),saved);
+  assert.equal((await submit({...base,note:"不同備註"})).status,409);
+  async function queue(){
+    const response=await api(new Request("https://order.example/api/kitchen/payment-attention",{headers}),runtime);
+    return (await response.json()).orders[0];
+  }
+  assert.deepEqual((await queue()).latestNote,{note:saved.note,recordedAt:now});
+  const transition=db.sqlite.prepare("UPDATE payment_attempts SET state=? WHERE id=101");
+  transition.run("authorized");
+  assert.equal((await submit({...base,operationId:crypto.randomUUID()})).status,409);
+  for(let number=2;number<=21;number++){
+    const response=await submit({...base,state:"authorized",note:"接續核對 "+number,operationId:crypto.randomUUID()});
+    assert.equal(response.status,200);
+  }
+  const first=await read();
+  assert.equal(first.headers.get("Cache-Control"),"no-store");
+  const page=await first.json();
+  assert.equal(page.notes.length,20);
+  assert.equal(page.notes[0].note,"接續核對 21");
+  assert.equal(page.notes.at(-1).note,"接續核對 2");
+  assert.deepEqual((await (await read("?id=1&before="+page.nextBefore)).json()).notes,[saved]);
+  transition.run("paid");
+  assert.equal(await queue(),undefined);
+  assert.equal((await (await read()).json()).target,null);
+  assert.deepEqual(await (await submit(base)).json(),saved);
+  transition.run("cancelled");
+  attempt.run(102,crypto.randomUUID(),crypto.randomUUID(),now);
+  assert.equal((await queue()).latestNote,undefined);
+  assert.equal((await submit({...base,state:"pending",operationId:crypto.randomUUID()})).status,409);
+  assert.deepEqual((await (await read()).json()).target,{attemptId:102,state:"pending",startedAt:now});
+  assert.deepEqual((await (await read("?id=1&before="+page.nextBefore)).json()).notes,[saved]);
+});
+
 test("a delayed payment lookup cannot overwrite a newer verification for the same recorded state",async t=>{
   const db=database();
   t.after(()=>db.sqlite.close());

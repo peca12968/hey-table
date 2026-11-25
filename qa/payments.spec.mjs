@@ -264,6 +264,54 @@ test("mobile payment queue preserves unmatched payments and refreshes after a ve
   expect(calls).toBe(2);
 });
 
+test("mobile staff recover a lost payment note reply and find the note after a demo payment settles",async({page,request})=>{
+  const api="/api/kitchen/payment-attention-notes",token=randomUUID(),customer={"X-Ticket":token};
+  const created=await request.post("/api/orders",{data:{token,mode:"pickup",note:"",
+    items:[{id:"sencha",qty:1}],paymentMethod:"line_pay",paymentEnv:"demo"}});
+  expect(created.status()).toBe(200);
+  const {id}=await created.json(),number=String(id).padStart(4,"0");
+  const payment=await request.post("/api/payments/start",{headers:customer,data:{}});
+  expect(payment.status()).toBe(200);
+  const {attempt}=await payment.json(),filter="/kitchen/payment-attention?state=pending&method=line_pay&environment=demo";
+  await page.setViewportSize({width:360,height:780});
+  await page.addInitScript(()=>sessionStorage.setItem("he-ri-staff","local-test-kitchen"));
+  await page.goto(filter);
+  await page.getByRole("link",{name:"付款交班備註 餐單 "+number}).click();
+  const notes=page.locator("#payment-attention-notes");
+  const input=notes.getByRole("textbox",{name:"交班備註"});
+  await expect(input).toBeVisible();
+  await input.fill("已告知顧客稍候，下一班再查。");
+  let written;
+  await page.route("**"+api,async route=>{
+    written=route.request().postDataJSON();
+    expect((await route.fetch()).status()).toBe(200);
+    await route.abort("connectionreset");
+  },{times:1});
+  await notes.getByRole("button",{name:"儲存交班備註"}).click();
+  await expect(notes.getByRole("alert")).toHaveText("尚未收到儲存結果，請重試同一筆備註。");
+  const retry=page.waitForRequest(req=>req.method()==="POST"&&new URL(req.url()).pathname===api);
+  await notes.getByRole("button",{name:"重試儲存同一筆備註"}).click();
+  expect((await retry).postDataJSON()).toEqual(written);
+  await expect(notes.getByText("已儲存交班備註。")).toBeVisible();
+  const history=notes.getByRole("list",{name:"付款交班備註歷程"});
+  await expect(history.getByRole("listitem")).toHaveCount(1);
+  await expect(history.getByText(written.note,{exact:true})).toBeVisible();
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBe(360);
+  await page.getByRole("link",{name:"返回待核對付款"}).click();
+  const row=page.getByRole("listitem").filter({has:page.getByRole("link",{name:"餐單 #"+number,exact:true})});
+  await expect(row).toContainText(written.note);
+
+  expect((await request.post("/api/payments/demo",{headers:customer,data:{ref:attempt.ref,outcome:"paid"}})).status()).toBe(200);
+  await page.getByRole("button",{name:"重新擷取"}).click();
+  await expect(page.getByRole("region",{name:"待核對付款清單"})).toBeVisible();
+  await expect(row).toHaveCount(0);
+  await page.goto("/kitchen/order-detail?id="+number+"&notes=1");
+  await expect(history.getByText(written.note,{exact:true})).toBeVisible();
+  await expect(input).toHaveCount(0);
+  const customerView=await (await request.get("/api/ticket",{headers:customer})).json();
+  expect(JSON.stringify(customerView)).not.toContain(written.note);
+});
+
 test("mobile cash collection previews change and resumes the same operation after a lost request",async({page,request})=>{
   page.setDefaultTimeout(9000);
   const token=randomUUID(),ticket={"X-Ticket":token},endpoint="/api/kitchen/cash-receipt";

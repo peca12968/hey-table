@@ -34,9 +34,10 @@ const returnReviewFingerprint = /^[a-f0-9]{64}$/;
 
 import {latestState,payableForKitchen,paymentApi,checkKitchenPayment,refundDemoPayment} from "./payment-api.mjs";
 import {paymentAttention,paymentAttentionQuery} from "./payment-attention.mjs";
+import {readPaymentAttentionNotes,recordPaymentAttentionNote} from "./payment-attention-notes.mjs";
 import {demoRefundDetail,demoRefundReport,demoRefundReceiptColumn,demoRefundReceiptText} from "./demo-refund-report.mjs";
 import {settings} from "./tappay.mjs";
-import {canPrepare,methods} from "../lib/payments.mjs";
+import {canPrepare,methods,paymentAttentionStates} from "../lib/payments.mjs";
 import {estimate} from "@peca12968/pickup-window";
 import {activeKitchen,demoKitchen,importTiming,stationBatchLimit,stationLabels,timingChanges} from "../lib/kitchen-timing.mjs";
 import {finishStation,finishStationBatch,preparationByStation,readStationBatch,recordedStationProgress,
@@ -178,6 +179,24 @@ export async function api(request, env) {
   if(path==="/api/kitchen/payment-attention"&&method==="GET"){
     const query=paymentAttentionQuery(url.searchParams);
     return query?json(await paymentAttention(env,query,Date.now())):fail("請選擇有效的付款篩選條件或翻頁連結。");
+  }
+  if(path==="/api/kitchen/payment-attention-notes"&&method==="GET"){
+    const id=collectionId(url),cursors=url.searchParams.getAll("before"),[cursor]=cursors;
+    const before=cursor===undefined?undefined:Number(cursor);
+    if(id===null||url.searchParams.getAll("id").length!==1||cursors.length>1||
+      (cursor!==undefined&&(!/^[1-9]\d{0,15}$/.test(cursor)||!Number.isSafeInteger(before))))
+      return fail("請輸入有效的餐號或翻頁連結。");
+    const result=await readPaymentAttentionNotes(db,id,before);
+    return result?json(result):fail("找不到這張線上付款餐單。",404);
+  }
+  if(path==="/api/kitchen/payment-attention-notes"&&method==="POST"){
+    const {id,attemptId,state,note,operationId}=input;
+    if(!Number.isSafeInteger(id)||id<1||!Number.isSafeInteger(attemptId)||attemptId<1||
+      !paymentAttentionStates.includes(state)||typeof operationId!=="string"||!uuid.test(operationId)||
+      typeof note!=="string"||!note.trim()||note.trim().length>240)
+      return fail("請核對付款狀態並填寫 240 字以內的交班備註。");
+    const result=await recordPaymentAttentionNote(db,{id,attemptId,state,note:note.trim(),operationId:operationId.toLowerCase()},Date.now());
+    return result?json(result):fail("付款嘗試或狀態已更新，請重新核對後再儲存備註。",409);
   }
   if(path==="/api/kitchen/demo-refund" && method==="PATCH")return refundDemoPayment(env,input);
   if(path==="/api/kitchen/demo-refunds"&&method==="GET"){

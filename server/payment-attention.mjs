@@ -1,4 +1,5 @@
 import {methods,onlinePaymentEnvironments,paymentAttentionStates} from "../lib/payments.mjs";
+import {latestPaymentAttentionNote} from "./payment-attention-notes.mjs";
 
 const pageSize=25;
 const filters={
@@ -38,10 +39,12 @@ export async function paymentAttention(env,{state,environment,method,after},capt
   }
   if(after){conditions.push("(attempt.created,attempt.order_id)>(?,?)");args.push(...after);}
   const {results}=await env.DB.prepare(`SELECT orders.id,orders.status,orders.payment_method AS method,orders.payment_env AS environment,
-    orders.total,orders.payment_due_at AS paymentDueAt,attempt.state,attempt.created AS startedAt,NULLIF(attempt.checked,0) AS checkedAt
+    orders.total,orders.payment_due_at AS paymentDueAt,attempt.state,attempt.created AS startedAt,NULLIF(attempt.checked,0) AS checkedAt,
+    ${latestPaymentAttentionNote} AS latestNote
     FROM payment_attempts AS attempt JOIN orders ON orders.id=attempt.order_id WHERE ${conditions.join(" AND ")}
     ORDER BY attempt.created,attempt.order_id LIMIT ?`).bind(...args,pageSize+1).all();
-  const orders=results.slice(0,pageSize).map(row=>({...row,
+  const orders=results.slice(0,pageSize).map(({latestNote,...row})=>({...row,
+    ...(latestNote?{latestNote:JSON.parse(latestNote)}:{}),
     canCheck:(row.environment==="sandbox"||row.environment==="production")&&
       env.TAPPAY_MODE===row.environment&&Boolean(env.TAPPAY_PARTNER_KEY),
   }));
