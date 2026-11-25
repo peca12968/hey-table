@@ -2986,7 +2986,12 @@ test("pickup pass scopes access to one receipt and expires, rotates and revokes 
 
 test("staff pickup delay changes are versioned, retain their estimate on replay and close on readiness",async t=>{
   const customer=crypto.randomUUID(),unpaid=crypto.randomUUID(),pending=crypto.randomUUID(),table=crypto.randomUUID();
+  const legacy=crypto.randomUUID();
   const db=database((tag,sqlite)=>{
+    if(tag==="0047_pickup_delay_acknowledgements"){
+      sqlite.prepare(`INSERT INTO pickup_delay_updates(order_id,revision,operation_id,ready_at,recorded_at)
+        SELECT id,1,?,150000,50000 FROM orders WHERE token=?`).run(crypto.randomUUID(),legacy);
+    }
     if(tag!=="0034_pickup_delay_updates")return;
     const add=sqlite.prepare(`INSERT INTO orders(token,mode,status,items,note,total,created,pickup_slot,payment_method)
       VALUES (?,?,?,'[]','private receipt note',45,1,?,?)`);
@@ -2994,6 +2999,7 @@ test("staff pickup delay changes are versioned, retain their estimate on replay 
     add.run(unpaid,"pickup","preparing",null,"line_pay");
     add.run(pending,"pickup","pending",null,"cash");
     add.run(table,"table","preparing",null,"cash");
+    add.run(legacy,"pickup","preparing",null,"cash");
   });
   t.after(()=>db.sqlite.close());
   let now=60_000;
@@ -3003,6 +3009,8 @@ test("staff pickup delay changes are versioned, retain their estimate on replay 
   const ticket=(token=customer)=>call("/ticket?progress=1",{headers:{"X-Ticket":token}});
   const update=(input,headers=staff)=>call("/kitchen/pickup-delay",{method:"PATCH",
     headers:{"Content-Type":"application/json",...headers},body:JSON.stringify(input)});
+  const acknowledge=(revision,token=customer,headers={})=>call("/ticket/pickup-delay/acknowledge",{method:"POST",
+    headers:{"Content-Type":"application/json","X-Ticket":token,...headers},body:JSON.stringify({revision})});
   const id=(await (await ticket()).json()).id;
   const make=(minutes,revision=0,target=id)=>({id:target,revision,operationId:crypto.randomUUID(),minutes});
   for(const token of [unpaid,pending,table]){
@@ -3021,30 +3029,59 @@ test("staff pickup delay changes are versioned, retain their estimate on replay 
   const receipt=await ticket();
   assert.equal(receipt.headers.get("Cache-Control"),"no-store");
   const original=await receipt.json();
-  assert.deepEqual(original.pickupDelay,{readyAt:saved.readyAt,recordedAt:saved.recordedAt,passed:false});
+  assert.deepEqual(original.pickupDelay,{revision:1,readyAt:saved.readyAt,recordedAt:saved.recordedAt,acknowledgedAt:null,passed:false});
   assert.equal(original.pickupSlot,120_000);
   const booking=await (await call("/kitchen/pickup-booking?id="+id,{headers:staff})).json();
   const board=await (await call("/kitchen",{headers:staff})).json();
   assert.deepEqual(booking,board.find(row=>row.id===id));
-  assert.deepEqual(booking.pickupDelay,{revision:1,readyAt:saved.readyAt,recordedAt:saved.recordedAt});
+  assert.deepEqual(booking.pickupDelay,{revision:1,readyAt:saved.readyAt,recordedAt:saved.recordedAt,acknowledgedAt:null});
+  assert.equal((await acknowledge(1,crypto.randomUUID())).status,404);
+  assert.equal((await acknowledge(1,customer,{Origin:"https://other.example"})).status,403);
+  assert.equal((await acknowledge(1,unpaid)).status,409);
+  assert.equal((await acknowledge(2)).status,409);
+  assert.equal((await acknowledge("1")).status,400);
+  now+=1000;
+  const acknowledged={revision:1,acknowledgedAt:now};
+  const repeated=await Promise.all([acknowledge(1),acknowledge(1)]);
+  for(const result of repeated){
+    assert.equal(result.status,200);
+    assert.deepEqual(await result.json(),acknowledged);
+  }
+  assert.equal((await (await ticket()).json()).pickupDelay.acknowledgedAt,acknowledged.acknowledgedAt);
+  assert.equal((await (await call("/kitchen",{headers:staff})).json()).find(row=>row.id===id).pickupDelay.acknowledgedAt,
+    acknowledged.acknowledgedAt);
   now=saved.readyAt;
   assert.deepEqual(await (await update(request)).json(),saved);
   assert.equal((await update({...request,minutes:request.minutes+1})).status,409);
   assert.equal((await (await ticket()).json()).pickupDelay.passed,true);
+  assert.deepEqual(await (await acknowledge(1)).json(),acknowledged);
   const clear=make(null,1);
   const cleared=await (await update(clear)).json();
   assert.equal(cleared.readyAt,null);
   assert.equal(Object.hasOwn(await (await ticket()).json(),"pickupDelay"),false);
+  assert.equal((await acknowledge(1)).status,409);
+  assert.equal((await acknowledge(2)).status,409);
   assert.deepEqual(await (await update(clear)).json(),cleared);
   const latest=make(3,2);
   assert.equal((await update(latest)).status,200);
+  assert.equal((await (await ticket()).json()).pickupDelay.acknowledgedAt,null);
   const prepare=await call("/kitchen/status",{method:"PATCH",headers:{...staff,"Content-Type":"application/json"},
     body:JSON.stringify({id,from:"preparing",to:"ready"})});
   assert.equal(prepare.status,200);
   assert.equal((await update(make(6,3))).status,409);
   assert.equal((await update(latest)).status,200);
   assert.equal(Object.hasOwn(await (await ticket()).json(),"pickupDelay"),false);
-  assert.equal(db.sqlite.prepare("SELECT count(*) AS total FROM pickup_delay_updates").get().total,3);
+  assert.equal((await acknowledge(3)).status,409);
+  assert.equal(db.sqlite.prepare("SELECT count(*) AS total FROM pickup_delay_updates WHERE order_id=?").get(id).total,3);
+  assert.equal(db.sqlite.prepare("SELECT count(*) AS total FROM pickup_delay_acknowledgements WHERE order_id=?").get(id).total,1);
+  const prior=await (await ticket(legacy)).json();
+  assert.deepEqual(prior.pickupDelay,{revision:1,readyAt:150000,recordedAt:50000,acknowledgedAt:null,passed:true});
+  const [replacement,oldReply]=await Promise.all([update(make(5,1,prior.id)),acknowledge(1,legacy)]);
+  assert.equal(replacement.status,200);
+  assert.ok([200,409].includes(oldReply.status));
+  const then=await (await ticket(legacy)).json();
+  assert.equal(then.pickupDelay.revision,2);
+  assert.equal(then.pickupDelay.acknowledgedAt,null);
 });
 
 test("a pickup delegate and receipt owner share the first arrival with staff",async t=>{

@@ -77,6 +77,14 @@ export const pickupDelayUpdates = sqliteTable("pickup_delay_updates", {
   check("pickup_delay_revision",sql`${t.revision}>0`),
   check("pickup_delay_future",sql`${t.readyAt} IS NULL OR ${t.readyAt}>${t.recordedAt}`),
 ]);
+export const pickupDelayAcknowledgements = sqliteTable("pickup_delay_acknowledgements", {
+  orderId: integer("order_id").notNull(),
+  revision: integer("revision").notNull(),
+  acknowledgedAt: integer("acknowledged_at").notNull(),
+}, t => [
+  primaryKey({columns:[t.orderId,t.revision]}),
+  foreignKey({columns:[t.orderId,t.revision],foreignColumns:[pickupDelayUpdates.orderId,pickupDelayUpdates.revision]}),
+]);
 export const demoRefunds = sqliteTable("demo_refunds", {
   orderId: integer("order_id").primaryKey().notNull().references(()=>orders.id),
   attemptId: integer("attempt_id").notNull().unique().references(()=>paymentAttempts.id),

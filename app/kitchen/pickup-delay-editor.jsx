@@ -33,7 +33,8 @@ export default function PickupDelayEditor({id,record,staffKey,disabled,onChange}
   }
 
   return <details className="pickupPassShare pickupDelay">
-    <summary>通知取餐延誤</summary>
+    <summary><span>通知取餐延誤</span>{current.readyAt!==null&&
+      <small className="muted"> · {current.acknowledgedAt!=null?"顧客已確認":"等待顧客確認"}</small>}</summary>
     {current.readyAt!==null&&<p>目前預計 <PickupDelayTime at={current.readyAt}/> 備妥</p>}
     <form onSubmit={event=>{
       event.preventDefault();

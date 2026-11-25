@@ -1,7 +1,7 @@
 "use client";
 import {useCallback,useEffect,useState} from "react";
 import {ClipboardCheck,RefreshCw} from "lucide-react";
-import {Header,Footer,Mode,PickupAppointment,PickupDelayTime,request} from "../shared";
+import {Header,Footer,Mode,PickupAppointment,request} from "../shared";
 import {ItemNote} from "../item-notes";
 import {labels,numberOf} from "../../lib/menu.mjs";
 import {lastReceiptToken,pendingCarts,read,recentReceipts,refreshReceiptHistory,removeReceipt} from "../../lib/order-storage.mjs";
@@ -16,6 +16,7 @@ import PickupCalendar from "./pickup-calendar";
 import PickupArrival from "../pickup-arrival";
 import PickupCode from "../pickup-code";
 import PickupPassShare from "./pickup-pass-share";
+import PickupDelayNotice from "./pickup-delay-notice";
 import TextDownload from "./text-download";
 import CashReceipt from "../cash-receipt";
 import OrderProgress,{progressTime} from "../order-progress";
@@ -118,9 +119,8 @@ export default function Ticket(){
     <p>{refundBeforeHandoff?"這張餐單已全額退款，請聯絡店家確認交餐安排。":
       ({pending:pendingMessage,preparing:"廚房正在準備餐點。",ready:order.table?"餐點已完成，請留意桌邊送餐。":"餐點已完成，請出示取餐號碼。",completed:"這張餐單已完成。",cancelled:cancellationMessages[cancellationActor]??"店家已取消這張餐單。"})[order.status]}</p>
     {showHold&&<p className="muted">付款保留至 <time dateTime={new Date(order.paymentDueAt).toISOString()}>{progressTime.format(order.paymentDueAt)}</time></p>}
-    {!error&&order.pickupDelay&&<p role="status" className="pickupDelayNotice">{order.pickupDelay.passed?
-      <>原預計 <PickupDelayTime at={order.pickupDelay.readyAt}/> 備妥。店家仍在準備餐點。</>:
-      <>店家通知 · 預計 <PickupDelayTime at={order.pickupDelay.readyAt}/> 備妥。</>}</p>}
+    {!error&&order.pickupDelay&&<PickupDelayNotice key={route.token+":"+order.pickupDelay.revision}
+      token={route.token} delay={order.pickupDelay} onChange={refreshReceipt}/>}
     {!error&&!order.pickupDelay&&order.kitchenQuote&&<section className="cartQuote" aria-label="餐單出餐估算">
       <span>目前廚房排程</span>
       <QuoteSummary quote={order.kitchenQuote}/>

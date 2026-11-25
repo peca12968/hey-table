@@ -740,6 +740,22 @@ test("a staff phone updates the pickup estimate while the customer follows the o
     await page.getByRole("button",{name:"更新進度"}).click();
     await expect(notification.locator("time")).toHaveAttribute("datetime",first);
     await expect(quote).toHaveCount(0);
+    await expect(editor.getByText("等待顧客確認",{exact:false})).toBeVisible();
+    const acknowledgement=page.getByRole("button",{name:"已收到通知"}),confirmations=[];
+    await page.route("**/api/ticket/pickup-delay/acknowledge",async route=>{
+      confirmations.push(route.request().postDataJSON());
+      const result=await route.fetch();
+      expect(result.ok()).toBe(true);
+      if(confirmations.length===1)await route.abort();
+      else await route.fulfill({response:result});
+    });
+    await acknowledgement.click();
+    await expect(page.getByText("尚未收到確認結果，請再試一次。")).toBeVisible();
+    await acknowledgement.click();
+    await expect(page.getByText("已確認收到這版通知。")).toBeVisible();
+    expect(confirmations).toEqual([{revision:1},{revision:1}]);
+    await board.getByRole("button",{name:"更新",exact:true}).click();
+    await expect(editor.getByText("顧客已確認",{exact:false})).toBeVisible();
     await editor.getByRole("button",{name:"撤回通知"}).click();
     await expect(editor.getByRole("status")).toHaveText("已撤回備妥時間通知。");
     await page.getByRole("button",{name:"更新進度"}).click();
@@ -750,6 +766,9 @@ test("a staff phone updates the pickup estimate while the customer follows the o
     await expect(editor.getByRole("status")).toHaveText("已更新顧客收據上的備妥時間。");
     await page.getByRole("button",{name:"更新進度"}).click();
     await expect(notification.locator("time")).toHaveAttribute("datetime",new Date(saved.readyAt).toISOString());
+    await expect(acknowledgement).toBeVisible();
+    await expect(page.getByText("已確認收到這版通知。")).toHaveCount(0);
+    await expect(editor.getByText("等待顧客確認",{exact:false})).toBeVisible();
     expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBe(360);
     expect(await board.evaluate(()=>document.documentElement.scrollWidth)).toBe(360);
     await card.getByRole("button",{name:"完成製作"}).click();

@@ -330,6 +330,13 @@
       "when": 1795626074792,
       "tag": "0046_payment_attention_notes",
       "breakpoints": true
+    },
+    {
+      "idx": 47,
+      "version": "6",
+      "when": 1795645989839,
+      "tag": "0047_pickup_delay_acknowledgements",
+      "breakpoints": true
     }
   ]
 }

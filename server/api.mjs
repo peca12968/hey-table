@@ -18,7 +18,7 @@ import {canReschedulePickup,capacityAtPickupSlot,editablePickupSlots,orderPortio
 import {pickupCalendar} from "./pickup-calendar.mjs";
 import {orderDetailsText,ticketTextAttachment} from "./ticket-document.mjs";
 import {issuePickupPass,ownerPickupPass,readPickupPass,reportPickupPassArrival,revokePickupPass} from "./pickup-pass.mjs";
-import {pickupDelayColumn,updatePickupDelay} from "./pickup-delay.mjs";
+import {acknowledgePickupDelay,pickupDelayColumn,updatePickupDelay} from "./pickup-delay.mjs";
 import {pickupRoster} from "./pickup-roster.mjs";
 import {pickupWeek} from "./pickup-week.mjs";
 import {cashCorrectionHistory,cashReceiptColumn,collectCash,correctCashReceipt,dailyCashReceipts} from "./cash-receipts.mjs";
@@ -685,8 +685,8 @@ export async function api(request, env) {
       }
     }
     if(row.pickup_delay&&row.status==="preparing"&&canPrepare(saved)){
-      const {readyAt,recordedAt}=JSON.parse(row.pickup_delay);
-      if(readyAt!==null)saved.pickupDelay={readyAt,recordedAt,passed:readyAt<=now};
+      const {revision,readyAt,recordedAt,acknowledgedAt}=JSON.parse(row.pickup_delay);
+      if(readyAt!==null)saved.pickupDelay={revision,readyAt,recordedAt,acknowledgedAt,passed:readyAt<=now};
     }
     if(withTiming&&row.status==="preparing"&&!saved.pickupDelay){
       const quote=receiptTiming(row,queue,timing);
@@ -762,6 +762,14 @@ export async function api(request, env) {
     if(target.results[0].used+row.portions>target.results[0].capacity)
       return json({error:"此時段剩餘份數不足，原預約仍有效。",code:"pickup_slot_full"},409);
     return stale();
+  }
+  if(path==="/api/ticket/pickup-delay/acknowledge"&&method==="POST"){
+    const token=request.headers.get("X-Ticket"),{revision}=input;
+    if(!uuid.test(token))return fail("找不到訂單",404);
+    if(!Number.isSafeInteger(revision)||revision<1)return fail("備妥通知的版次無效。");
+    const saved=await acknowledgePickupDelay(db,token,revision,Date.now());
+    if(saved===null)return fail("找不到訂單",404);
+    return saved?json(saved):fail("備妥通知已變更，請查看最新餐單。",409);
   }
   if (path === "/api/ticket/arrival" && method === "POST") {
     const token=request.headers.get("X-Ticket");
