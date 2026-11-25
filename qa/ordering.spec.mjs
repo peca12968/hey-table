@@ -7,6 +7,7 @@ import {fileURLToPath} from "node:url";
 import jsQR from "jsqr";
 import {PNG} from "pngjs";
 import {businessDate} from "../lib/business-day.mjs";
+import {pickupPunctuality} from "../server/daily-timing.mjs";
 
 test("mobile kitchen sorts overdue tickets and suppresses stale reminders until the next snapshot",async({page})=>{
   await page.setViewportSize({width:360,height:780});
@@ -356,6 +357,9 @@ test("staff can view a Taiwan-date summary and download the displayed snapshot o
   expect(readiness.samples).toBeGreaterThan(0);
   await expect(ready).toContainText("可用紀錄 "+readiness.samples+"／"+readiness.eligible+" 張");
   await expect(ready.getByText(/中位數/)).toBeVisible();
+  const punctuality=page.getByRole("region",{name:"預約自取備妥準時率"});
+  expect(report.pickupPunctuality.totals.bookings).toBeGreaterThanOrEqual(0);
+  await expect(punctuality).toBeVisible();
   expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBe(360);
   const pending=page.waitForEvent("download");
   await download.click();
@@ -382,6 +386,7 @@ test("staff can view a Taiwan-date summary and download the displayed snapshot o
   await expect(page.locator(".dailyCapture time")).toBeVisible();
   await expect(timing).toBeVisible();
   await expect(arrival).toBeVisible();
+  await expect(punctuality).toBeVisible();
   await expect(teaRow).toBeVisible();
   await page.emulateMedia({media:"screen"});
   await date.fill("2001-03-05");
@@ -392,6 +397,47 @@ test("staff can view a Taiwan-date summary and download the displayed snapshot o
   await expect(downloadCsv).toHaveCount(0);
   await expect(timing.getByText("目前無可用時間紀錄")).toHaveCount(4);
   await expect(arrival.getByText("目前無可用時間紀錄")).toHaveCount(3);
+  await expect(punctuality.getByText("這一天沒有自取預約。")).toBeVisible();
+});
+
+test("mobile daily pickup report opens the exact delayed booking and prints the displayed snapshot",async({page})=>{
+  await page.setViewportSize({width:360,height:780});
+  await page.clock.install({time:new Date("2026-11-25T07:00:00Z")});
+  await page.addInitScript(()=>sessionStorage.setItem("he-ri-staff","local-test-kitchen"));
+  const date="2026-11-25",start=Date.parse(date+"T11:00:00+08:00"),end=start+900_000,capturedAt=end+60_000;
+  const rows=[{id:10,readyAt:start,status:"completed"},{id:11,readyAt:end+1000,status:"ready"},
+    {id:12,readyAt:null,status:"preparing"},{id:13,readyAt:null,status:"completed"}]
+    .map(row=>({...row,start,payable:1,created:start-600_000}));
+  const counts={orders:0,pending:0,preparing:0,ready:0,completed:0,cancelled:0,completedTotal:0};
+  await page.route("**/api/kitchen/daily?*",route=>{
+    const query=new URL(route.request().url()).searchParams;
+    expect(query.get("pickupPunctuality")).toBe("1");
+    expect(query.get("date")).toBe(date);
+    return route.fulfill({json:{date,capturedAt,channels:{pickup:counts,table:counts},items:[],
+      pickupPunctuality:pickupPunctuality(rows,capturedAt)}});
+  });
+  await page.route("**/api/kitchen/pickup-booking?*",route=>{
+    expect(new URL(route.request().url()).searchParams.get("id")).toBe("0012");
+    return route.fulfill({json:{id:12,mode:"pickup",table:null,created:start-600_000,status:"preparing",
+      paymentMethod:"cash",paymentEnv:"cash",paymentState:"unpaid",pickupSlot:start,
+      total:45,items:[{id:"sencha",name:"日式熱煎茶",qty:1}]}});
+  });
+  await page.goto("/kitchen/daily");
+  const summary=page.getByRole("region",{name:"預約自取備妥準時率"});
+  await expect(summary.getByRole("heading",{name:"33.3%"})).toBeVisible();
+  await expect(summary.getByText("準時 1／可判定 3 張")).toBeVisible();
+  await expect(summary.getByText("逾時備妥 1 秒",{exact:true})).toBeVisible();
+  const window=summary.getByRole("article",{name:"11:00～11:15",exact:true});
+  const link=window.getByRole("link",{name:"#0012"});
+  await expect(link).toHaveAttribute("href","/kitchen?booking=0012&date="+date+"&slot="+start);
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBe(360);
+  await page.emulateMedia({media:"print"});
+  await expect(summary).toBeVisible();
+  await expect(link).toBeVisible();
+  await page.emulateMedia({media:"screen"});
+  await link.click();
+  await expect(page.getByRole("heading",{name:"#0012",exact:true})).toBeVisible();
+  await expect(page.getByRole("link",{name:"返回自取預約清單"})).toHaveAttribute("href","/kitchen/pickup-roster?date="+date+"&slot="+start);
 });
 
 test("daily summary rolls over at Taipei midnight and keeps an explicitly selected date",async({page})=>{

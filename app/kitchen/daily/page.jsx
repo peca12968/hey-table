@@ -4,6 +4,8 @@ import {Header,Footer,request} from "../../shared";
 import {useBusinessToday} from "../../use-business-today.mjs";
 import {downloadCsv} from "../../../lib/download-csv.mjs";
 import {downloadJson} from "../../../lib/download-json.mjs";
+import {numberOf} from "../../../lib/menu.mjs";
+import {pickupWindow} from "../../../lib/pickup-slots.mjs";
 import "./daily.css";
 
 const captureTime = new Intl.DateTimeFormat("zh-TW", {
@@ -71,6 +73,41 @@ function ArrivalSummary({timing}){
   </section>;
 }
 
+function PickupPunctuality({date,report}){
+  const {totals,windows}=report;
+  const assessed=totals.onTime+totals.late+totals.overdue;
+  const rate=assessed?new Intl.NumberFormat("zh-TW",{style:"percent",maximumFractionDigits:1}).format(totals.onTime/assessed):null;
+  const fields=[["onTime","準時備妥"],["late","逾時備妥"],["overdue","逾時仍未備妥"]];
+  return <section className="sheet dailyTiming" aria-labelledby="pickup-punctuality-title">
+    <h2 id="pickup-punctuality-title">預約自取備妥準時率</h2>
+    <p>按台灣取餐日期統計。時段結束前或在截止當刻備妥，都算準時。</p>
+    {totals.bookings===0?<p>這一天沒有自取預約。</p>:<>
+      <div className="dailyTimingGrid">
+        <article aria-label="備妥準時率">
+          <h3>{rate??"目前無可判定餐單"}</h3>
+          <p>準時 {totals.onTime}／可判定 {assessed} 張</p>
+          <dl>{fields.map(([key,label])=><div key={key}><dt>{label}</dt><dd>{totals[key]} 張</dd></div>)}</dl>
+        </article>
+        <article aria-label="未納入準時率">
+          <h3>未納入準時率</h3>
+          <dl>{[["waiting","尚未到截止時間"],["unknown","缺少有效備妥時間"],["awaitingPayment","不符出餐付款條件"],["cancelled","已取消"]]
+            .map(([key,label])=><div key={key}><dt>{label}</dt><dd>{totals[key]} 張</dd></div>)}</dl>
+        </article>
+      </div>
+      <div className="punctualityWindows">
+        {windows.map(window=><article key={window.start} aria-label={pickupWindow(window.start)}>
+          <h3>{pickupWindow(window.start)}</h3>
+          <p>{fields.map(([key,label])=>label+" "+window[key]+" 張").join(" · ")}</p>
+          {window.issues.length>0&&<ul>{window.issues.map(issue=><li key={issue.id}>
+            <a className="textLink" href={"/kitchen?"+new URLSearchParams({booking:numberOf(issue.id),date,slot:String(window.start)})}>#{numberOf(issue.id)}</a>
+            <span>{issue.status==="late"?"逾時備妥 "+formatDuration(issue.readyAt-window.end):"逾時仍未備妥"}</span>
+          </li>)}</ul>}
+        </article>)}
+      </div>
+    </>}
+  </section>;
+}
+
 export default function DailyOperations() {
   const today=useBusinessToday();
   const [draft,setDraft]=useState(null),[query,setQuery]=useState(null),[view,setView]=useState(null);
@@ -81,7 +118,7 @@ export default function DailyOperations() {
     if(!queryDate)return;
     const controller=new AbortController();
     const key=sessionStorage.getItem("he-ri-staff");
-    request("/api/kitchen/daily?date="+encodeURIComponent(queryDate)+"&timing=1&itemChannels=1",{
+    request("/api/kitchen/daily?date="+encodeURIComponent(queryDate)+"&timing=1&itemChannels=1&pickupPunctuality=1",{
       signal:AbortSignal.any([controller.signal,AbortSignal.timeout(10_000)]),
       headers:key?{Authorization:"Bearer "+key}:{},
     }).then(value=>{
@@ -112,7 +149,7 @@ export default function DailyOperations() {
       <a className="textLink" href="/kitchen/cash-close">查看現金日結</a>
       <a className="textLink" href="/kitchen/refunds">查看示範退款</a></div>
     <h1>每日訂單摘要</h1>
-    <p>按台灣日期查看當天成立的餐單。金額為已交餐單的原成交金額，包含示範單。</p>
+    <p>按台灣日期查詢。餐單金額為已交餐單的原成交金額（含示範單），依成立日統計。</p>
     <form className="actions dailyDate dailyControl" onSubmit={search}>
       <label>餐單日期<input type="date" required value={date} onChange={selectDate}/></label>
       <button className="outline" disabled={!date}>查詢摘要</button>
@@ -131,6 +168,7 @@ export default function DailyOperations() {
       </div>
       {report.timing&&<DurationSummary timing={report.timing}/>}
       {report.arrivalTiming&&<ArrivalSummary timing={report.arrivalTiming}/>}
+      {report.pickupPunctuality&&<PickupPunctuality date={report.date} report={report.pickupPunctuality}/>}
       <section className="sheet dailyDishes">
         <div className="actions dailyDishesHeader">
           <h2>已交餐品項</h2>

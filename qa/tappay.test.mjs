@@ -1311,6 +1311,64 @@ test("staff pickup roster groups one Taipei day and excludes private receipt and
   }
 });
 
+test("daily pickup punctuality uses the current booked date, cutoff and recorded readiness",async t=>{
+  const db=database();
+  t.after(()=>db.sqlite.close());
+  const date="2026-11-25",previous="2026-11-24",midnight=Date.parse(date+"T00:00:00+08:00");
+  const slot=Date.parse(date+"T11:00:00+08:00"),end=slot+900_000,nextSlot=end;
+  let now=end;
+  t.mock.method(Date,"now",()=>now);
+  const staff={Authorization:"Bearer fixture-staff"},env={DB:db,STAFF_KEY:"fixture-staff"};
+  const call=(day,options="&pickupPunctuality=1",headers=staff)=>
+    api(new Request("https://order.example/api/kitchen/daily?date="+day+options,{headers}),env);
+  const insert=db.sqlite.prepare(`INSERT INTO orders(token,mode,note,items,total,created,status,pickup_slot,
+    status_history,pickup_changes,payment_method,payment_due_at)
+    VALUES (?,?,'punt-private-note','[]',45,?,?,?,?,?,?,?)`);
+  const add=({start=slot,status="ready",created=midnight-1000,at=null,mode="pickup",
+    method="cash",paymentDue=null,changes=null,history=at===null?"[]":JSON.stringify([{from:"preparing",status:"ready",at}])}={})=>
+    Number(insert.run(crypto.randomUUID(),mode,created,status,start,history,changes&&JSON.stringify(changes),method,paymentDue).lastInsertRowid);
+  add({at:slot-60_000,changes:[{from:slot-86_400_000,to:slot,at:midnight-500}]});
+  add({at:end});
+  const late=add({status:"completed",at:end+1000,method:"line_pay"});
+  db.sqlite.prepare("INSERT INTO payment_attempts(order_id,reference,merchant,state,created) VALUES (?,'fixture-ref','private','refunded',?)")
+    .run(late,slot);
+  const overdue=add({status:"preparing"});
+  add({status:"pending",start:nextSlot});
+  add({status:"completed",at:midnight-2000});
+  add({history:JSON.stringify([false,"legacy marker",{from:"preparing",status:"ready",at:String(slot)}])});
+  add({method:"line_pay",status:"pending",paymentDue:end+60_000});
+  add({status:"pending",method:"line_pay",paymentDue:end});
+  add({status:"cancelled",at:slot});
+  add({start:null,at:slot});
+  add({mode:"table",at:slot});
+  add({start:slot-86_400_000,created:midnight-100_000_000,at:slot-86_400_000});
+  add({start:midnight+86_400_000,status:"pending"});
+  const boundary=(await (await call(date)).json()).pickupPunctuality;
+  assert.equal(boundary.totals.onTime,2);
+  assert.equal(boundary.totals.overdue,0);
+  assert.equal(boundary.totals.waiting,2);
+  assert.equal(boundary.totals.unknown,3);
+
+  now=end+2000;
+  const response=await call(date,"&timing=1&pickupPunctuality=1");
+  assert.equal(response.status,200);
+  assert.equal(response.headers.get("Cache-Control"),"no-store");
+  const raw=await response.text();
+  assert.ok(!raw.includes("punt-private-note")&&!raw.includes("fixture-ref"));
+  const report=JSON.parse(raw);
+  assert.equal(report.channels.pickup.orders,0);
+  const stats={bookings:10,onTime:2,late:1,overdue:1,waiting:1,unknown:2,awaitingPayment:1,cancelled:2};
+  assert.deepEqual(report.pickupPunctuality,{totals:stats,
+    windows:[{...stats,bookings:9,waiting:0,start:slot,end,issues:[
+      {id:late,status:"late",readyAt:end+1000},{id:overdue,status:"overdue",readyAt:null},
+    ]},{bookings:1,onTime:0,late:0,overdue:0,waiting:1,unknown:0,awaitingPayment:0,cancelled:0,
+      start:nextSlot,end:nextSlot+900_000,issues:[]}]});
+  assert.equal((await (await call(previous)).json()).pickupPunctuality.totals.bookings,1);
+  assert.equal((await (await call("2026-11-26")).json()).pickupPunctuality.totals.bookings,1);
+  assert.equal(Object.hasOwn(await (await call(date,"&timing=1")).json(),"pickupPunctuality"),false);
+  assert.equal((await call(date,"&pickupPunctuality=1",{})).status,403);
+});
+
 test("daily arrival waits belong to the Taipei arrival date and group only valid readiness timestamps",async t=>{
   const db=database();
   t.after(()=>db.sqlite.close());

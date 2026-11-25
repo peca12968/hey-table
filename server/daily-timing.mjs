@@ -1,3 +1,10 @@
+import {pickupSlotDuration} from "../lib/pickup-slots.mjs";
+import {payableForKitchen} from "./payment-api.mjs";
+
+const history=`json_each(CASE WHEN json_valid(orders.status_history) THEN orders.status_history ELSE '[]' END) AS event`;
+const eventTime=`CASE WHEN json_type(event.value,'$.at') IN ('integer','real')
+  THEN json_extract(event.value,'$.at') END`;
+
 // Only recorded transitions contribute timestamps. Older receipts can lack one
 // or more boundaries even when their current status is already complete.
 function timingRows(db, range, scope) {
@@ -5,11 +12,9 @@ function timingRows(db, range, scope) {
     SELECT orders.id, orders.created, orders.mode, orders.status, orders.pickup_arrived_at AS arrivedAt,
       json_extract(event.value,'$.from') AS previous,
       json_extract(event.value,'$.status') AS next,
-      CASE WHEN json_type(event.value,'$.at') IN ('integer','real')
-        THEN json_extract(event.value,'$.at') END AS at
+      ${eventTime} AS at
     FROM orders
-    LEFT JOIN json_each(CASE WHEN json_valid(orders.status_history) THEN orders.status_history ELSE '[]' END) AS event
-      ON event.type='object'
+    LEFT JOIN ${history} ON event.type='object'
     WHERE ${scope}
   )
   SELECT created, mode, status, arrivedAt,
@@ -24,6 +29,16 @@ export const dailyTimingRows=(db,range)=>timingRows(db,range,
 
 export const arrivalTimingRows=(db,range)=>timingRows(db,range,
   "orders.pickup_arrived_at>=? AND orders.pickup_arrived_at<? AND orders.mode='pickup'");
+
+export const pickupPunctualityRows=(db,range)=>db.prepare(`
+  SELECT orders.id, orders.created, orders.status, orders.pickup_slot AS start,
+    CASE WHEN orders.status='completed' OR ${payableForKitchen} THEN 1 ELSE 0 END AS payable,
+    (SELECT MIN(CASE WHEN event.type='object' THEN
+        CASE WHEN json_extract(event.value,'$.from')='preparing' AND json_extract(event.value,'$.status')='ready'
+          THEN ${eventTime} END END)
+      FROM ${history}) AS readyAt
+  FROM orders WHERE orders.mode='pickup' AND orders.pickup_slot>=? AND orders.pickup_slot<?
+  ORDER BY orders.pickup_slot, orders.id`).bind(...range);
 
 function measure(start, end, created, capturedAt) {
   if(!Number.isSafeInteger(start)||!Number.isSafeInteger(end)||start<created||end<start||end>capturedAt)return null;
@@ -68,4 +83,31 @@ export function arrivalTiming(rows, capturedAt) {
   }
   return {reported,overall:summarize(waits,waits.length),readyAtArrival:summarize(ready,ready.length),
     preparingAtArrival:summarize(preparing,preparing.length),unknownReadiness};
+}
+
+const counts=()=>({bookings:0,onTime:0,late:0,overdue:0,waiting:0,unknown:0,awaitingPayment:0,cancelled:0});
+
+function punctualityStatus(row, end, capturedAt){
+  if(row.status==="cancelled")return "cancelled";
+  if(!row.payable)return "awaitingPayment";
+  if(!["ready","completed"].includes(row.status))return capturedAt>end?"overdue":"waiting";
+  if(measure(row.readyAt,row.readyAt,row.created,capturedAt)===null)return "unknown";
+  return row.readyAt<=end?"onTime":"late";
+}
+
+export function pickupPunctuality(rows, capturedAt) {
+  const totals=counts(), windows=new Map();
+  for(const row of rows){
+    if(!Number.isSafeInteger(row.start))continue;
+    const end=row.start+pickupSlotDuration;
+    if(!windows.has(row.start))windows.set(row.start,{start:row.start,end,...counts(),issues:[]});
+    const window=windows.get(row.start), status=punctualityStatus(row,end,capturedAt);
+    window.bookings++;
+    window[status]++;
+    totals.bookings++;
+    totals[status]++;
+    if(status==="late"||status==="overdue")
+      window.issues.push({id:row.id,status,readyAt:status==="late"?row.readyAt:null});
+  }
+  return {totals,windows:[...windows.values()]};
 }

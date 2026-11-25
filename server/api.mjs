@@ -7,7 +7,7 @@ import {businessDate,businessDayRange} from "../lib/business-day.mjs";
 import {changePortionLimit,copyPortionLimits,dailyLimits,exceededOrderPortions,exceededPortions,portionLimitHistory,
   readRemaining,restockHistory,restockPortions,restorePortionLimit,supplyTime} from "./daily-limits.mjs";
 import {expirePaymentHolds,noBlockingPayment,paymentHoldMs} from "./payment-holds.mjs";
-import {arrivalTiming,arrivalTimingRows,dailyTiming,dailyTimingRows} from "./daily-timing.mjs";
+import {arrivalTiming,arrivalTimingRows,dailyTiming,dailyTimingRows,pickupPunctuality,pickupPunctualityRows} from "./daily-timing.mjs";
 import {kitchenOverdue} from "./kitchen-overdue.mjs";
 import {bookedPickupDate,pickupBookingDays,pickupCalendarStatus,pickupPrepLead,pickupSlotCapacity,pickupSlotsForDay} from "../lib/pickup-slots.mjs";
 import {canReschedulePickup,capacityAtPickupSlot,editablePickupSlots,orderPortions,pickupChanges,pickupSlotLimits,
@@ -765,7 +765,8 @@ export async function api(request, env) {
     if (!range) return fail("請選擇有效的餐單日期");
     const includeTiming=url.searchParams.get("timing")==="1";
     const includeItemChannels=url.searchParams.get("itemChannels")==="1";
-    const [,counts,portions,timings,arrivals] = await db.batch([
+    const includePickupPunctuality=url.searchParams.get("pickupPunctuality")==="1";
+    const [,counts,portions,...details] = await db.batch([
       expirePaymentHolds(db,Date.now()),
       db.prepare(`SELECT mode, COUNT(*) AS orders, SUM(status='pending') AS pending,
         SUM(status='preparing') AS preparing, SUM(status='ready') AS ready,
@@ -780,6 +781,7 @@ export async function api(request, env) {
         WHERE created>=? AND created<? AND status='completed'
         GROUP BY json_extract(line.value,'$.id') ORDER BY qty DESC, id`).bind(...range),
       ...(includeTiming?[dailyTimingRows(db,range),arrivalTimingRows(db,range)]:[]),
+      ...(includePickupPunctuality?[pickupPunctualityRows(db,range)]:[]),
     ]);
     const empty={orders:0,pending:0,preparing:0,ready:0,completed:0,cancelled:0,completedTotal:0};
     const channels={pickup:empty,table:empty};
@@ -792,7 +794,8 @@ export async function api(request, env) {
     }));
     const capturedAt=Date.now();
     return json({format:"hey-table.daily-operations.v1",date,timeZone:"Asia/Taipei",capturedAt,channels,items,
-      ...(includeTiming?{timing:dailyTiming(timings.results,capturedAt),arrivalTiming:arrivalTiming(arrivals.results,capturedAt)}:{})});
+      ...(includeTiming?{timing:dailyTiming(details[0].results,capturedAt),arrivalTiming:arrivalTiming(details[1].results,capturedAt)}:{}),
+      ...(includePickupPunctuality?{pickupPunctuality:pickupPunctuality(details.at(-1).results,capturedAt)}:{})});
   }
   if (path === "/api/kitchen/handoff" && method === "GET") {
     const id = collectionId(url);
