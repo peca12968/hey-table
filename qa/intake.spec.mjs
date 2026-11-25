@@ -1,5 +1,6 @@
 import {test,expect} from "@playwright/test";
 import {randomUUID} from "node:crypto";
+import {readFile} from "node:fs/promises";
 import {businessDate} from "../lib/business-day.mjs";
 
 const staff={Authorization:"Bearer local-test-kitchen"};
@@ -108,6 +109,7 @@ test("mobile restocking resumes a lost reply and preserves newer supply revision
     const sent=[];
     let first;
     await page.route("**"+endpoint+"/restock",async route=>{
+      if(route.request().method()!=="POST")return route.continue();
       sent.push(route.request().postDataJSON());
       if(sent.length!==1)return route.continue();
       const response=await route.fetch();
@@ -137,10 +139,30 @@ test("mobile restocking resumes a lost reply and preserves newer supply revision
     expect(sent[1]).toEqual(sent[0]);
     await expect(card.getByText("已占用 "+before.used+" 份 · 剩餘 3 份")).toBeVisible();
     expect(await settings()).toEqual(latest);
+    expect((await save(null,latest.revision)).ok()).toBe(true);
+    await page.reload();
+    await expect(card.getByText("已占用 "+before.used+" 份 · 剩餘 不限量")).toBeVisible();
+    const historyResponse=page.waitForResponse(response=>{
+      const url=new URL(response.url());
+      return url.pathname===endpoint+"/restock"&&response.request().method()==="GET"&&url.searchParams.get("dish")===dish;
+    });
+    await card.getByText("查看補貨紀錄",{exact:true}).click();
+    const history=await (await historyResponse).json();
+    expect(history.records.map(record=>record.revision)).toEqual([first.revision+1,first.revision]);
+    expect(history.records[1]).toEqual(first);
+    expect(history.nextBefore).toBeNull();
+    const region=card.getByRole("region",{name:"海苔柴魚煎餃補貨紀錄"});
+    const records=region.getByRole("listitem");
+    await expect(records).toHaveCount(2);
+    await expect(records.last()).toContainText("補貨 2 份");
+    await expect(records.last()).toContainText("供應上限 0 → "+first.capacity+" · 當時已占用 "+before.used+" 份");
+    const [file]=await Promise.all([page.waitForEvent("download"),region.getByRole("button",{name:"下載這頁 JSON"}).click()]);
+    expect(file.suggestedFilename()).toMatch(/^hey-table-restock-/);
+    expect(JSON.parse(await readFile(await file.path(),"utf8"))).toEqual(history);
     expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBe(360);
   }finally{
     const current=await settings();
-    await save(null,current.revision);
+    if(current.capacity!==null)await save(null,current.revision);
     await request.patch("/api/kitchen/status",{headers:staff,data:{id,from:"pending",to:"cancelled"}});
   }
 });

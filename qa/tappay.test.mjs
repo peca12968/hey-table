@@ -66,6 +66,46 @@ function database(beforeMigration=()=>{}){
   }
   return sqliteD1(sqlite);
 }
+test("staff restock history pages by revision without exposing operation IDs or crossing dates and dishes",async t=>{
+  const db=database();
+  t.after(()=>db.sqlite.close());
+  const date="2026-11-25",dish="gyoza";
+  const insert=db.sqlite.prepare(`INSERT INTO daily_portion_restocks
+    (date,dish,revision,operation_id,quantity,previous_capacity,used,capacity,restocked_at)
+    VALUES (?,?,?,?,1,0,0,1,1)`);
+  const add=(revision,day=date,item=dish)=>insert.run(day,item,revision,crypto.randomUUID());
+  for(let revision=2;revision<=53;revision++)add(revision);
+  add(88,"2026-11-26");
+  add(89,date,"sencha");
+  const query="date="+date+"&dish="+dish;
+  const read=(params,staff=true)=>api(new Request("https://order.example/api/kitchen/daily-limits/restock?"+params,{
+    headers:staff?{Authorization:"Bearer test-staff"}:{},
+  }),{DB:db,STAFF_KEY:"test-staff"});
+  assert.equal((await read(query,false)).status,403);
+  for(const invalid of ["",query+"&date="+date,query+"&dish=sencha",query+"&before=1",query+"&before=1e3",
+    query+"&before=9007199254740992",query+"&before=28&before=29","date=2026-11-31&dish=gyoza",
+    "date="+date+"&dish=unknown"]){
+    assert.equal((await read(invalid)).status,400);
+  }
+  const response=await read(query);
+  assert.equal(response.headers.get("cache-control"),"no-store");
+  const first=await response.json();
+  assert.equal(first.records.length,25);
+  assert.equal(first.nextBefore,29);
+  assert.deepEqual(first.records[0],{date,dish,revision:53,quantity:1,previousCapacity:0,used:0,capacity:1,restockedAt:1});
+  add(54);
+  const second=await (await read(query+"&before="+first.nextBefore)).json();
+  assert.equal(second.records.length,25);
+  assert.equal(second.nextBefore,4);
+  const last=await (await read(query+"&before="+second.nextBefore)).json();
+  assert.equal(last.nextBefore,null);
+  assert.deepEqual([...first.records,...second.records,...last.records].map(row=>row.revision),
+    Array.from({length:52},(_,index)=>53-index));
+  assert.equal((await (await read(query)).json()).records[0].revision,54);
+  const empty=await (await read("date=2026-11-24&dish="+dish)).json();
+  assert.deepEqual(empty.records,[]);
+  assert.equal(empty.nextBefore,null);
+});
 test("staff payment export matches both reconciliation tools without exporting customer fields",async t=>{
   const temp=mkdtempSync(join(tmpdir(),"hey-table-payment-snapshot-"));
   t.after(()=>rmSync(temp,{recursive:true,force:true}));

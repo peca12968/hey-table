@@ -2,10 +2,12 @@
 import {useEffect,useRef,useState} from "react";
 import {Header,Footer,request} from "../../shared";
 import {useBusinessToday} from "../../use-business-today.mjs";
+import {downloadJson} from "../../../lib/download-json.mjs";
 import {dishes} from "../../../lib/menu.mjs";
 import "./limits.css";
 
 const endpoint="/api/kitchen/daily-limits";
+const taipei=new Intl.DateTimeFormat("zh-TW",{timeZone:"Asia/Taipei",dateStyle:"short",timeStyle:"medium"});
 function staffHeaders(){
   const key=sessionStorage.getItem("he-ri-staff");
   return key?{Authorization:"Bearer "+key}:{};
@@ -22,14 +24,13 @@ function rememberRestock(key,operation){
   }catch{/* The current page can still retry the same request. */}
 }
 
-function LimitCard({date,dish,data,disabled,onWrite}){
+function LimitActions({date,dish,data,disabled,onWrite}){
   const [value,setValue]=useState(data.capacity??"");
   const draftKey="he-ri-portion-restock:"+date+":"+dish.id;
   const [pending,setPending]=useState(()=>restockDraft(draftKey));
   const [quantity,setQuantity]=useState("");
   const added=Number(pending?.quantity??quantity);
   const canRestock=Number.isSafeInteger(added)&&added>0;
-  const remaining=data.capacity===null?"不限量":Math.max(0,data.capacity-data.used)+" 份";
 
   async function restock(event){
     event.preventDefault();
@@ -51,9 +52,7 @@ function LimitCard({date,dish,data,disabled,onWrite}){
       }
     }
   }
-  return <article className="sheet limitCard" aria-label={dish.name}>
-    <h2>{dish.name}</h2>
-    <p>已占用 {data.used} 份 · 剩餘 {remaining}</p>
+  return <>
     <form className="actions" onSubmit={async event=>{
       event.preventDefault();
       try{await onWrite(dish,{date,dish:dish.id,capacity:value===""?null:Number(value),revision:data.revision},false);}
@@ -72,6 +71,58 @@ function LimitCard({date,dish,data,disabled,onWrite}){
       </form>
       {pending&&<p role="status">可重試同一筆補貨，避免重複增加份數。</p>}
     </details>}
+  </>;
+}
+
+function RestockRecords({date,dish}){
+  const [cursors,setCursors]=useState([null]),[reload,setReload]=useState(0),[view,setView]=useState(null);
+  const before=cursors.at(-1);
+  useEffect(()=>{
+    const controller=new AbortController();
+    const query=new URLSearchParams({date,dish:dish.id});
+    if(before!==null)query.set("before",String(before));
+    request(endpoint+"/restock?"+query,{
+      headers:staffHeaders(),signal:AbortSignal.any([controller.signal,AbortSignal.timeout(10_000)]),
+    }).then(page=>{if(!controller.signal.aborted)setView({before,reload,page});})
+      .catch(failure=>{if(!controller.signal.aborted)setView({before,reload,error:
+        failure.name==="TimeoutError"?"讀取補貨紀錄逾時，請重試。":failure.message});});
+    return ()=>controller.abort();
+  },[date,dish.id,before,reload]);
+  const current=view?.before===before&&view.reload===reload?view:null;
+  const page=current?.page;
+  return <section aria-label={dish.name+"補貨紀錄"}>
+    {!current&&<p role="status">正在讀取補貨紀錄…</p>}
+    {current?.error&&<p role="alert" className="error">{current.error}</p>}
+    {page?.records.length===0&&<p>這一天沒有補貨紀錄。</p>}
+    {page?.records.length>0&&<ol aria-label="補貨明細" className="restockRecords">
+      {page.records.map(record=><li key={record.revision}>
+        <div><strong>補貨 {record.quantity} 份</strong><span>第 {record.revision} 版</span></div>
+        <time dateTime={new Date(record.restockedAt).toISOString()}>{taipei.format(record.restockedAt)}</time>
+        <p>供應上限 {record.previousCapacity} → {record.capacity} · 當時已占用 {record.used} 份</p>
+      </li>)}
+    </ol>}
+    {current&&<div className="actions">
+      <button className="outline" onClick={()=>{setCursors([null]);setReload(value=>value+1);}}>重新查詢紀錄</button>
+      {cursors.length>1&&<button className="outline" onClick={()=>setCursors(previous=>previous.slice(0,-1))}>較新一頁</button>}
+      {page?.nextBefore!=null&&<button className="outline" onClick={()=>setCursors(previous=>
+        previous.at(-1)===before?[...previous,page.nextBefore]:previous)}>更早紀錄</button>}
+      {page?.records.length>0&&<button className="outline" onClick={()=>downloadJson(
+        "hey-table-restock-"+date+"-"+dish.id+"-",page.capturedAt,page)}>下載這頁 JSON</button>}
+    </div>}
+  </section>;
+}
+
+function LimitCard({date,dish,data,disabled,onWrite}){
+  const [historyOpen,setHistoryOpen]=useState(false);
+  const remaining=data.capacity===null?"不限量":Math.max(0,data.capacity-data.used)+" 份";
+  return <article className="sheet limitCard" aria-label={dish.name}>
+    <h2>{dish.name}</h2>
+    <p>已占用 {data.used} 份 · 剩餘 {remaining}</p>
+    <LimitActions key={data.revision} date={date} dish={dish} data={data} disabled={disabled} onWrite={onWrite}/>
+    <details className="limitRestock" onToggle={event=>setHistoryOpen(event.currentTarget.open)}>
+      <summary>查看補貨紀錄</summary>
+      {historyOpen&&<RestockRecords key={data.revision} date={date} dish={dish}/>}
+    </details>
   </article>;
 }
 
@@ -131,7 +182,7 @@ export default function DailyLimits(){
     {message&&<p role="status">{message}</p>}
     {date&&!current&&!error&&<p role="status">正在讀取供應份數…</p>}
     {current&&<div className="kGrid">{dishes.map(dish=><LimitCard
-      key={date+":"+dish.id+":"+current.limits[dish.id].revision} date={date} dish={dish} data={current.limits[dish.id]}
+      key={date+":"+dish.id} date={date} dish={dish} data={current.limits[dish.id]}
       disabled={busy} onWrite={write}/>)}</div>}
   </main><Footer/></>;
 }

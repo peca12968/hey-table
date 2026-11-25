@@ -10,6 +10,8 @@ const usedByDish=`SELECT json_extract(line.value,'$.id') AS dish, SUM(json_extra
 const usedForLimit=`COALESCE((SELECT SUM(json_extract(line.value,'$.qty'))
   FROM orders JOIN json_each(orders.items) AS line
   WHERE ${suppliedWithin} AND json_extract(line.value,'$.id')=limits.dish),0)`;
+const restockReceiptColumns="date,dish,revision,quantity,previous_capacity AS previousCapacity,used,capacity,restocked_at AS restockedAt";
+const restockPageSize=25;
 
 const excessFor=items=>`SELECT limits.dish FROM daily_portion_limits AS limits
   JOIN json_each(${items}) AS requested ON json_extract(requested.value,'$.id')=limits.dish
@@ -51,9 +53,16 @@ export async function restockPortions(db,{date,dish,revision,quantity,operationI
       WHERE receipt.operation_id=? AND receipt.date=? AND receipt.dish=? AND receipt.revision=? AND receipt.quantity=?
         AND limits.date=receipt.date AND limits.dish=receipt.dish AND limits.revision=receipt.revision-1`)
       .bind(operationId,date,dish,revision+1,quantity),
-    db.prepare(`SELECT date,dish,revision,quantity,previous_capacity AS previousCapacity,used,capacity,restocked_at AS restockedAt
-      FROM daily_portion_restocks WHERE operation_id=?`).bind(operationId),
+    db.prepare(`SELECT ${restockReceiptColumns} FROM daily_portion_restocks WHERE operation_id=?`).bind(operationId),
   ]);
   const saved=result.results[0];
   return saved?.date===date&&saved.dish===dish&&saved.revision===revision+1&&saved.quantity===quantity?saved:null;
+}
+
+export async function restockHistory(db,date,dish,before){
+  const {results}=await db.prepare(`SELECT ${restockReceiptColumns} FROM daily_portion_restocks
+    WHERE date=? AND dish=?${before===null?"":" AND revision<?"} ORDER BY revision DESC LIMIT ?`)
+    .bind(date,dish,...(before===null?[]:[before]),restockPageSize+1).all();
+  const records=results.slice(0,restockPageSize);
+  return {date,dish,capturedAt:Date.now(),records,nextBefore:results.length>restockPageSize?records.at(-1).revision:null};
 }
