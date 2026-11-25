@@ -83,6 +83,68 @@ test("daily portions serialize the last serving across pickup and tables and rel
   }
 });
 
+test("mobile restocking resumes a lost reply and preserves newer supply revisions",async({page,request})=>{
+  const date=businessDate(Date.now()),dish="gyoza",endpoint="/api/kitchen/daily-limits";
+  const settings=async()=>(await (await request.get(endpoint+"?date="+date,{headers:staff})).json()).limits[dish];
+  const save=(capacity,revision)=>request.patch(endpoint,{headers:staff,data:{date,dish,capacity,revision}});
+  const refill=(quantity,revision,operationId=randomUUID())=>request.post(endpoint+"/restock",{
+    headers:staff,data:{date,dish,quantity,revision,operationId},
+  });
+  const sale=await request.post("/api/orders",{data:order("pickup",{items:[{id:dish,qty:1}]})});
+  expect(sale.ok(),await sale.text()).toBe(true);
+  const {id}=await sale.json();
+  try{
+    const before=await settings();
+    expect(before.used).toBeGreaterThanOrEqual(1);
+    const paused=await save(0,before.revision);
+    expect(paused.ok()).toBe(true);
+    const revision=(await paused.json()).revision;
+    expect((await request.post(endpoint+"/restock",{data:{date,dish,quantity:2,revision,operationId:randomUUID()}})).status()).toBe(403);
+    expect((await refill(0,revision)).status()).toBe(400);
+    expect((await refill(Number.MAX_SAFE_INTEGER,revision)).status()).toBe(409);
+
+    await page.setViewportSize({width:360,height:780});
+    await page.addInitScript(()=>sessionStorage.setItem("he-ri-staff","local-test-kitchen"));
+    const sent=[];
+    let first;
+    await page.route("**"+endpoint+"/restock",async route=>{
+      sent.push(route.request().postDataJSON());
+      if(sent.length!==1)return route.continue();
+      const response=await route.fetch();
+      expect(response.status(),await response.text()).toBe(200);
+      first=await response.json();
+      await route.abort("failed");
+    });
+    await page.goto("/kitchen/daily-limits");
+    const card=page.getByRole("article",{name:"海苔柴魚煎餃"});
+    await card.getByText("補貨增加可售份數",{exact:true}).click();
+    await card.getByLabel("補貨份數").fill("2");
+    await card.getByRole("button",{name:"確認補貨"}).click();
+    await expect(page.getByRole("alert")).toContainText("尚未收到補貨結果");
+    expect(first).toMatchObject({date,dish,quantity:2,previousCapacity:0,used:before.used,capacity:before.used+2,revision:revision+1});
+    expect((await (await request.get("/api/menu")).json()).remaining[dish]).toBe(2);
+
+    const competing=await Promise.all([refill(1,first.revision),refill(1,first.revision)]);
+    expect(competing.map(result=>result.status()).sort()).toEqual([200,409]);
+    const latest=await settings();
+    expect(latest).toEqual({capacity:before.used+3,used:before.used,revision:revision+2});
+    expect((await refill(3,revision,sent[0].operationId)).status()).toBe(409);
+
+    await page.reload();
+    await expect(card.getByLabel("補貨份數")).toBeDisabled();
+    await card.getByRole("button",{name:"重試補貨"}).click();
+    await expect(page.getByText(/補貨 2 份。/)).toBeVisible();
+    expect(sent[1]).toEqual(sent[0]);
+    await expect(card.getByText("已占用 "+before.used+" 份 · 剩餘 3 份")).toBeVisible();
+    expect(await settings()).toEqual(latest);
+    expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBe(360);
+  }finally{
+    const current=await settings();
+    await save(null,current.revision);
+    await request.patch("/api/kitchen/status",{headers:staff,data:{id,from:"pending",to:"cancelled"}});
+  }
+});
+
 test("mobile guest keeps a draft through a pause and a second staff browser needs a fresh revision",async({browser,context,page,request})=>{
   const guest=await browser.newContext({viewport:{width:390,height:844}});
   try{

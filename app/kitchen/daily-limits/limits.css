@@ -6,3 +6,6 @@
 .limitCard form{align-items:end;gap:8px}
 .limitCard input{width:110px;max-width:100%}
 .limitDate button,.limitCard button{min-height:40px}
+.limitRestock{margin-top:12px;border-top:1px solid var(--line);padding-top:8px}
+.limitRestock summary{cursor:pointer;font-weight:650}
+.limitRestock form{margin-block:8px}

@@ -36,3 +36,24 @@ export async function dailyLimits(db,date,range) {
     return [id,{capacity:row?.capacity??null,revision:row?.revision??0,used:used.get(id)??0}];
   }));
 }
+
+export async function restockPortions(db,{date,dish,revision,quantity,operationId},range,now){
+  const [,,,result]=await db.batch([
+    expirePaymentHolds(db,now),
+    db.prepare(`WITH observed AS (SELECT limits.capacity, ${usedForLimit} AS used
+        FROM daily_portion_limits AS limits WHERE date=? AND dish=? AND revision=? AND capacity IS NOT NULL)
+      INSERT INTO daily_portion_restocks(date,dish,revision,operation_id,quantity,previous_capacity,used,capacity,restocked_at)
+        SELECT ?,?,?,?,?,capacity,used,MAX(capacity,used)+?,? FROM observed WHERE MAX(capacity,used)<=?
+        ON CONFLICT DO NOTHING`)
+      .bind(...range,date,dish,revision,date,dish,revision+1,operationId,quantity,quantity,now,Number.MAX_SAFE_INTEGER-quantity),
+    db.prepare(`UPDATE daily_portion_limits AS limits SET capacity=receipt.capacity, revision=receipt.revision
+      FROM daily_portion_restocks AS receipt
+      WHERE receipt.operation_id=? AND receipt.date=? AND receipt.dish=? AND receipt.revision=? AND receipt.quantity=?
+        AND limits.date=receipt.date AND limits.dish=receipt.dish AND limits.revision=receipt.revision-1`)
+      .bind(operationId,date,dish,revision+1,quantity),
+    db.prepare(`SELECT date,dish,revision,quantity,previous_capacity AS previousCapacity,used,capacity,restocked_at AS restockedAt
+      FROM daily_portion_restocks WHERE operation_id=?`).bind(operationId),
+  ]);
+  const saved=result.results[0];
+  return saved?.date===date&&saved.dish===dish&&saved.revision===revision+1&&saved.quantity===quantity?saved:null;
+}

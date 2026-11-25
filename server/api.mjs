@@ -4,7 +4,7 @@ import qrcode from "qrcode-generator";
 import {dishes, itemNoteLimit, numberOf, tables, transitions} from "../lib/menu.mjs";
 import {intakeLabels,intakeNotice} from "../lib/order-intake.mjs";
 import {businessDate,businessDayRange} from "../lib/business-day.mjs";
-import {dailyLimits,exceededOrderPortions,exceededPortions,readRemaining,supplyTime} from "./daily-limits.mjs";
+import {dailyLimits,exceededOrderPortions,exceededPortions,readRemaining,restockPortions,supplyTime} from "./daily-limits.mjs";
 import {expirePaymentHolds,noBlockingPayment,paymentHoldMs} from "./payment-holds.mjs";
 import {dailyTiming,dailyTimingRows} from "./daily-timing.mjs";
 import {kitchenOverdue} from "./kitchen-overdue.mjs";
@@ -265,6 +265,15 @@ export async function api(request, env) {
       .bind(date,dish,capacity,revision+1,date,dish,revision).run();
     return meta.changes?json({date,dish,capacity,revision:revision+1}):
       fail("供應上限已由其他店員更新，請重新載入後再儲存。",409);
+  }
+  if(path==="/api/kitchen/daily-limits/restock"&&method==="POST"){
+    const {date,dish,quantity,revision,operationId}=input;
+    const range=typeof date==="string"?businessDayRange(date):null;
+    if(!range||!dishes.some(item=>item.id===dish)||!Number.isSafeInteger(quantity)||quantity<1||
+      !Number.isSafeInteger(revision)||revision<1||revision>=Number.MAX_SAFE_INTEGER||
+      typeof operationId!=="string"||!uuid.test(operationId))return fail("請確認日期、餐點、補貨份數與版本。");
+    const saved=await restockPortions(db,{date,dish,quantity,revision,operationId},range,Date.now());
+    return saved?json(saved):fail("無法套用此筆補貨。請重新載入並核對品項有設定上限、版次與補貨份數。",409);
   }
   if(path==="/api/kitchen/pickup-slots"&&method==="GET"){
     const date=url.searchParams.get("date");

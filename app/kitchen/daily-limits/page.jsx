@@ -1,7 +1,7 @@
 "use client";
-import {useEffect,useState} from "react";
+import {useEffect,useRef,useState} from "react";
 import {Header,Footer,request} from "../../shared";
-import {businessDate} from "../../../lib/business-day.mjs";
+import {useBusinessToday} from "../../use-business-today.mjs";
 import {dishes} from "../../../lib/menu.mjs";
 import "./limits.css";
 
@@ -11,56 +11,111 @@ function staffHeaders(){
   return key?{Authorization:"Bearer "+key}:{};
 }
 
-function LimitCard({dish,data,disabled,onSave}){
+function restockDraft(key){
+  try{return JSON.parse(sessionStorage.getItem(key));}
+  catch{return null;}
+}
+function rememberRestock(key,operation){
+  try{
+    if(operation)sessionStorage.setItem(key,JSON.stringify(operation));
+    else sessionStorage.removeItem(key);
+  }catch{/* The current page can still retry the same request. */}
+}
+
+function LimitCard({date,dish,data,disabled,onWrite}){
   const [value,setValue]=useState(data.capacity??"");
+  const draftKey="he-ri-portion-restock:"+date+":"+dish.id;
+  const [pending,setPending]=useState(()=>restockDraft(draftKey));
+  const [quantity,setQuantity]=useState("");
+  const added=Number(pending?.quantity??quantity);
+  const canRestock=Number.isSafeInteger(added)&&added>0;
   const remaining=data.capacity===null?"不限量":Math.max(0,data.capacity-data.used)+" 份";
+
+  async function restock(event){
+    event.preventDefault();
+    if(disabled||!canRestock)return;
+    const operation=pending??{date,dish:dish.id,revision:data.revision,quantity:added,operationId:crypto.randomUUID()};
+    rememberRestock(draftKey,operation);
+    setPending(operation);
+    try{
+      const saved=await onWrite(dish,operation,true);
+      if(!saved)return;
+      rememberRestock(draftKey,null);
+      setPending(null);
+      setQuantity("");
+    }catch(failure){
+      if([400,403,409].includes(failure.status)){
+        rememberRestock(draftKey,null);
+        setPending(null);
+        setQuantity(String(operation.quantity));
+      }
+    }
+  }
   return <article className="sheet limitCard" aria-label={dish.name}>
     <h2>{dish.name}</h2>
     <p>已占用 {data.used} 份 · 剩餘 {remaining}</p>
-    <form className="actions" onSubmit={event=>{
+    <form className="actions" onSubmit={async event=>{
       event.preventDefault();
-      onSave(dish,value===""?null:Number(value),data.revision);
+      try{await onWrite(dish,{date,dish:dish.id,capacity:value===""?null:Number(value),revision:data.revision},false);}
+      catch{/* The error is shown above the supply cards. */}
     }}>
       <label>供應上限<input type="number" min="0" step="1" inputMode="numeric" value={value}
-        onChange={event=>setValue(event.target.value)} disabled={disabled}/></label>
-      <button className="outline" disabled={disabled||String(value)===String(data.capacity??"")}>儲存上限</button>
+        onChange={event=>setValue(event.target.value)} disabled={disabled||!!pending}/></label>
+      <button className="outline" disabled={disabled||!!pending||String(value)===String(data.capacity??"")}>儲存上限</button>
     </form>
+    {(data.capacity!==null||pending)&&<details className="limitRestock" open={pending?true:undefined}>
+      <summary>補貨增加可售份數</summary>
+      <form className="actions" onSubmit={restock}>
+        <label>補貨份數<input type="number" min="1" step="1" inputMode="numeric" value={pending?.quantity??quantity}
+          onChange={event=>setQuantity(event.target.value)} disabled={disabled||!!pending} required/></label>
+        <button className="outline" disabled={disabled||!canRestock}>{pending?"重試補貨":"確認補貨"}</button>
+      </form>
+      {pending&&<p role="status">可重試同一筆補貨，避免重複增加份數。</p>}
+    </details>}
   </article>;
 }
 
 export default function DailyLimits(){
-  const [date,setDate]=useState(""),[reload,setReload]=useState(0),[snapshot,setSnapshot]=useState(null);
+  const [selectedDate,setSelectedDate]=useState(null),[reload,setReload]=useState(0),[snapshot,setSnapshot]=useState(null);
   const [busy,setBusy]=useState(false),[error,setError]=useState(""),[message,setMessage]=useState("");
-  useEffect(()=>{setDate(businessDate(Date.now()));},[]);
+  const today=useBusinessToday();
+  const date=selectedDate??today;
+  const inFlight=useRef(false);
   useEffect(()=>{
     if(!date)return;
     const controller=new AbortController();
-    request(endpoint+"?date="+encodeURIComponent(date),{headers:staffHeaders(),signal:controller.signal})
+    request(endpoint+"?date="+encodeURIComponent(date),{headers:staffHeaders(),
+      signal:AbortSignal.any([controller.signal,AbortSignal.timeout(10_000)])})
       .then(value=>{if(!controller.signal.aborted)setSnapshot(value);})
       .catch(failure=>{if(!controller.signal.aborted){setSnapshot(null);setError(failure.message);}});
     return ()=>controller.abort();
   },[date,reload]);
   const current=snapshot?.date===date?snapshot:null;
   function select(value){
-    setDate(value);setSnapshot(null);setMessage("");setError("");
+    setSelectedDate(value);setSnapshot(null);setMessage("");setError("");
   }
   function refresh(){
     setError("");setMessage("");setReload(value=>value+1);
   }
-  async function save(dish,capacity,revision){
-    if(busy)return;
+  async function write(dish,operation,restocking){
+    if(inFlight.current)return null;
+    inFlight.current=true;
     setBusy(true);setMessage("");setError("");
     try{
-      const saved=await request(endpoint,{method:"PATCH",
+      const saved=await request(restocking?endpoint+"/restock":endpoint,{method:restocking?"POST":"PATCH",
         headers:{"Content-Type":"application/json",...staffHeaders()},
-        body:JSON.stringify({date,dish:dish.id,capacity,revision})});
-      setSnapshot(old=>old?.date===date?
+        signal:AbortSignal.timeout(15_000),body:JSON.stringify(operation)});
+      setSnapshot(old=>old?.date===operation.date&&old.limits[dish.id].revision<saved.revision?
         {...old,limits:{...old.limits,[dish.id]:{...old.limits[dish.id],capacity:saved.capacity,revision:saved.revision}}}:old);
-      setMessage("已儲存 "+dish.name+" 的供應上限。");
+      setMessage(restocking?"已為 "+operation.date+" 的 "+dish.name+" 補貨 "+saved.quantity+" 份。":
+        "已儲存 "+dish.name+" 的供應上限。");
       setReload(value=>value+1);
+      return saved;
     }catch(failure){
-      setError(failure.message);
+      setError(restocking&&![400,403,409].includes(failure.status)?"尚未收到補貨結果，請重試同一筆補貨。":failure.message);
+      throw failure;
     }finally{
+      inFlight.current=false;
       setBusy(false);
     }
   }
@@ -76,7 +131,7 @@ export default function DailyLimits(){
     {message&&<p role="status">{message}</p>}
     {date&&!current&&!error&&<p role="status">正在讀取供應份數…</p>}
     {current&&<div className="kGrid">{dishes.map(dish=><LimitCard
-      key={date+":"+dish.id+":"+current.limits[dish.id].revision} dish={dish} data={current.limits[dish.id]}
-      disabled={busy} onSave={save}/>)}</div>}
+      key={date+":"+dish.id+":"+current.limits[dish.id].revision} date={date} dish={dish} data={current.limits[dish.id]}
+      disabled={busy} onWrite={write}/>)}</div>}
   </main><Footer/></>;
 }

@@ -169,6 +169,13 @@
       "when": 1795565567117,
       "tag": "0023_cash_receipt_corrections",
       "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "6",
+      "when": 1795568082440,
+      "tag": "0024_daily_portion_restocks",
+      "breakpoints": true
     }
   ]
 }

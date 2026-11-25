@@ -86,6 +86,22 @@ export const dailyPortionLimits = sqliteTable("daily_portion_limits", {
   check("daily_portion_capacity",sql`${t.capacity} IS NULL OR ${t.capacity} >= 0`),
   check("daily_portion_revision",sql`${t.revision} > 0`),
 ]);
+export const dailyPortionRestocks = sqliteTable("daily_portion_restocks", {
+  date: text("date").notNull(),
+  dish: text("dish").notNull(),
+  revision: integer("revision").notNull(),
+  operationId: text("operation_id").notNull().unique(),
+  quantity: integer("quantity").notNull(),
+  previousCapacity: integer("previous_capacity").notNull(),
+  used: integer("used").notNull(),
+  capacity: integer("capacity").notNull(),
+  restockedAt: integer("restocked_at").notNull(),
+}, t => [
+  primaryKey({columns:[t.date,t.dish,t.revision]}),
+  check("daily_restock_revision",sql`${t.revision} > 1`),
+  check("daily_restock_quantity",sql`${t.quantity} > 0 AND ${t.previousCapacity} >= 0 AND ${t.used} >= 0
+    AND ${t.capacity} = MAX(${t.previousCapacity},${t.used}) + ${t.quantity} AND ${t.capacity} <= ${sql.raw(String(Number.MAX_SAFE_INTEGER))}`),
+]);
 export const pickupSlotLimits = sqliteTable("pickup_slot_limits", {
   start: integer("start").primaryKey().notNull(),
   capacity: integer("capacity"),
