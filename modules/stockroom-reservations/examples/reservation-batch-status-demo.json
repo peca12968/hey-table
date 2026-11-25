@@ -683,5 +683,51 @@
         }
       ]
     }
+  },
+  "stock_count_reversal": {
+    "source_batch_id": "joint-recount",
+    "new_batch": true,
+    "blocked_status": 409,
+    "blocked_sku": "WRAP-01",
+    "after_blocked": [
+      {
+        "sku": "KIT-01",
+        "capacity": 18,
+        "available": 12,
+        "held": 6,
+        "revision": 1
+      },
+      {
+        "sku": "WRAP-01",
+        "capacity": 8,
+        "available": 2,
+        "held": 6,
+        "revision": 1
+      }
+    ],
+    "accepted_status": 201,
+    "replay_status": 200,
+    "same_receipt": true,
+    "original_preserved": true,
+    "items": [
+      {
+        "sku": "KIT-01",
+        "previous_capacity": 18,
+        "counted": 20,
+        "previous_revision": 1,
+        "previous_available": 12,
+        "available": 14,
+        "revision": 2
+      },
+      {
+        "sku": "WRAP-01",
+        "previous_capacity": 8,
+        "counted": 5,
+        "previous_revision": 1,
+        "previous_available": 8,
+        "available": 5,
+        "revision": 2
+      }
+    ]
   }
 }

@@ -106,7 +106,8 @@ def capture(db):
             "dispatch_preview": capture_dispatch_preview(db),
             "expiry_history": capture_expiry_history(db.with_name("expiry-history.db")),
             "stock_count": capture_stock_count(db.with_name("stock-count.db")),
-            "stock_count_batch": capture_stock_count_batch(db.with_name("stock-count-batch.db"))}
+            "stock_count_batch": capture_stock_count_batch(db.with_name("stock-count-batch.db")),
+            "stock_count_reversal": capture_stock_count_reversal(db.with_name("stock-count-reversal.db"))}
 
 
 def capture_release_batch(api):
@@ -361,6 +362,44 @@ def capture_stock_count_batch(db):
         return {"basis": basis, "after_blocked": after_blocked, "blocked_sku": "WRAP-01", "blocked_count": 2,
                 "blocked_status": blocked.status_code, "accepted_status": accepted.status_code,
                 "replay_status": replay.status_code, "same_receipt": same_receipt, "receipt": display}
+
+
+def capture_stock_count_reversal(db):
+    now = 1000
+    with TestClient(create_app(db, clock=lambda: now)) as api:
+        with closing(sqlite3.connect(db)) as conn, conn:
+            conn.execute("INSERT INTO products VALUES ('WRAP-01',5,5)")
+        api.post("/reservations", headers={"Idempotency-Key": "kit-cart"},
+                 json={"sku": "KIT-01", "quantity": 6}).raise_for_status()
+        scope = {"skus": ["KIT-01", "WRAP-01"]}
+        path = "/stock-count-batches"
+        original = api.post(path, headers={"Idempotency-Key": "joint-recount"}, json={
+            "items": [{"sku": "KIT-01", "counted": 18, "expected_revision": 0},
+                      {"sku": "WRAP-01", "counted": 8, "expected_revision": 0}],
+            "count_session": "audit-shift", "reason": "首輪複點",
+        }).raise_for_status().json()
+        api.post("/reservations", headers={"Idempotency-Key": "wrap-cart"},
+                 json={"sku": "WRAP-01", "quantity": 6}).raise_for_status()
+        endpoint = path + "/" + original["batch_id"] + "/reversal"
+        headers, request = {"Idempotency-Key": "recheck-count"}, {"reason": "查明原先讀錯貨架"}
+        now = 1001
+        blocked = api.post(endpoint, headers=headers, json=request)
+        after_blocked = api.post("/stock-count-basis", json=scope).raise_for_status().json()["products"]
+        api.delete("/reservations/wrap-cart").raise_for_status()
+        now = 1002
+        accepted = api.post(endpoint, headers=headers, json=request)
+        result = accepted.raise_for_status().json()
+        now = 1003
+        replay = api.post(endpoint, headers=headers, json=request)
+        readback = api.get(endpoint).raise_for_status().json()
+        unchanged_original = api.get(path + "/" + original["batch_id"]).raise_for_status().json() == original
+        particular = [{key: row[key] for key in ("sku", "previous_capacity", "counted", "previous_revision",
+                                                  "previous_available", "available", "revision")} for row in result["items"]]
+        return {"source_batch_id": result["source_batch_id"], "new_batch": result["batch_id"] != original["batch_id"],
+                "blocked_status": blocked.status_code, "blocked_sku": "WRAP-01", "after_blocked": after_blocked,
+                "accepted_status": accepted.status_code, "replay_status": replay.status_code,
+                "same_receipt": result == replay.json() == readback, "original_preserved": unchanged_original,
+                "items": particular}
 
 
 if __name__ == "__main__":

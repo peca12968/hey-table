@@ -65,6 +65,12 @@ SQLite 在同一筆交易核對實體庫存版次、結算到期保留並保存�
 
 任一 SKU 找不到、庫存版次變更或實點低於保留量時，整批退回，回應會指出該 SKU。成功後可從 `GET /stock-count-batches/{batch_id}` 取回整批收據，其中包含各品項的調整單號。原內容換序重送會取得同一批，單張及批次調整共用版次與盤點差異稽核。[跨 SKU 回滾與並行測試](tests/test_stock_count.py)
 
+#### 沖回已入帳的盤點批次
+
+發現已入帳的盤點批次讀錯數量時，向 `POST /stock-count-batches/{batch_id}/reversal` 送出原因，例如 `{"reason":"查明原先讀錯貨架"}`。用 `Idempotency-Key` 記下此次沖回操作。
+
+SQLite 會核對每個 SKU 的原入帳後版次，並嘗試恢復原批次調整前的實體數量，同時保留目前已占用的件數。若任何 SKU 已有後續實體異動，或恢復的數量不足以支應保留，整批退回。成功會產生新的沖回批號和各品項收據，原批次仍可查閱。相同操作重送會取得原沖回收據，也可用 `GET /stock-count-batches/{batch_id}/reversal` 查回。庫存差異報表會保留原調整與沖回的兩筆異動。[沖回、重送與對帳測試](tests/test_stock_count.py)
+
 ## 一次保留多種商品
 
 以 `POST /reservation-batches` 帶上 `Idempotency-Key: order-24`。請求可含一至 100 個不同 SKU。範例假設倉庫已有 `KIT-01` 與 `WRAP-01`。

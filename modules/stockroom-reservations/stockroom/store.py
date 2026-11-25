@@ -55,6 +55,12 @@ CREATE TABLE IF NOT EXISTS stock_count_batch_items (
     adjustment_id TEXT NOT NULL UNIQUE REFERENCES stock_count_adjustments(id),
     PRIMARY KEY (batch_id, adjustment_id)
 );
+CREATE TABLE IF NOT EXISTS stock_count_batch_reversals (
+    source_batch_id TEXT PRIMARY KEY,
+    reversal_batch_id TEXT NOT NULL UNIQUE,
+    request_id TEXT NOT NULL,
+    CHECK (source_batch_id<>reversal_batch_id)
+);
 CREATE TABLE IF NOT EXISTS reservations (
     id TEXT PRIMARY KEY,
     sku TEXT NOT NULL REFERENCES products(sku),
@@ -329,15 +335,19 @@ class Store:
                 if prior != ordered or (receipts[0]["count_session"], receipts[0]["reason"]) != (count_session, reason):
                     raise Conflict("Stock count batch key already used with different input")
                 return {"batch_id": batch_id, "items": receipts}, False
-            for sku, revision, counted in ordered:
-                key = uuid4().hex
-                try:
-                    receipt = self.record_stock_count(conn, now, key, sku, revision, counted, count_session, reason)
-                except (Missing, Conflict) as error:
-                    raise type(error)(f"{sku}: {error}") from error
-                conn.execute("INSERT INTO stock_count_batch_items VALUES (?, ?)", (batch_id, key))
-                receipts.append(receipt)
-            return {"batch_id": batch_id, "items": receipts}, True
+            return self.record_stock_count_batch(conn, now, batch_id, ordered, count_session, reason), True
+
+    def record_stock_count_batch(self, conn, now, batch_id, ordered, count_session, reason):
+        receipts = []
+        for sku, revision, counted in ordered:
+            key = uuid4().hex
+            try:
+                receipt = self.record_stock_count(conn, now, key, sku, revision, counted, count_session, reason)
+            except (Missing, Conflict) as error:
+                raise type(error)(f"{sku}: {error}") from error
+            conn.execute("INSERT INTO stock_count_batch_items VALUES (?, ?)", (batch_id, key))
+            receipts.append(receipt)
+        return {"batch_id": batch_id, "items": receipts}
 
     def stock_count_batch(self, batch_id):
         with closing(self.connect()) as conn:
@@ -345,6 +355,40 @@ class Store:
             if not receipts:
                 raise Missing("Unknown stock count batch")
             return {"batch_id": batch_id, "items": receipts}
+
+    def stock_count_batch_reversal_record(self, conn, batch_id):
+        link = conn.execute("""SELECT reversal_batch_id,request_id FROM stock_count_batch_reversals
+                               WHERE source_batch_id=?""", (batch_id,)).fetchone()
+        if link is None:
+            return None, None
+        reversal = link["reversal_batch_id"]
+        return {"source_batch_id": batch_id, "batch_id": reversal,
+                "items": self.stock_count_batch_rows(conn, reversal)}, link["request_id"]
+
+    def reverse_stock_count_batch(self, batch_id, request_id, reason):
+        with self.current_inventory() as (conn, now):
+            previous, operation = self.stock_count_batch_reversal_record(conn, batch_id)
+            if previous is not None:
+                if request_id != operation or previous["items"][0]["reason"] != reason:
+                    raise Conflict("Stock count batch has already been reversed")
+                return previous, False
+            original = self.stock_count_batch_rows(conn, batch_id)
+            if not original:
+                raise Missing("Unknown stock count batch")
+            ordered = [(line["sku"], line["revision"], line["previous_capacity"]) for line in original]
+            reversal_id = uuid4().hex
+            if self.stock_count_batch_rows(conn, reversal_id):
+                raise Conflict("Reversal batch ID already exists; retry the request")
+            receipt = self.record_stock_count_batch(conn, now, reversal_id, ordered, original[0]["count_session"], reason)
+            conn.execute("INSERT INTO stock_count_batch_reversals VALUES (?, ?, ?)", (batch_id, reversal_id, request_id))
+            return {"source_batch_id": batch_id, **receipt}, True
+
+    def stock_count_batch_reversal(self, batch_id):
+        with closing(self.connect()) as conn:
+            receipt, _ = self.stock_count_batch_reversal_record(conn, batch_id)
+            if receipt is None:
+                raise Missing("Unknown stock count batch reversal")
+            return receipt
 
     def expiring_reservations(self, within_seconds, limit, sku, through_ms, after):
         with self.current_inventory() as (conn, now):

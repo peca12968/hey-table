@@ -151,10 +151,13 @@ class StockCountValue(BaseModel):
     counted: int = Field(strict=True, ge=0, le=2**63 - 1)
 
 
-class StockCountMetadata(BaseModel):
+class StockCountReason(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    count_session: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=80)]
     reason: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=240)]
+
+
+class StockCountMetadata(StockCountReason):
+    count_session: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=80)]
 
 
 class StockCountAdjustment(StockCountMetadata, StockCountValue):
@@ -193,6 +196,10 @@ class StockCountReceipt(BaseModel):
 class StockCountBatchReceipt(BaseModel):
     batch_id: str
     items: list[StockCountReceipt]
+
+
+class StockCountBatchReversal(StockCountBatchReceipt):
+    source_batch_id: str
 
 
 class ExpiringReservation(BaseModel):
@@ -547,6 +554,20 @@ def create_app(path: Path, *, ttl_seconds=900, clock=time.time):
     def stock_count_batch_receipt(batch_id: BoxKey, response: Response):
         response.headers["Cache-Control"] = "no-store"
         return store.stock_count_batch(batch_id)
+
+    @app.post("/stock-count-batches/{batch_id}/reversal", response_model=StockCountBatchReversal, status_code=201,
+              responses={200: {"model": StockCountBatchReversal, "description": "Original stock count batch reversal"}})
+    def reverse_stock_count_batch(batch_id: BoxKey, correction: StockCountReason, response: Response, idempotency_key: RequestKey):
+        receipt, created = store.reverse_stock_count_batch(batch_id, idempotency_key, correction.reason)
+        response.headers["Cache-Control"] = "no-store"
+        if not created:
+            response.status_code = 200
+        return receipt
+
+    @app.get("/stock-count-batches/{batch_id}/reversal", response_model=StockCountBatchReversal)
+    def stock_count_reversal_receipt(batch_id: BoxKey, response: Response):
+        response.headers["Cache-Control"] = "no-store"
+        return store.stock_count_batch_reversal(batch_id)
 
     @app.get("/expiring-reservations", response_model=ExpiryQueue)
     def expiring_reservations(

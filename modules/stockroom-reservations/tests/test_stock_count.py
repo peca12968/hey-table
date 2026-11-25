@@ -215,3 +215,87 @@ def test_one_stock_revision_serializes_a_single_and_a_batch_adjustment(tmp_path)
         expected = [(4, 1), (18, 1)] if second.status_code == 201 else [(5, 0), (19, 1)]
         assert [(product["capacity"], product["revision"]) for product in products] == expected
         assert batch.get(BATCH + "/all").status_code == (200 if second.status_code == 201 else 404)
+
+
+def reversal(client, key, batch_id="cycle", reason="Recount copied from the wrong bin"):
+    return client.post(f"{BATCH}/{batch_id}/reversal", headers={"Idempotency-Key": key}, json={"reason": reason})
+
+
+def test_count_batch_reversal_preserves_original_and_replays_across_services(tmp_path):
+    path = tmp_path / "reversals.db"
+    opening = tmp_path / "before-count.db"
+    with TestClient(create_app(path, clock=lambda: 100)) as first, TestClient(create_app(path, clock=lambda: 101)) as second:
+        with Store(path).transaction() as conn:
+            conn.execute("INSERT INTO products VALUES ('WRAP-01',5,5)")
+        hold(first, 6)
+        with closing(sqlite3.connect(path)) as live, closing(sqlite3.connect(opening)) as saved:
+            live.backup(saved)
+        original = batch_count(first, "cycle", [count_item("KIT-01", 18), count_item("WRAP-01", 8)]).raise_for_status().json()
+        assert first.get(BATCH + "/cycle/reversal").status_code == 404
+        assert reversal(first, "missing", batch_id="unknown").status_code == 404
+        assert reversal(first, "no-reason", reason=" ").status_code == 422
+        gate = Barrier(2, timeout=5)
+
+        def attempt(client, key):
+            gate.wait()
+            return key, reversal(client, key)
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            attempts = [pool.submit(attempt, first, "first"), pool.submit(attempt, second, "second")]
+            replies = [attempt.result(timeout=10) for attempt in attempts]
+        assert sorted(reply.status_code for _, reply in replies) == [201, 409]
+        winning_key, accepted = next((key, reply) for key, reply in replies if reply.status_code == 201)
+        saved = accepted.json()
+        assert accepted.headers["Cache-Control"] == "no-store"
+        assert saved["source_batch_id"] == original["batch_id"]
+        assert saved["batch_id"] != original["batch_id"]
+        assert [(line["sku"], line["previous_capacity"], line["counted"], line["available"], line["revision"])
+                for line in saved["items"]] == [("KIT-01", 18, 20, 14, 2), ("WRAP-01", 8, 5, 5, 2)]
+        assert first.get(BATCH + "/cycle").json() == original
+        assert first.get(BATCH + "/" + saved["batch_id"]).json() == {"batch_id": saved["batch_id"], "items": saved["items"]}
+        assert first.get(BATCH + "/cycle/reversal").json() == saved
+        report = reconcile(opening, path, "KIT-01")
+        assert report["balanced"]
+        assert sorted(line["quantity"] for line in report["new_receipts"]) == [-2, 2]
+    with TestClient(create_app(path, clock=lambda: 102)) as restarted:
+        assert adjust(restarted, "later", 2, 21).status_code == 201
+        repeated = reversal(restarted, winning_key)
+        assert (repeated.status_code, repeated.json()) == (200, saved)
+        assert reversal(restarted, winning_key, reason="Changed reason").status_code == 409
+        assert restarted.get(BASIS).json()["capacity"] == 21
+
+
+def test_count_batch_reversal_rolls_back_on_hold_revision_and_failure_to_link(tmp_path):
+    path = tmp_path / "blocked-reversals.db"
+    with TestClient(create_app(path, clock=lambda: 100)) as api:
+        with Store(path).transaction() as conn:
+            conn.execute("INSERT INTO products VALUES ('WRAP-01',5,5)")
+        items = [count_item("KIT-01", 18), count_item("WRAP-01", 8)]
+        batch_count(api, "cycle", items).raise_for_status()
+        api.post("/reservations", headers={"Idempotency-Key": "wrap-cart"},
+                 json={"sku": "WRAP-01", "quantity": 6}).raise_for_status()
+        blocked = reversal(api, "undo")
+        assert blocked.status_code == 409
+        assert blocked.json()["detail"].startswith("WRAP-01:")
+        assert api.get(BASIS).json()["capacity"] == 18
+        assert api.get(BATCH + "/cycle/reversal").status_code == 404
+        assert api.delete("/reservations/wrap-cart").status_code == 200
+        with Store(path).transaction() as conn:
+            conn.execute("""CREATE TRIGGER fail_reversal BEFORE INSERT ON stock_count_batch_reversals
+                            BEGIN SELECT RAISE(ABORT, 'fixture reversal link failed'); END""")
+        with pytest.raises(sqlite3.IntegrityError, match="fixture reversal link failed"):
+            reversal(api, "undo")
+        assert api.get(BASIS).json()["revision"] == 1
+        assert api.get(BATCH + "/cycle/reversal").status_code == 404
+        with Store(path).transaction() as conn:
+            assert conn.execute("SELECT COUNT(*) FROM stock_count_adjustments").fetchone()[0] == 2
+            conn.execute("DROP TRIGGER fail_reversal")
+        assert reversal(api, "undo").status_code == 201
+
+        moved = [{**line, "expected_revision": 2} for line in items]
+        batch_count(api, "moved", moved).raise_for_status()
+        assert api.post("/inventory/WRAP-01/count-adjustments", headers={"Idempotency-Key": "new-count"},
+                        json={"expected_revision": 3, "counted": 9, "count_session": "another", "reason": "Recount"}).status_code == 201
+        assert reversal(api, "different-undo", batch_id="moved").status_code == 409
+        assert api.get(BASIS).json()["capacity"] == 18
+        assert api.get("/inventory/WRAP-01/count-basis").json()["capacity"] == 9
