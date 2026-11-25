@@ -1498,6 +1498,7 @@ test("printable kitchen snapshot exports the displayed orders to Prep Sheet",asy
   await change(cancelled,"pending","cancelled");
   await change(ready,"pending","preparing");
   await change(ready,"preparing","ready");
+  await page.setViewportSize({width:360,height:780});
   await page.addInitScript(()=>sessionStorage.setItem("he-ri-staff","local-test-kitchen"));
   await page.goto("/kitchen");
   await page.getByRole("link",{name:"查看備料單"}).click();
@@ -1505,6 +1506,38 @@ test("printable kitchen snapshot exports the displayed orders to Prep Sheet",asy
     "href","https://github.com/peca12968/hey-table/blob/main/modules/prep-sheet/README.md#從訂單匯出試算採購");
   const row=page.getByRole("row",{name:/鹽味毛豆/});
   await expect(row.getByRole("cell")).toHaveText(["4","2"]);
+  const root=process.env.PREP_PROJECT||fileURLToPath(new URL("../modules/prep-sheet/",import.meta.url));
+  const review=page.getByRole("region",{name:"備料試算報告"});
+  const download=page.waitForEvent("download");
+  await review.getByRole("button",{name:"下載備料試算資料"}).click();
+  const samplePath=await (await download).path();
+  const exported=await readFile(samplePath,"utf8");
+  expect(exported).not.toContain("這個備註只給接單台");
+  expect(JSON.parse(exported)).toMatchObject({format:"hey-table.prep-orders.v1",station:"all",scope:"all"});
+  const forecast=spawnSync("python",[join(root,"prep.py"),"--orders",samplePath,
+    "--recipes",join(root,"examples","recipes.json"),"--stock",join(root,"examples","stock.json"),
+    "--readiness","--include-preparing"],{encoding:"utf8",env:{...process.env,PYTHONUTF8:"1"}});
+  expect(forecast.status,forecast.stderr).toBe(0);
+  const importReport=text=>review.getByLabel("備料試算報告 JSON").setInputFiles({
+    name:"readiness.json",mimeType:"application/json",buffer:Buffer.from(text),
+  });
+  await importReport("{}");
+  await expect(review.getByRole("alert")).toContainText("無法讀取");
+  await importReport(forecast.stdout);
+  const results=review.getByRole("region",{name:"備料試算結果"});
+  const reported=results.getByRole("listitem").filter({hasText:"餐單 #"+String(pending).padStart(4,"0")});
+  await expect(reported).toContainText("缺 毛豆 400 g");
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBe(360);
+  const report=JSON.parse(forecast.stdout),dish=report.orders.find(order=>order.order_id===pending).portions[0];
+  dish.quantity++;
+  await importReport(JSON.stringify(report));
+  await expect(review.getByRole("alert")).toContainText("無法讀取");
+  await importReport(forecast.stdout);
+  await page.getByLabel("未完成品項",{exact:true}).check();
+  await expect(review.getByRole("alert")).toContainText("報告與目前");
+  await expect(results).toHaveCount(0);
+  await page.getByLabel("完整餐單",{exact:true}).check();
+  await expect(reported).toContainText("缺 毛豆 400 g");
   await change(pending,"pending","cancelled");
   await page.emulateMedia({media:"print"});
   await expect(page.getByRole("heading",{name:"廚房備料單"})).toBeVisible();
@@ -1521,7 +1554,6 @@ test("printable kitchen snapshot exports the displayed orders to Prep Sheet",asy
     for(const line of order.items) expect(Object.keys(line).sort()).toEqual(["id","qty"]);
   }
   {
-    const root=process.env.PREP_PROJECT||fileURLToPath(new URL("../modules/prep-sheet/",import.meta.url));
     const result=spawnSync("python",[join(root,"lunch.py"),"--orders",path,
       "--recipes",join(root,"examples","recipes.json"),"--stock",join(root,"examples","stock.json"),
       "--suppliers",join(root,"..","pantry-freight","examples","suppliers.json")],
@@ -1534,6 +1566,8 @@ test("printable kitchen snapshot exports the displayed orders to Prep Sheet",asy
   }
   await page.getByRole("button",{name:"重新擷取"}).click();
   await expect(row.getByRole("cell")).toHaveText(["0","2"]);
+  await expect(review.getByRole("alert")).toContainText("報告與目前");
+  await expect(results).toHaveCount(0);
 });
 
 test("mobile station batch can recheck a stale selection and only finish reviewed orders",async({page,request})=>{

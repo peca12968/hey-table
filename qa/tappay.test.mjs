@@ -11,6 +11,7 @@ import {settings,lookup} from "../server/tappay.mjs";
 import {paymentPrime,openPaymentUrl} from "../lib/tappay-client.mjs";
 import {comparePaymentHandoffSummaries,readPaymentHandoffSummary} from "../lib/payment-handoff-compare.mjs";
 import {planSupplyReview,supplyReviewRows} from "../lib/supply-review.mjs";
+import {matchesPrepOrderSource,prepOrderSource,readPrepReadinessReport} from "../lib/prep-readiness-report.mjs";
 import {dishes} from "../lib/menu.mjs";
 import {sqliteD1} from "../scripts/sqlite-d1.mjs";
 import {applyDemoMigrations} from "../scripts/apply-demo-migrations.mjs";
@@ -595,6 +596,24 @@ test("staff payment attempt history paginates stable ordinals and isolates notes
   assert.equal((await (await get(path)).json()).attempts[0].number,13);
   assert.deepEqual((await (await get(filter+"12")).json()).notes.map(row=>row.note),["最新嘗試的備註"]);
   assert.equal((await (await get(filter+"12")).json()).target,null);
+});
+
+test("prep report compares date, station and source quantities independently of capture time or item order",()=>{
+  const snapshot={date:"2026-11-25",station:"hot",scope:"all",capturedAt:1000,
+    orders:[{id:4,created:900,status:"pending",items:[{id:"katsudon",qty:2},{id:"sencha",qty:1}]}]};
+  const source=prepOrderSource(snapshot);
+  const matching=prepOrderSource({...snapshot,capturedAt:1200,orders:[{...snapshot.orders[0],items:[...snapshot.orders[0].items].reverse()}]});
+  assert.ok(matchesPrepOrderSource(matching,source));
+  for(const diff of [{date:"2026-11-26"},{station:"cold"},{scope:"remaining"},
+    {orders:[{...snapshot.orders[0],status:"preparing"}]},{orders:[{...snapshot.orders[0],items:[{id:"katsudon",qty:2}]}]}]){
+    assert.equal(matchesPrepOrderSource(prepOrderSource({...snapshot,...diff}),source),false);
+  }
+  const order={order_id:4,status:"shortage",portions:[{dish:"katsudon",from_ms:100,quantity:2},{dish:"sencha",from_ms:0,quantity:1}],
+    missing:[{component:"tea",name:"茶葉",unit:"g",quantity:4}],prep:[]};
+  const report={format:"hey-table.prep-readiness.v1",source,orders:[order]};
+  assert.deepEqual(readPrepReadinessReport(report).orders[0].missing,order.missing);
+  assert.throws(()=>readPrepReadinessReport({...report,orders:[order,order]}),/無法讀取/);
+  assert.throws(()=>readPrepReadinessReport({...report,orders:[{...order,status:"ready"}]}),/無法讀取/);
 });
 
 test("cart replacement preview counts existing portions and overlapping choices against the same limit",()=>{

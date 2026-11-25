@@ -74,6 +74,14 @@ python lunch.py --orders examples/orders.json --recipes examples/recipes.json --
 
 暫緩的餐單會保留所有模擬庫存給後續餐單。輸出的餘額是試算結果，領料與備料仍依店家的帳本操作。帳本模式會核對並跳過已登記領料的餐單。加上 `--include-preparing` 可納入製作中餐單。執行 `python readiness_demo.py` 可重建補入 280 g 雞肉前後的報告。[試玩現有庫存備料（私人預覽）](https://peca-github-demo.peca12968.chatgpt.site/?demo=prepReadiness#demos) · [範例資料](examples/readiness-demo.json)
 
+若需讓值班店員在備料頁查看結果，從「備料試算報告」下載目前範圍的試算資料，將檔案傳給同一個指令並把輸出存成 JSON。例如：
+
+```sh
+python prep.py --orders prep-input.json --recipes examples/recipes.json --ledger kitchen.db --readiness > readiness.json
+```
+
+回到備料頁選取 `readiness.json`。頁面會比對日期、分站、範圍、餐單狀態及品項份數。重新擷取時，若這些內容相符，可以繼續查看報告。報告在瀏覽器內讀取，頁面顯示試算所用的擷取時間。原先的「下載訂單 JSON」可繼續用於採購指令。[下載、試算與重新匯入測試](../../qa/ordering.spec.mjs)
+
 ## 核對採購單與分批到貨
 
 例如午餐採購單列了兩包醬油，每包 25 ml。上午先到一包，驗收後帳上增加 25 ml，下午仍可查到另一包待收。初次開單時會在既有的庫存帳加上採購單明細，保留原有收據與餘額。

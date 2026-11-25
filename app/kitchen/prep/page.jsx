@@ -6,6 +6,7 @@ import {downloadJson} from "../../../lib/download-json.mjs";
 import {stationLabels} from "../../../lib/kitchen-timing.mjs";
 import {PickupDate} from "../../pickup-slots";
 import {useBusinessToday} from "../../use-business-today.mjs";
+import ReadinessReview from "./readiness-review";
 import "./prep.css";
 
 const names = new Map(dishes.map(dish => [dish.id, dish.name]));
@@ -94,6 +95,7 @@ export default function Prep() {
           {selected==="all"?"下載訂單 JSON":"下載本站訂單 JSON"}</button>
       </>}
     </div>
+    <ReadinessReview snapshot={snapshot} orders={orders} station={selected} scope={remainingOnly?"remaining":"all"} clock={taipei}/>
     <p className="prepControl"><a className="textLink" href="https://github.com/peca12968/hey-table/blob/main/modules/prep-sheet/README.md#從訂單匯出試算採購">備料與採購試算說明</a></p>
   </main><Footer/></>;
 }

@@ -3,6 +3,7 @@ import argparse
 from bisect import bisect_right
 from collections import Counter
 from contextlib import closing
+from datetime import date
 from graphlib import CycleError, TopologicalSorter
 import json
 from pathlib import Path
@@ -188,6 +189,37 @@ def snapshot(path):
             yield {"id": order_id, "created": created, "status": status, "items": json.loads(items)}
 
 
+def read_order_export(value):
+    if isinstance(value, list):
+        return value, None
+    source = mapping(value, "prep order export")
+    if source.get("format") != "hey-table.prep-orders.v1":
+        raise ValueError("Unknown prep order export format")
+    day = source["date"]
+    if not isinstance(day, str) or date.fromisoformat(day).isoformat() != day:
+        raise ValueError("Invalid prep date")
+    captured = integer(source["capturedAt"], 1, "capture timestamp")
+    if (captured > 8_640_000_000_000_000 or source["station"] not in ("all", "hot", "cold", "bar", "other")
+            or source["scope"] not in ("all", "remaining") or not isinstance(source["orders"], list)):
+        raise ValueError("Invalid prep export scope")
+    orders = []
+    seen = set()
+    for order in source["orders"]:
+        mapping(order, "export order")
+        order_id = integer(order["id"], 1, "order ID")
+        details = order_identity(order)
+        status = order["status"]
+        if (order_id in seen or order_id > 2**53 - 1 or details["created"] > 8_640_000_000_000_000
+                or status not in ("pending", "preparing")
+                or any(not dish.strip() or qty > 2**53 - 1 for dish, qty in details["items"])):
+            raise ValueError("Invalid prep export order")
+        seen.add(order_id)
+        items = [{"id": dish, "qty": qty} for dish, qty in details["items"]]
+        orders.append({"id": order_id, "created": details["created"], "status": status, "items": items})
+    orders.sort(key=lambda row: row["id"])
+    return orders, {"date": day, "capturedAt": captured, "station": source["station"], "scope": source["scope"], "orders": orders}
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     source = parser.add_mutually_exclusive_group(required=True)
@@ -203,7 +235,7 @@ if __name__ == "__main__":
     def read(path):
         return json.loads(path.read_text(encoding="utf-8"))
     try:
-        orders = read(args.orders) if args.orders else snapshot(args.database)
+        orders, source = read_order_export(read(args.orders)) if args.orders else (snapshot(args.database), None)
         book = read(args.recipes)
         if args.ledger:
             from ledger import inventory_snapshot
@@ -212,6 +244,8 @@ if __name__ == "__main__":
             stock, issued = read(args.stock), {}
         report = readiness if args.readiness else plan
         result = report(orders, book, stock, args.include_preparing, issued)
-        print(json.dumps(result, ensure_ascii=False, indent=2))
+        if args.readiness and source is not None:
+            result = {"format": "hey-table.prep-readiness.v1", "source": source, "orders": result["orders"]}
+        print(json.dumps(result, ensure_ascii=source is not None, indent=2))
     except (OSError, sqlite3.Error, TypeError, ValueError, KeyError) as error:
         parser.exit(2, f"{error}\n")

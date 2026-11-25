@@ -10,7 +10,7 @@ import sys
 from tempfile import TemporaryDirectory
 import unittest
 
-from prep import order_identity, plan, readiness, snapshot
+from prep import order_identity, plan, read_order_export, readiness, snapshot
 from readiness_demo import demo
 
 ROOT = Path(__file__).resolve().parent
@@ -121,6 +121,19 @@ class PrepTests(unittest.TestCase):
         self.assertEqual(before[1]["missing"], [initial["arrival"]])
         self.assertEqual([row["status"] for row in after], ["ready", "ready"])
         self.assertEqual(before[0], after[0])
+
+    def test_scoped_export_retains_only_order_identity_and_rejects_incomplete_scope(self):
+        order = dict(example("orders")[0], note="only for the kitchen")
+        scope = {"format": "hey-table.prep-orders.v1", "date": "2026-11-25", "capturedAt": 1234,
+                 "station": "hot", "scope": "remaining", "orders": [order]}
+        orders, source = read_order_export(scope)
+        self.assertEqual(orders, [example("orders")[0]])
+        self.assertEqual(source, {key: value for key, value in scope.items() if key not in ("format", "orders")} |
+                                  {"orders": orders})
+        for invalid in (dict(scope, date="2026-02-30"), dict(scope, station="bad"),
+                        dict(scope, orders=[order, order])):
+            with self.assertRaises(ValueError):
+                read_order_export(invalid)
 
     def test_sqlite_snapshot_and_cli_match_kitchen_json(self):
         orders = example("orders")
