@@ -27,3 +27,13 @@
 .dailyTiming dt{font-weight:650}
 .dailyTiming dd>*{display:block;font-variant-numeric:tabular-nums}
 .dailyTiming dd small{color:var(--muted)}
+@media print{
+  .dailyOperations .dailyControl{display:none}
+  .dailyOperations{width:100%;max-width:none;margin:0;padding:0;color:#000;font-size:10pt}
+  .dailyOperations h1{font-size:18pt;margin:0 0 6pt}
+  .dailyOperations h2{font-size:13pt;break-after:avoid}
+  .dailyOperations .sheet{background:white;box-shadow:none;padding:8pt}
+  .dailyOperations .kGrid,.dailyTimingGrid{grid-template-columns:repeat(2,minmax(0,1fr));gap:8pt}
+  .dailyChannel,.dailyTimingGrid article,.dailyDishes tr{break-inside:avoid}
+  .dailyDishes thead{display:table-header-group}
+}

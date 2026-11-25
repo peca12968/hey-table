@@ -326,6 +326,7 @@ test("staff can view a Taiwan-date summary and download the displayed snapshot o
   const query=page.getByRole("button",{name:"查詢摘要"});
   const download=page.getByRole("button",{name:"下載摘要 JSON"});
   const downloadCsv=page.getByRole("button",{name:"下載份數 CSV"});
+  const print=page.getByRole("button",{name:"列印交班摘要"});
   await expect(download).toBeVisible();
   await date.fill(businessDate(created));
   const read=page.waitForResponse(response=>new URL(response.url()).pathname==="/api/kitchen/daily");
@@ -361,12 +362,52 @@ test("staff can view a Taiwan-date summary and download the displayed snapshot o
   expect(csv.charCodeAt(0)).toBe(0xfeff);
   expect(csv).toContain('"'+report.date+'","'+new Date(report.capturedAt).toISOString()+'","sencha","日式熱煎茶",'+[tea.pickupQty,tea.tableQty,tea.qty].join(",")+"\r\n");
   expect(csv).not.toContain("交班測試備註");
+  await page.evaluate(()=>{window.print=()=>{document.body.dataset.printInvoked="yes";};});
+  await print.click();
+  await expect(page.locator("body")).toHaveAttribute("data-print-invoked","yes");
+  await page.emulateMedia({media:"print"});
+  await expect(print).toBeHidden();
+  await expect(date).toBeHidden();
+  await expect(download).toBeHidden();
+  await expect(downloadCsv).toBeHidden();
+  await expect(page.locator(".dailyCapture time")).toBeVisible();
+  await expect(timing).toBeVisible();
+  await expect(teaRow).toBeVisible();
+  await page.emulateMedia({media:"screen"});
   await date.fill("2001-03-05");
   await expect(download).toHaveCount(0);
+  await expect(print).toHaveCount(0);
   await query.click();
   await expect(page.getByText("這一天沒有已交餐品項。")).toBeVisible();
   await expect(downloadCsv).toHaveCount(0);
   await expect(timing.getByText("目前無可用時間紀錄")).toHaveCount(4);
+});
+
+test("daily summary rolls over at Taipei midnight and keeps an explicitly selected date",async({page})=>{
+  await page.clock.install({time:new Date("2026-11-25T15:59:20Z")});
+  const dates=[];
+  const counts={orders:0,pending:0,preparing:0,ready:0,completed:0,cancelled:0,completedTotal:0};
+  await page.route("**/api/kitchen/daily?*",async route=>{
+    const date=new URL(route.request().url()).searchParams.get("date");
+    dates.push(date);
+    await route.fulfill({json:{date,capturedAt:Date.parse(date+"T00:00:00+08:00"),channels:{pickup:counts,table:counts},items:[]}});
+  });
+  await page.goto("/kitchen/daily");
+  const date=page.getByLabel("餐單日期");
+  const capture=page.locator(".dailyCapture");
+  await expect(date).toHaveValue("2026-11-25");
+  await expect(capture).toContainText("2026-11-25");
+  await page.clock.fastForward(45_000);
+  await expect(date).toHaveValue("2026-11-26");
+  await expect(capture).toContainText("2026-11-26");
+  await date.fill("2026-11-24");
+  await expect(capture).toHaveCount(0);
+  await page.getByRole("button",{name:"查詢摘要"}).click();
+  await expect(capture).toContainText("2026-11-24");
+  await page.clock.fastForward(86_400_000);
+  await expect(date).toHaveValue("2026-11-24");
+  await expect(capture).toContainText("2026-11-24");
+  expect(dates).toEqual(["2026-11-25","2026-11-26","2026-11-24"]);
 });
 
 test("this browser keeps separate receipt links across tabs and removes only the chosen local entry",async({context,page,request})=>{

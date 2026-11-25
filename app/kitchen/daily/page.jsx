@@ -1,7 +1,7 @@
 "use client";
 import {useEffect,useState} from "react";
 import {Header,Footer,request} from "../../shared";
-import {businessDate} from "../../../lib/business-day.mjs";
+import {useBusinessToday} from "../../use-business-today.mjs";
 import {downloadFile} from "../../../lib/download-file.mjs";
 import {downloadJson} from "../../../lib/download-json.mjs";
 import "./daily.css";
@@ -64,48 +64,57 @@ function DurationSummary({timing}) {
 }
 
 export default function DailyOperations() {
-  const [date,setDate]=useState(""),[query,setQuery]=useState(null);
-  const [report,setReport]=useState(null),[error,setError]=useState("");
+  const today=useBusinessToday();
+  const [draft,setDraft]=useState(null),[query,setQuery]=useState(null),[view,setView]=useState(null);
+  const date=draft??today;
+  const queryDate=query?.date??today;
+  const revision=query?.revision??0;
   useEffect(()=>{
-    const today=businessDate(Date.now());
-    setDate(today);
-    setQuery({date:today});
-  },[]);
-  useEffect(()=>{
-    if(!query)return;
+    if(!queryDate)return;
     const controller=new AbortController();
     const key=sessionStorage.getItem("he-ri-staff");
-    request("/api/kitchen/daily?date="+encodeURIComponent(query.date)+"&timing=1&itemChannels=1",{
-      signal:controller.signal,headers:key?{Authorization:"Bearer "+key}:{},
+    request("/api/kitchen/daily?date="+encodeURIComponent(queryDate)+"&timing=1&itemChannels=1",{
+      signal:AbortSignal.any([controller.signal,AbortSignal.timeout(10_000)]),
+      headers:key?{Authorization:"Bearer "+key}:{},
     }).then(value=>{
-      if(!controller.signal.aborted)setReport(value);
+      if(!controller.signal.aborted)setView({date:queryDate,revision,report:value});
     }).catch(failure=>{
-      if(!controller.signal.aborted)setError(failure.message);
+      if(!controller.signal.aborted)setView({date:queryDate,revision,
+        error:failure.name==="TimeoutError"?"讀取摘要逾時，請重新查詢。":failure.message});
     });
     return ()=>controller.abort();
-  },[query]);
+  },[queryDate,revision]);
+  const current=view?.date===queryDate&&view.revision===revision?view:null;
+  const report=current?.report;
+
+  function changeQuery(date) {
+    setQuery(previous=>({date,revision:(previous?.revision??0)+1}));
+  }
   function search(event) {
     event.preventDefault();
-    setError("");setReport(null);setQuery({date});
+    setDraft(date);
+    changeQuery(date);
   }
   function selectDate(event) {
-    setDate(event.target.value);setError("");setReport(null);setQuery(null);
+    setDraft(event.target.value);
+    changeQuery("");
   }
   return <><Header/><main className="shell section dailyOperations">
-    <div className="actions"><a className="textLink" href="/kitchen">返回店家接單台</a>
+    <div className="actions dailyControl"><a className="textLink" href="/kitchen">返回店家接單台</a>
       <a className="textLink" href="/kitchen/cash-close">查看現金日結</a></div>
     <h1>每日訂單摘要</h1>
     <p>按台灣日期查看當天成立的餐單。金額為已交餐單的原成交金額，包含示範單。</p>
-    <form className="actions dailyDate" onSubmit={search}>
+    <form className="actions dailyDate dailyControl" onSubmit={search}>
       <label>餐單日期<input type="date" required value={date} onChange={selectDate}/></label>
       <button className="outline" disabled={!date}>查詢摘要</button>
     </form>
-    {error&&<p role="alert" className="error">{error}</p>}
-    {query&&!report&&!error&&<p role="status">正在讀取摘要…</p>}
+    {current?.error&&<p role="alert" className="error dailyControl">{current.error}</p>}
+    {queryDate&&!current&&<p role="status" className="dailyControl">正在讀取摘要…</p>}
     {report&&<>
       <div className="actions dailyCapture">
-        <p>{report.date} · 擷取時間 <time dateTime={new Date(report.capturedAt).toISOString()}>{captureTime.format(report.capturedAt)}</time></p>
-        <button className="outline" onClick={()=>downloadJson("hey-table-daily-"+report.date+"-",report.capturedAt,report)}>下載摘要 JSON</button>
+        <p>{report.date} · 擷取時間（台灣） <time dateTime={new Date(report.capturedAt).toISOString()}>{captureTime.format(report.capturedAt)}</time></p>
+        <button className="outline dailyControl" onClick={()=>window.print()}>列印交班摘要</button>
+        <button className="outline dailyControl" onClick={()=>downloadJson("hey-table-daily-"+report.date+"-",report.capturedAt,report)}>下載摘要 JSON</button>
       </div>
       <div className="kGrid">
         <ChannelSummary name="自取" summary={report.channels.pickup}/>
@@ -115,7 +124,7 @@ export default function DailyOperations() {
       <section className="sheet dailyDishes">
         <div className="actions dailyDishesHeader">
           <h2>已交餐品項</h2>
-          {report.items.length>0&&<button className="outline" onClick={()=>downloadPortions(report)}>下載份數 CSV</button>}
+          {report.items.length>0&&<button className="outline dailyControl" onClick={()=>downloadPortions(report)}>下載份數 CSV</button>}
         </div>
         {report.items.length?<table aria-label="已交餐份數">
           <thead><tr><th scope="col">餐點</th><th scope="col">自取</th><th scope="col">內用</th><th scope="col">合計</th></tr></thead>
