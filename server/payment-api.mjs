@@ -51,12 +51,17 @@ export async function checkKitchenPayment(env,id) {
   if(!order || order.payment_method==="cash")return fail("找不到線上付款餐單",404);
   try{
     const attempt=await latest(env.DB,id);
-    const check=attempt&&!env.TAPPAY_PARTNER_KEY?{outcome:"unavailable"}:await reconcile(env,order,attempt);
-    const current=await latest(env.DB,id);
-    const paymentState=current?.state??"unpaid";
-    const changed=current?.id!==attempt?.id||paymentState!==(check.state??attempt?.state??"unpaid");
-    return result({ok:true,id,paymentState,outcome:changed?"changed":check.outcome});
+    const {paymentState,outcome}=await verifyLatestPayment(env,order,attempt);
+    return result({ok:true,id,paymentState,outcome});
   }catch{return fail("無法查詢金流，請稍後再查",503);}
+}
+
+async function verifyLatestPayment(env,order,attempt){
+  const check=attempt&&!env.TAPPAY_PARTNER_KEY?{outcome:"unavailable"}:await reconcile(env,order,attempt);
+  const current=await latest(env.DB,order.id);
+  const paymentState=current?.state??"unpaid";
+  const changed=current?.id!==attempt?.id||paymentState!==(check.state??attempt?.state??"unpaid");
+  return {current,paymentState,outcome:changed?"changed":check.outcome};
 }
 export async function refundDemoPayment(env,{id,expectedTotal,expectedStatus}){
   if(settings(env).mode!=="demo")return fail("只能在示範環境模擬退款。",403);
@@ -116,8 +121,10 @@ export async function paymentApi(path,request,env,input) {
   if(!order || order.payment_method==="cash")return fail("找不到線上付款餐單",404);
   let attempt=await latest(db,order.id);
   if(path==="/api/payments/check"){
-    try{await reconcile(env,order,attempt);}catch{return fail("無法查詢金流，請稍後再查",503);}
-    return result({attempt:publicAttempt(await latest(db,order.id))});
+    try{
+      const {current,paymentState,outcome}=await verifyLatestPayment(env,order,attempt);
+      return result({attempt:publicAttempt(current),paymentState,outcome});
+    }catch{return fail("無法查詢金流，請稍後再查",503);}
   }
   if(order.status!=="pending")return fail("餐單已更新",409);
   if(path==="/api/payments/demo"){
@@ -130,7 +137,8 @@ export async function paymentApi(path,request,env,input) {
   if(path!=="/api/payments/start")return fail("找不到此操作",404);
   if(attempt && !["failed","cancelled"].includes(attempt.state))return result({attempt:publicAttempt(attempt)});
   const config=settings(env),demo=order.payment_env==="demo";
-  if(config.mode!==order.payment_env || !config.methods.includes(order.payment_method))return fail("此付款方式暫停使用",503);
+  if(config.mode!==order.payment_env || !config.methods.includes(order.payment_method))
+    return result({error:"此付款方式暫停使用",code:"payment_unavailable"},503);
   if(!demo && (typeof input.prime!=="string" || !input.prime || input.prime.length>2000 || !validBuyer(input.buyer)))
     return fail("請確認付款資料",400);
   const ref="H"+crypto.randomUUID().replaceAll("-","").slice(0,18).toUpperCase();

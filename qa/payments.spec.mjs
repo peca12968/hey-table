@@ -49,6 +49,58 @@ test("mobile receipt switches the original unpaid order to cash and recovers a l
   await expect(page.getByText("已由 LINE Pay 改為現場付款。")).toBeVisible();
 });
 
+for(const reachedServer of [true,false]){
+  test("mobile payment start recovery when the request "+(reachedServer?"reaches":"never reaches")+" the server",async({page,request})=>{
+    const token=randomUUID(),headers={"X-Ticket":token};
+    const created=await request.post("/api/orders",{data:{token,mode:"pickup",note:"保留這張餐單",items:[{id:"sencha",qty:1}],
+      paymentMethod:"line_pay",paymentEnv:"demo"}});
+    expect(created.ok()).toBe(true);
+    const {id}=await created.json();
+    const receiptNumber="取餐號碼 "+String(id).padStart(4,"0");
+    let starts=0,reference=null;
+    await page.setViewportSize({width:360,height:780});
+    await page.route("**/api/payments/start",async route=>{
+      expect(route.request().headers()["x-ticket"]).toBe(token);
+      starts++;
+      if(starts===1){
+        if(reachedServer){
+          const committed=await route.fetch();
+          expect(committed.ok()).toBe(true);
+          reference=(await committed.json()).attempt.ref;
+        }
+        return route.abort("connectionreset");
+      }
+      return route.continue();
+    });
+    await page.goto("/ticket#"+token);
+    const payment=page.getByRole("region",{name:"線上付款"});
+    await expect(payment.getByRole("button",{name:"改用現場付款"})).toBeVisible();
+    const start=payment.getByRole("button",{name:/^開始模擬付款/});
+    if(reachedServer){
+      await page.route("**/api/payments/check",route=>route.abort("connectionreset"),{times:1});
+      await start.click();
+      await expect(payment.getByRole("alert")).toContainText("目前無法查回原付款");
+      await expect(start.and(payment.locator(":enabled"))).toHaveCount(0);
+      const restored=page.waitForResponse(r=>new URL(r.url()).pathname==="/api/payments/check");
+      await payment.getByRole("button",{name:"向金流查詢狀態"}).click();
+      expect((await (await restored).json()).attempt.ref).toBe(reference);
+      await expect(payment.getByText("已查回原餐單的付款紀錄。")).toBeVisible();
+    }else{
+      await start.click();
+      await expect(payment.getByText("原餐單目前查無付款紀錄，可重試付款。")).toBeVisible();
+      expect(starts).toBe(1);
+      await start.click();
+    }
+    await payment.getByRole("button",{name:"模擬付款成功"}).click();
+    await expect(payment.getByText("已付款",{exact:true})).toBeVisible();
+    await expect(page.getByRole("heading",{name:receiptNumber})).toBeVisible();
+    expect(starts).toBe(reachedServer?1:2);
+    expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBe(360);
+    const saved=await (await request.get("/api/ticket",{headers})).json();
+    expect(saved).toMatchObject({id,paymentState:"paid",note:"保留這張餐單"});
+  });
+}
+
 test("mobile checkout can replace an unavailable wallet without losing a future pickup or notes",async({page,request})=>{
   const day=businessDate(Date.now()+86400000),slot=Date.parse(day+"T14:00:00+08:00");
   const available={mode:"demo",methods:["cash","px_pay_plus"]};

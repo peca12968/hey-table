@@ -301,6 +301,10 @@ test("staff payment lookup distinguishes verified records, missing attempts, mod
   const check=(id,{key="fixture-staff",runtimeEnv=runtime}={})=>api(new Request("https://order.example/api/kitchen/payment",{
     method:"PATCH",headers:{"Content-Type":"application/json",Authorization:"Bearer "+key},body:JSON.stringify({id})
   }),runtimeEnv);
+  const customerCheck=token=>api(new Request("https://order.example/api/payments/check",{
+    method:"POST",headers:{"Content-Type":"application/json","X-Ticket":token},body:"{}",
+  }),runtime);
+  const tokenFor=id=>db.sqlite.prepare("SELECT token FROM orders WHERE id=?").get(id).token;
   const expectOutcome=async(id,outcome,paymentState,options)=>{
     const response=await check(id,options);
     assert.equal(response.status,200);
@@ -311,6 +315,9 @@ test("staff payment lookup distinguishes verified records, missing attempts, mod
   assert.equal((await check(0)).status,400);
   assert.equal((await check(cash)).status,404);
   await expectOutcome(noAttempt,"noAttempt","unpaid");
+  assert.equal((await customerCheck(crypto.randomUUID())).status,404);
+  const unpaid=await (await customerCheck(tokenFor(noAttempt))).json();
+  assert.deepEqual({...unpaid,attempt:unpaid.attempt??null},{attempt:null,outcome:"noAttempt",paymentState:"unpaid"});
   await expectOutcome(production,"unavailable","paid");
   await expectOutcome(online,"unavailable","authorized",{runtimeEnv:{...runtime,TAPPAY_PARTNER_KEY:""}});
   await expectOutcome(finished,"notQueryable","refunded");
@@ -320,7 +327,9 @@ test("staff payment lookup distinguishes verified records, missing attempts, mod
   assert.equal(times,1);
   now+=5000;
   gatewayReply={status:0,trade_records:[{...data,rec_trade_id:"provider-id",record_status:1,original_amount:1}]};
-  await expectOutcome(online,"unconfirmed","authorized");
+  const unmatched=await customerCheck(tokenFor(online));
+  assert.equal(unmatched.headers.get("cache-control"),"no-store");
+  assert.deepEqual(await unmatched.json(),{attempt:{ref,state:"authorized",redirect:null},outcome:"unconfirmed",paymentState:"authorized"});
   now+=5000;
   gatewayReply=null;
   const failure=await check(online);
@@ -329,6 +338,8 @@ test("staff payment lookup distinguishes verified records, missing attempts, mod
   now+=5000;
   gatewayReply={status:0,trade_records:[{...data,rec_trade_id:"provider-id",record_status:1}]};
   await expectOutcome(online,"matched","paid");
+  assert.deepEqual(await (await customerCheck(tokenFor(online))).json(),
+    {attempt:{ref,state:"paid",redirect:null},outcome:"recent",paymentState:"paid"});
   assert.equal(times,4);
 });
 test("payment attention pages unresolved latest attempts across dates without changing orders or exposing credentials",async t=>{
