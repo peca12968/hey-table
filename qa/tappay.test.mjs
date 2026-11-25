@@ -1280,6 +1280,61 @@ test("cash close uses Taipei registration dates and returns exact totals from th
   assert.deepEqual(empty.receipts,[]);
 });
 
+test("cash activity distinguishes cross-day collection, known post-handoff registration and current-day corrections",async t=>{
+  const db=database();
+  t.after(()=>db.sqlite.close());
+  const day="2026-11-25",start=Date.parse(day+"T00:00:00+08:00"),end=start+86_400_000;
+  t.mock.method(Date,"now",()=>end-10);
+  const env={DB:db,STAFF_KEY:"fixture-staff"},staff={Authorization:"Bearer fixture-staff"};
+  const order=db.sqlite.prepare(`INSERT INTO orders(token,mode,note,items,total,created,status,status_history)
+    VALUES (?,'pickup','private-order-note','[]',45,?,?,?)`);
+  const cash=db.sqlite.prepare("INSERT INTO cash_receipts(order_id,operation_id,amount,tendered,collected_at) VALUES (?,?,45,100,?)");
+  const add=(created,recordedAt,history,status="completed")=>{
+    const id=Number(order.run(crypto.randomUUID(),created,status,history).lastInsertRowid);
+    cash.run(id,"private-cash-"+id,recordedAt);
+    return id;
+  };
+  const transitions=at=>JSON.stringify([false,"legacy",[1],{from:"ready",status:"completed",at}]);
+  const previous=add(start-6000,start-1000,transitions(start-2000));
+  const missing=add(start-3000,start,null);
+  const late=add(start-3000,start,transitions(start-10));
+  const booked=add(start-3000,start+1000,transitions(start+2000));
+  const sameTime=add(start,start+1000,transitions(start+1000));
+  const invalid=add(start,start+2000,'["not a transition"]');
+  const ready=add(start,start+2500,transitions(start+2000),"ready");
+  const addCorrection=db.sqlite.prepare(`INSERT INTO cash_receipt_corrections
+    (order_id,revision,operation_id,previous_tendered,tendered,reason,corrected_at) VALUES (?,?,?,?,?,'private-correction-reason',?)`);
+  addCorrection.run(previous,1,"private-old",100,90,start-5);
+  addCorrection.run(previous,2,"private-start",90,80,start);
+  addCorrection.run(previous,3,"private-mid",80,70,end-10);
+  addCorrection.run(previous,4,"private-future",70,60,end-9);
+  addCorrection.run(previous,5,"private-next",60,50,end);
+  addCorrection.run(late,1,"private-current",100,60,start);
+  const get=(date,scope="&activity=1",headers=staff)=>api(new Request("https://order.example/api/kitchen/cash-close?date="+date+scope,{headers}),env);
+  assert.equal((await get(day,"&activity=1",{})).status,403);
+  const response=await get(day);
+  assert.equal(response.headers.get("cache-control"),"no-store");
+  const raw=await response.text();
+  assert.ok(!raw.includes("private"));
+  const report=JSON.parse(raw);
+  assert.deepEqual(report.activity,{earlierOrders:3,afterHandoff:1,corrections:[
+    {orderId:previous,revision:2,previousTendered:90,tendered:80,correctedAt:start,recordedAt:start-1000,recordedDate:"2026-11-24"},
+    {orderId:late,revision:1,previousTendered:100,tendered:60,correctedAt:start,recordedAt:start,recordedDate:day},
+    {orderId:previous,revision:3,previousTendered:80,tendered:70,correctedAt:end-10,recordedAt:start-1000,recordedDate:"2026-11-24"},
+  ]});
+  assert.deepEqual(report.receipts.map(row=>[row.orderId,row.orderDate,row.completedAt]),
+    [[missing,"2026-11-24",undefined],[late,"2026-11-24",start-10],[booked,"2026-11-24",undefined],
+      [sameTime,day,undefined],[invalid,day,undefined],[ready,day,undefined]]);
+  assert.deepEqual(report.totals,{receipts:6,net:"270",tendered:"560",change:"290"});
+  const original=await (await get("2026-11-24")).json();
+  assert.equal(original.receipts[0].tendered,70);
+  assert.equal(original.activity.corrections.length,1);
+  const unchanged=await (await get(day,"")).json();
+  assert.equal(unchanged.activity,undefined);
+  assert.ok(unchanged.receipts.every(row=>row.orderDate===undefined&&row.completedAt===undefined));
+  assert.deepEqual(unchanged.totals,report.totals);
+});
+
 test("D1 saves immutable cash close versions, rejects stale receipts and replays a committed operation",async t=>{
   const host=await pickupWorkerOrigin(t);
   const staff={Authorization:"Bearer fixture-staff"},date="2026-11-25";

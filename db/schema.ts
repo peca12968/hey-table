@@ -95,6 +95,7 @@ export const cashReceiptCorrections = sqliteTable("cash_receipt_corrections", {
   primaryKey({columns:[t.orderId,t.revision]}),
   check("cash_correction_revision",sql`${t.revision} > 0`),
   check("cash_correction_amount",sql`${t.previousTendered} >= 0 AND ${t.tendered} >= 0 AND ${t.previousTendered} <> ${t.tendered}`),
+  index("cash_receipt_corrections_corrected_at").on(t.correctedAt,t.orderId,t.revision),
 ]);
 export const cashCloseVersions = sqliteTable("cash_close_versions", {
   date: text("date").notNull(),

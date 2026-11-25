@@ -8,6 +8,7 @@
 .cashCloseSummary dl{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,124px),1fr));gap:10px;margin:0}
 .cashCloseSummary dt,.cashCloseReceipts small{color:var(--muted)}
 .cashCloseSummary dd{margin:4px 0 0;font-weight:700;overflow-wrap:anywhere}
+.cashCloseSummary .cashCloseActivity{margin:12px 0 0;color:var(--muted)}
 .cashCountFields{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,160px),1fr));gap:8px 12px}
 .cashCountFields input{width:100%;min-width:0}
 .cashCountResult p{margin:6px 0;font-weight:650;overflow-wrap:anywhere}
@@ -23,3 +24,8 @@
 .cashCloseVersions ul{list-style:none;margin:0;padding:0}
 .cashCloseVersions li{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px 12px;border-top:1px solid var(--line);padding:10px 0}
 .cashCloseVersions li p{margin:3px 0;overflow-wrap:anywhere}
+.cashCloseCorrections{margin:14px 0}
+.cashCloseCorrections h2{margin-top:0}
+.cashCloseCorrections ul{margin:0;padding:0;list-style:none}
+.cashCloseCorrections li{display:flex;flex-wrap:wrap;justify-content:space-between;gap:3px 12px;border-top:1px solid var(--line);padding:9px 0}
+.cashCloseCorrections li p{margin:3px 0}

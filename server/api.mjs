@@ -198,7 +198,7 @@ export async function api(request, env) {
     const dates=url.searchParams.getAll("date"),[date]=dates;
     const range=dates.length===1?businessDayRange(date):null;
     if(!range)return fail("請選擇有效的收款登記日期。");
-    return json(await dailyCashReceipts(db,date,range,Date.now()));
+    return json(await dailyCashReceipts(db,date,range,Date.now(),url.searchParams.get("activity")==="1"));
   }
   if(path==="/api/kitchen/cash-corrections"&&method==="GET"){
     const id=collectionId(url);

@@ -1,11 +1,12 @@
 "use client";
 
-import {useEffect,useState} from "react";
+import {useEffect,useState,useSyncExternalStore} from "react";
 import {Header,Footer,request} from "../../shared";
 import {useBusinessToday} from "../../use-business-today.mjs";
 import {downloadJson} from "../../../lib/download-json.mjs";
 import {numberOf} from "../../../lib/menu.mjs";
 import {cashAmount,reconcileCash} from "../../../lib/cash-reconciliation.mjs";
+import {businessDayRange} from "../../../lib/business-day.mjs";
 import "./cash-close.css";
 
 const dayTime=new Intl.DateTimeFormat("zh-TW",{timeZone:"Asia/Taipei",dateStyle:"short",timeStyle:"medium"});
@@ -15,6 +16,13 @@ const money=value=>currency.format(BigInt(value));
 const blank={opening:"",adjustments:"",counted:""};
 const versionsEndpoint="/api/kitchen/cash-close-versions";
 const draftKey=date=>"he-ri-cash-close:"+date;
+const closePath=date=>"/kitchen/cash-close"+(date?"?"+new URLSearchParams({date}):"");
+const browserDate=()=>new URLSearchParams(window.location.search).get("date")??"";
+const serverDate=()=>null;
+function subscribeToDate(notify){
+  window.addEventListener("popstate",notify);
+  return ()=>window.removeEventListener("popstate",notify);
+}
 
 function staffHeaders(){
   const key=sessionStorage.getItem("he-ri-staff");
@@ -86,13 +94,32 @@ function CashCloseHistory({date,versions}){
   </section>;
 }
 
+function CashCorrectionsToday({date,corrections}){
+  return <section className="sheet cashCloseCorrections" aria-labelledby="cash-corrected-today">
+    <h2 id="cash-corrected-today">當日現金更正</h2>
+    {corrections.length===0?<p>這天沒有現金更正。</p>:<>
+      <p>{corrections.length} 筆更正。更正後的實收與找零列入原收款日。</p>
+      <ul>{corrections.map(row=><li key={row.orderId+":"+row.revision}>
+        <div><strong>#{numberOf(row.orderId)}</strong> · 第 {row.revision} 版
+          <p>實收 NT$ {money(row.previousTendered)} 改為 NT$ {money(row.tendered)}</p>
+        </div>
+        <div><p>更正時間 <time dateTime={new Date(row.correctedAt).toISOString()}>{time.format(row.correctedAt)}</time></p>
+          <p>原收款日 {row.recordedDate===date?row.recordedDate:
+            <a className="textLink" href={closePath(row.recordedDate)}>{row.recordedDate}</a>}</p>
+        </div>
+      </li>)}</ul>
+    </>}
+  </section>;
+}
+
 export default function CashClose(){
   const today=useBusinessToday();
+  const linkedDate=useSyncExternalStore(subscribeToDate,browserDate,serverDate);
   const [day,setDay]=useState(null),[revision,setRevision]=useState(0),[view,setView]=useState(null);
   const [savedCount,setSavedCount]=useState(null);
   const [pending,setPending]=useState(null),[saving,setSaving]=useState(false);
   const [notice,setNotice]=useState(""),[saveError,setSaveError]=useState("");
-  const date=day??today;
+  const date=day??(linkedDate===null?"":businessDayRange(linkedDate)?linkedDate:today);
   const operation=pending?.date===date?pending:null;
   const count=operation??(savedCount?.date===date?savedCount.value:blank);
   useEffect(()=>{
@@ -100,7 +127,7 @@ export default function CashClose(){
     const controller=new AbortController();
     const query="?date="+encodeURIComponent(date),options={headers:staffHeaders(),
       signal:AbortSignal.any([controller.signal,AbortSignal.timeout(10_000)])};
-    Promise.all([request("/api/kitchen/cash-close"+query,options),request(versionsEndpoint+query,options)])
+    Promise.all([request("/api/kitchen/cash-close"+query+"&activity=1",options),request(versionsEndpoint+query,options)])
     .then(([report,history])=>{
       if(!controller.signal.aborted){
         setView({date,revision,report,versions:history.versions});
@@ -149,7 +176,7 @@ export default function CashClose(){
       <button className="outline" disabled={!date||!current||saving} onClick={()=>setRevision(value=>value+1)}>重新擷取</button>
     </div>
     {current?.error&&<p className="error" role="alert">{current.error}</p>}
-    {current?.denied&&<a className="primary" href="/signin-with-chatgpt?return_to=%2Fkitchen%2Fcash-close" target="_top">使用 ChatGPT 登入</a>}
+    {current?.denied&&<a className="primary" href={"/signin-with-chatgpt?return_to="+encodeURIComponent(closePath(date))} target="_top">使用 ChatGPT 登入</a>}
     {date&&!current&&<p role="status">正在讀取現金日結…</p>}
     {notice&&<p role="status">{notice}</p>}
     {saveError&&<p className="error" role="alert">{saveError}</p>}
@@ -159,6 +186,7 @@ export default function CashClose(){
         <dl>{[["登記筆數",report.totals.receipts+" 筆"],["實收","NT$ "+money(report.totals.tendered)],
           ["找零","NT$ "+money(report.totals.change)],["淨收","NT$ "+money(report.totals.net)]].map(([label,value])=>
           <div key={label}><dt>{label}</dt><dd>{value}</dd></div>)}</dl>
+        {report.activity&&<p className="cashCloseActivity">較早成立餐單 {report.activity.earlierOrders} 筆 · 交餐後登記 {report.activity.afterHandoff} 筆</p>}
       </section>
       <CashCount count={count} setCount={value=>setSavedCount({date,value})} report={report}
         canSave={date<=today} saving={saving} pending={operation} onSave={save}/>
@@ -169,11 +197,16 @@ export default function CashClose(){
           <thead><tr><th scope="col">餐單</th><th scope="col">實收</th><th scope="col">找零</th><th scope="col">淨收</th></tr></thead>
           <tbody>{report.receipts.map(row=><tr key={row.orderId}>
             <th scope="row">#{numberOf(row.orderId)} <small>{row.mode==="table"?"掃碼內用":"自取"} · <time dateTime={new Date(row.recordedAt).toISOString()}>{time.format(row.recordedAt)}</time>
-              {row.correctionRevision?(" · 已更正 "+row.correctionRevision+" 次"):""}</small></th>
+              {row.correctionRevision?(" · 已更正 "+row.correctionRevision+" 次"):""}</small>
+              {row.orderDate&&row.orderDate!==report.date&&<small>餐單成立 {row.orderDate}</small>}
+              {row.completedAt!==undefined&&<small>交餐後登記 · 交餐 <time dateTime={new Date(row.completedAt).toISOString()}>
+                {dayTime.format(row.completedAt)}</time></small>}
+            </th>
             <td>{money(row.tendered)}</td><td>{money(row.change)}</td><td>{money(row.amount)}</td>
           </tr>)}</tbody>
         </table>}
       </section>
+      {report.activity&&<CashCorrectionsToday date={report.date} corrections={report.activity.corrections}/>}
     </>}
   </main><Footer/></>;
 }

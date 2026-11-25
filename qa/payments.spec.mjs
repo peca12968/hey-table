@@ -209,6 +209,46 @@ test("mobile cash close reconciles a count and downloads the displayed snapshot 
   await expect(page.getByLabel("開班現金")).toHaveValue("");
 });
 
+test("mobile cash activity exports the visible day and links back to the original collection date",async({page})=>{
+  const date="2026-11-25",previous="2026-11-24",start=Date.parse(date+"T00:00:00+08:00");
+  const crossDay={orderId:410,mode:"pickup",amount:45,tendered:50,change:5,recordedAt:start+3600000,
+    orderDate:previous,completedAt:start-1000};
+  const correction={orderId:321,revision:2,previousTendered:100,tendered:70,
+    correctedAt:start+7200000,recordedAt:start-60000,recordedDate:previous};
+  const report={format:"hey-table.daily-cash.v1",date,timeZone:"Asia/Taipei",capturedAt:start+10800000,
+    totals:{receipts:1,net:"45",tendered:"50",change:"5"},receipts:[crossDay],
+    activity:{earlierOrders:1,afterHandoff:1,corrections:[correction]}};
+  const original={...report,date:previous,totals:{receipts:1,net:"45",tendered:"70",change:"25"},
+    receipts:[{orderId:321,mode:"table",amount:45,tendered:70,change:25,recordedAt:correction.recordedAt,orderDate:previous,correctionRevision:2}],
+    activity:{earlierOrders:0,afterHandoff:0,corrections:[]}};
+  const reads=[];
+  await page.setViewportSize({width:360,height:780});
+  await page.addInitScript(()=>sessionStorage.setItem("he-ri-staff","local-test-kitchen"));
+  await page.route("**/api/kitchen/cash-close?*",route=>{
+    const url=new URL(route.request().url()),scope=url.searchParams.get("date");
+    expect(url.searchParams.get("activity")).toBe("1");
+    expect(route.request().headers().authorization).toBe(staff.Authorization);
+    reads.push(scope);
+    return route.fulfill({json:scope===date?report:original});
+  });
+  await page.route("**/api/kitchen/cash-close-versions?*",route=>route.fulfill({json:{versions:[]}}));
+  await page.goto("/kitchen/cash-close?date="+date);
+  const late=page.getByRole("rowheader",{name:/#0410/});
+  await expect(late).toContainText("餐單成立 "+previous);
+  await expect(late).toContainText("交餐後登記");
+  await expect(late.locator("time").last()).toHaveAttribute("datetime",new Date(crossDay.completedAt).toISOString());
+  const activity=page.getByRole("region",{name:"當日現金更正"});
+  await expect(activity).toContainText("實收 NT$ 100 改為 NT$ 70");
+  const [file]=await Promise.all([page.waitForEvent("download"),page.getByRole("button",{name:"下載現金日結 JSON"}).click()]);
+  expect(JSON.parse(await readFile(await file.path(),"utf8"))).toEqual(report);
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBe(360);
+  await activity.getByRole("link",{name:previous}).click();
+  await expect(page.getByLabel("收款登記日期")).toHaveValue(previous);
+  await expect(page.getByRole("row",{name:/#0321/})).toBeVisible();
+  await expect(activity).toContainText("這天沒有現金更正。");
+  expect(reads).toEqual([date,previous]);
+});
+
 test("mobile receipt shows the payment hold deadline and explains automatic release",async({page,request})=>{
   const token=randomUUID(),headers={"X-Ticket":token};
   const created=await request.post("/api/orders",{data:{token,mode:"pickup",note:"",items:[{id:"sencha",qty:1}],paymentMethod:"line_pay"}});
