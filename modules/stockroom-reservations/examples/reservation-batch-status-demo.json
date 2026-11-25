@@ -331,5 +331,44 @@
       "capacity": 18,
       "available": 13
     }
+  },
+  "batch_replacement": {
+    "source_batch_id": "recover-set",
+    "new_batch_created": true,
+    "shortage_status": 409,
+    "missing_receipt_status": 404,
+    "accepted_status": 201,
+    "replay_status": 200,
+    "same_receipt": true,
+    "created_at_ms": 503000,
+    "expires_at_ms": 506000,
+    "items": [
+      {
+        "sku": "KIT-01",
+        "original": 4,
+        "shipped": 1,
+        "released_before_expiry": 1,
+        "expired": 2,
+        "new_held": 2,
+        "capacity": 17,
+        "before_conflict": 17,
+        "after_conflict": 17,
+        "before_commit": 17,
+        "after_commit": 15
+      },
+      {
+        "sku": "WRAP-01",
+        "original": 2,
+        "shipped": 0,
+        "released_before_expiry": 0,
+        "expired": 2,
+        "new_held": 2,
+        "capacity": 2,
+        "before_conflict": 0,
+        "after_conflict": 0,
+        "before_commit": 2,
+        "after_commit": 0
+      }
+    ]
   }
 }

@@ -44,6 +44,13 @@ CREATE TABLE IF NOT EXISTS reservation_batch_items (
     initial_expires_at_ms INTEGER NOT NULL,
     PRIMARY KEY (batch_id, reservation_id)
 );
+CREATE TABLE IF NOT EXISTS reservation_batch_replacements (
+    source_batch_id TEXT PRIMARY KEY,
+    replacement_batch_id TEXT NOT NULL UNIQUE,
+    request_id TEXT NOT NULL,
+    created_at_ms INTEGER NOT NULL,
+    CHECK (source_batch_id <> replacement_batch_id)
+);
 CREATE TABLE IF NOT EXISTS reservation_batch_cancellations (
     batch_id TEXT NOT NULL,
     reservation_id TEXT NOT NULL,
@@ -316,16 +323,19 @@ class Store:
                                JOIN reservation_batch_cancellations USING (batch_id, reservation_id)
                                WHERE reservation_id=?""", (key,)).fetchone():
                 raise Conflict("Reservation batch was cancelled")
-            quantity = original["quantity"] - original["shipped"] - original["reduced"]
-            if quantity <= 0:
-                raise Conflict("No expired units to replace")
-            replacement_id = uuid4().hex
-            expires_at_ms = now + self.ttl_ms
-            self.create_hold(conn, replacement_id, original["sku"], quantity, expires_at_ms)
-            conn.execute("""INSERT INTO reservation_replacements
-                            (source_id,replacement_id,request_id,created_at_ms,initial_expires_at_ms)
-                            VALUES (?,?,?,?,?)""", (key, replacement_id, request_id, now, expires_at_ms))
+            self.create_replacement(conn, original, request_id, now, now + self.ttl_ms)
             return self.replacement_receipt(self.replacement_record(conn, key)), True
+
+    def create_replacement(self, conn, original, request_id, now, expires_at_ms):
+        quantity = original["quantity"] - original["shipped"] - original["reduced"]
+        if quantity <= 0:
+            raise Conflict("No expired units to replace")
+        replacement_id = uuid4().hex
+        self.create_hold(conn, replacement_id, original["sku"], quantity, expires_at_ms)
+        conn.execute("""INSERT INTO reservation_replacements
+                        (source_id,replacement_id,request_id,created_at_ms,initial_expires_at_ms)
+                        VALUES (?,?,?,?,?)""", (original["id"], replacement_id, request_id, now, expires_at_ms))
+        return replacement_id
 
     def get_replacement(self, key):
         with closing(self.connect()) as conn:
@@ -378,6 +388,67 @@ class Store:
         return conn.execute("""SELECT r.* FROM reservation_batch_items b
                                JOIN reservations r ON r.id=b.reservation_id
                                WHERE b.batch_id=? ORDER BY r.sku""", (batch_id,)).fetchall()
+
+    @staticmethod
+    def batch_replacement_record(conn, batch_id):
+        rows = conn.execute("""
+            SELECT h.request_id,h.created_at_ms,h.replacement_batch_id,b.initial_expires_at_ms,
+                   link.source_id,r.id,r.sku,r.quantity
+            FROM reservation_batch_replacements h
+            JOIN reservation_batch_items b ON b.batch_id=h.replacement_batch_id
+            JOIN reservation_replacements link ON link.replacement_id=b.reservation_id
+            JOIN reservations r ON r.id=b.reservation_id
+            WHERE h.source_batch_id=? ORDER BY r.sku
+        """, (batch_id,)).fetchall()
+        if not rows:
+            return None
+        first = rows[0]
+        receipt = {
+            "source_batch_id": batch_id, "batch_id": first["replacement_batch_id"],
+            "created_at_ms": first["created_at_ms"], "expires_at_ms": first["initial_expires_at_ms"],
+            "items": [{name: row[name] for name in ("source_id", "id", "sku", "quantity")} for row in rows],
+        }
+        return first["request_id"], receipt
+
+    def replace_expired_batch(self, batch_id, request_id):
+        with self.current_inventory() as (conn, now):
+            existing = self.batch_replacement_record(conn, batch_id)
+            if existing:
+                if request_id != existing[0]:
+                    raise Conflict("Reservation batch already has a replacement")
+                return existing[1], False
+            members = self.reservation_batch_members(conn, batch_id)
+            if not members:
+                raise Missing("Unknown reservation batch")
+            if conn.execute("SELECT 1 FROM reservation_batch_cancellations WHERE batch_id=?", (batch_id,)).fetchone():
+                raise Conflict("Reservation batch was cancelled")
+            if any(row["state"] == "held" for row in members):
+                raise Conflict("Reservation batch still has active holds")
+            expired = [row for row in members if row["timed_out"]]
+            if not expired:
+                raise Conflict("Reservation batch has no expired holds")
+            replacement_batch = uuid4().hex
+            expires_at_ms = now + self.ttl_ms
+            for row in expired:
+                try:
+                    if self.replacement_record(conn, row["id"]):
+                        raise Conflict("Reservation already has a replacement")
+                    # Individual request keys cannot contain a colon.
+                    key = self.create_replacement(conn, row, f"batch:{request_id}", now, expires_at_ms)
+                except (Missing, Conflict) as error:
+                    raise type(error)(f"{row['sku']}: {error}") from error
+                conn.execute("INSERT INTO reservation_batch_items VALUES (?,?,?)",
+                             (replacement_batch, key, expires_at_ms))
+            conn.execute("INSERT INTO reservation_batch_replacements VALUES (?,?,?,?)",
+                         (batch_id, replacement_batch, request_id, now))
+            return self.batch_replacement_record(conn, batch_id)[1], True
+
+    def get_batch_replacement(self, batch_id):
+        with closing(self.connect()) as conn:
+            existing = self.batch_replacement_record(conn, batch_id)
+            if existing is None:
+                raise Missing("Unknown reservation batch replacement")
+            return existing[1]
 
     def reservation_batch_status(self, batch_id):
         with self.current_inventory() as (conn, now):

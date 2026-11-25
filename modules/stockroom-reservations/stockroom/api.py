@@ -65,6 +65,16 @@ class ReservationBatchReceipt(BaseModel):
     items: list[ReservedItem]
 
 
+class ReplacedBatchItem(ReservedItem):
+    source_id: str
+
+
+class BatchReplacementReceipt(ReservationBatchReceipt):
+    source_batch_id: str
+    created_at_ms: int
+    items: list[ReplacedBatchItem]
+
+
 class CancelledBatchItem(BaseModel):
     id: str
     sku: str
@@ -458,6 +468,20 @@ def create_app(path: Path, *, ttl_seconds=900, clock=time.time):
     def batch_cancellation_receipt(batch_id: str, response: Response):
         response.headers["Cache-Control"] = "no-store"
         return store.batch_cancellation_receipt(batch_id)
+
+    @app.post("/reservation-batches/{batch_id}/replacement", response_model=BatchReplacementReceipt, status_code=201,
+              responses={200: {"model": BatchReplacementReceipt, "description": "Original batch replacement receipt"}})
+    def replace_expired_batch(batch_id: str, response: Response, idempotency_key: RequestKey):
+        receipt, created = store.replace_expired_batch(batch_id, idempotency_key)
+        response.headers["Cache-Control"] = "no-store"
+        if not created:
+            response.status_code = 200
+        return receipt
+
+    @app.get("/reservation-batches/{batch_id}/replacement", response_model=BatchReplacementReceipt)
+    def batch_replacement_receipt(batch_id: str, response: Response):
+        response.headers["Cache-Control"] = "no-store"
+        return store.get_batch_replacement(batch_id)
 
     @app.post("/reservations", response_model=Reservation, status_code=201,
               responses={200: {"model": Reservation, "description": "Idempotent replay"}})

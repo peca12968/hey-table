@@ -35,6 +35,8 @@ python -m uvicorn stockroom.api:app
 | GET /reservations/{key} | 查詢原始數量、已出貨數量、尚在保留數量與已歸還數量 |
 | POST /reservations/{key}/replacement | 依到期時的剩餘量重新保留，同一來源只建立一次 |
 | GET /reservations/{key}/replacement | 查原單與新保留編號、建立時間與新單初始期限 |
+| POST /reservation-batches/{batch_id}/replacement | 以同一交易重新保留整批到期餘量 |
+| GET /reservation-batches/{batch_id}/replacement | 查新批號、初始期限與各品項的新舊保留編號 |
 | POST /reservations/{key}/fulfillments/{box}/returns | 以 Idempotency-Key 當作本箱的退貨單號，將驗收合格的 quantity 件商品入庫 |
 | POST /return-batches | 以驗收批號一次登記多箱退回，所有箱子共同入庫 |
 | GET /return-batches/{batch_id} | 依驗收批號查詢原始收據 |
@@ -153,6 +155,12 @@ SQLite 適合本機或單節點展示。此版本的使用情境是可信任的�
 `POST /reservations/cart/replacement` 帶 `Idempotency-Key` 即可送出，件數由原單的數量扣除已出貨與先前減量的件數。假設保留 8 件、出貨 3 件、先釋回 2 件，庫存足夠時會另外建立 3 件的新保留，並從當次建立時間計算新期限。舊單仍可查到到期及出貨紀錄。已取消的單、已完成出貨的單或尚未到期的單無法重新保留，整批已取消的品項也會退回。
 
 到期結算、可用量扣減及關聯收據在同一寫入交易。首次成功回 201，同鍵重送回 200，並可用 `GET /reservations/cart/replacement` 取得原收據。庫存不足或換鍵重複建立時回 409。新保留的續期、出貨與取消使用新編號，原收據保存新單的初始期限。[競爭、回滾與重啟測試](tests/test_replacements.py) · [Demo 收據](examples/reservation-batch-status-demo.json)
+
+#### 多品項一起重新保留
+
+原批次沒有仍在保留的品項時，可帶 `Idempotency-Key` 呼叫 `POST /reservation-batches/recover-set/replacement`。服務只接續實際到期的餘量，已完成或已釋回的品項維持原狀。任一品項缺貨、已被單獨接續，或原批次已取消，整批回 409。新批次和各品項都有新編號，可以接續原本的批次查詢及取消流程。
+
+首次成功回 201，按原批號查詢或同鍵重送會取得含各品項關聯的原收據。兩台服務同時用單品與整批入口時，只有其中一方可接續同一品項。測試也注入最後一筆收據寫入失敗，驗證全部品項與可用量一起回滾。[舊庫與並行重跑](tests/test_batch_replacements.py)
 
 升級時會保留既有資料。舊版沒有記錄建立時間，因此既有保留維持原有手動釋放規則，回傳的期限為 `null`。查庫存目前也要取得寫入鎖，這是用讀取吞吐量換取單節點交易一致性的取捨。
 

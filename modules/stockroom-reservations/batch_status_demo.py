@@ -102,7 +102,7 @@ def capture(db):
         release_batch["history"] = capture_release_history(api, focus_key)
 
     return {"stages": stages, "renewal_batch": renewal_batch, "release_batch": release_batch,
-            "replacement": capture_replacement(db)}
+            "replacement": capture_replacement(db), "batch_replacement": capture_batch_replacement(db)}
 
 
 def capture_release_batch(api):
@@ -189,6 +189,58 @@ def capture_replacement(db):
             "same_receipt": recovered == receipt == replay.json(),
             "created_at_ms": receipt["created_at_ms"], "new_expires_at_ms": receipt["reservation"]["expires_at_ms"],
             "new_hold": current["held"], "new_id": current["id"] != key, "stock": stock,
+        }
+
+
+def capture_batch_replacement(db):
+    now = 500
+    with TestClient(create_app(db, ttl_seconds=3, clock=lambda: now)) as api:
+        batch_id = "recover-set"
+        path = f"/reservation-batches/{batch_id}"
+        old = api.post("/reservation-batches", headers={"Idempotency-Key": batch_id}, json={
+            "items": [{"sku": "KIT-01", "quantity": 4}, {"sku": "WRAP-01", "quantity": 2}],
+        }).raise_for_status().json()
+        main = old["items"][0]["id"]
+        api.post(f"/reservations/{main}/fulfillments", headers={"Idempotency-Key": "box"},
+                 json={"quantity": 1}).raise_for_status()
+        api.post(f"/reservations/{main}/releases", headers={"Idempotency-Key": "box-change"},
+                 json={"quantity": 1}).raise_for_status()
+        original = api.get(path + "/status").raise_for_status().json()
+        now = 503
+        api.post("/reservations", headers={"Idempotency-Key": "hold-packaging"},
+                 json={"sku": "WRAP-01", "quantity": 2}).raise_for_status()
+        before_conflict = api.get("/inventory").raise_for_status().json()
+        headers = {"Idempotency-Key": "continue-kit-and-packaging"}
+        shortage = api.post(path + "/replacement", headers=headers)
+        after_conflict = api.get("/inventory").raise_for_status().json()
+        missing = api.get(path + "/replacement")
+        api.delete("/reservations/hold-packaging").raise_for_status()
+        before_commit = api.get("/inventory").raise_for_status().json()
+        accepted = api.post(path + "/replacement", headers=headers)
+        receipt = accepted.raise_for_status().json()
+        replay = api.post(path + "/replacement", headers=headers)
+        recovered = api.get(path + "/replacement").raise_for_status().json()
+        after_commit = api.get("/inventory").raise_for_status().json()
+        new = api.get(f"/reservation-batches/{receipt['batch_id']}/status").raise_for_status().json()
+        stocks = [{line["sku"]: line for line in stock}
+                  for stock in (before_conflict, after_conflict, before_commit, after_commit)]
+        items = []
+        for old_line, new_line in zip(original["items"], new["items"], strict=True):
+            sku = old_line["sku"]
+            before, rejected, successful, updated = [stock[sku]["available"] for stock in stocks]
+            items.append({
+                "sku": sku, "original": old_line["quantity"], "shipped": old_line["shipped"],
+                "released_before_expiry": old_line["returned"], "expired": old_line["held"],
+                "new_held": new_line["held"], "capacity": stocks[0][sku]["capacity"],
+                "before_conflict": before, "after_conflict": rejected,
+                "before_commit": successful, "after_commit": updated,
+            })
+        return {
+            "source_batch_id": batch_id, "new_batch_created": receipt["batch_id"] != batch_id,
+            "shortage_status": shortage.status_code, "missing_receipt_status": missing.status_code,
+            "accepted_status": accepted.status_code, "replay_status": replay.status_code,
+            "same_receipt": replay.json() == receipt == recovered, "created_at_ms": receipt["created_at_ms"],
+            "expires_at_ms": receipt["expires_at_ms"], "items": items,
         }
 
 
