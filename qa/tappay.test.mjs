@@ -600,7 +600,7 @@ test("staff payment attempt history paginates stable ordinals and isolates notes
   assert.equal((await (await get(filter+"12")).json()).target,null);
 });
 
-test("browser prep readiness matches Python for FIFO, recipe revisions, shortages and batch leftovers",()=>{
+test("browser prep readiness and purchasing match Python for recipe revisions and shared batches",()=>{
   const cwd=fileURLToPath(new URL("../modules/prep-sheet/",import.meta.url));
   const example=name=>JSON.parse(readFileSync(join(cwd,"examples",name+".json"),"utf8"));
   const book=example("recipes"),orders=example("orders");
@@ -622,16 +622,49 @@ test("browser prep readiness matches Python for FIFO, recipe revisions, shortage
   });
   const python=spawnSync(process.env.PYTHON||"python",["-B","-c",[
     "import json, sys",
-    "from prep import readiness",
-    'print(json.dumps([readiness(case["orders"], case["book"], case["stock"], case["includePreparing"]) for case in json.load(sys.stdin)]))',
+    "from prep import readiness, plan",
+    "def compare(orders, book, stock, preparing):",
+    "    full = plan(orders, book, stock, preparing)",
+    '    keys = ("component", "name", "unit", "action", "needed", "available")',
+    '    purchase = {"orderCount": len(full["included_orders"]), "lines": [{key: row[key] for key in keys} for row in full["lines"] if row["action"] == "purchase"]}',
+    '    return [readiness(orders, book, stock, preparing), purchase]',
+    'print(json.dumps([compare(case["orders"], case["book"], case["stock"], case["includePreparing"]) for case in json.load(sys.stdin)]))',
   ].join("\n")],{cwd,input:JSON.stringify(input),encoding:"utf8",env:{...process.env,PYTHONUTF8:"1"}});
   assert.equal(python.status,0,python.stderr);
-  assert.deepEqual(input.map(test=>forecastPrepReadiness(test.orders,test.book,test.stock,test.includePreparing)),
-    JSON.parse(python.stdout));
+  assert.deepEqual(input.map(({orders,book,stock,includePreparing})=>{
+    const planner=prepReadinessPlanner(book,stock);
+    return [planner.forecast(orders,includePreparing),planner.purchaseInput(orders,includePreparing)];
+  }),JSON.parse(python.stdout));
+  const pantry=join(cwd,"..","pantry-freight");
+  const purchase=prepReadinessPlanner(book,example("stock")).purchaseInput(orders);
+  const offerReport=spawnSync(process.env.PYTHON||"python",["-B","-c",[
+    "import json, sys",
+    "from pathlib import Path",
+    "from purchase import purchase, read_json",
+    'print(json.dumps(purchase(json.load(sys.stdin), read_json(Path("examples/suppliers.json")))))',
+  ].join("\n")],{cwd:pantry,input:JSON.stringify(purchase),encoding:"utf8",env:{...process.env,PYTHONUTF8:"1"}});
+  assert.equal(offerReport.status,0,offerReport.stderr);
+  const offers=JSON.parse(offerReport.stdout);
+  assert.deepEqual([offers.status,offers.packs,offers.total_twd,offers.shipping_twd],["ok",7,165,0]);
   assert.throws(()=>forecastPrepReadiness(orders,book,{cutlet:maximum+1}),/整數/);
   const cyclic=structuredClone(book);
   cyclic.components.dashi.inputs.sauce=1;
   assert.throws(()=>forecastPrepReadiness(orders,cyclic,{}),/循環相依/);
+});
+
+test("purchase input counts shared batches once across orders that individually lack stock",()=>{
+  const book={
+    components:{rice:{unit:"g",yield:400,inputs:{grain:180}},grain:{unit:"g",pack:400}},
+    dishes:{bowl:[{from_ms:0,uses:{rice:200}}]},
+  };
+  const orders=[1,2].map(id=>({id,created:1000,status:id===1?"pending":"preparing",items:[{id:"bowl",qty:1}]}));
+  const planner=prepReadinessPlanner(book,{grain:100});
+  const report=planner.forecast(orders,true);
+  assert.deepEqual(report.orders.map(row=>row.missing[0].quantity),[80,80]);
+  const grain={component:"grain",name:"grain",unit:"g",action:"purchase",needed:180,available:100};
+  assert.deepEqual(planner.purchaseInput(orders,true),{orderCount:2,lines:[grain]});
+  assert.deepEqual(planner.purchaseInput(orders),{orderCount:1,lines:[grain]});
+  assert.deepEqual(planner.forecast(orders,true),report);
 });
 
 test("forecast delivery trials rerun FIFO from the same physical stock and expose displaced orders",()=>{

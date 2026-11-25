@@ -6,6 +6,7 @@ import {matchesPrepOrderSource,prepArrivalReportFormat,prepOrderSource,prepOrder
   readPrepArrivalReport,readPrepReadinessReport} from "../../../lib/prep-readiness-report.mjs";
 import ReadinessArrivals,{ArrivalComparison} from "./readiness-arrivals.jsx";
 import ReadinessOrders from "./readiness-orders.jsx";
+import ReadinessPurchase from "./readiness-purchase.jsx";
 
 const jsonLimit=4*1024*1024;
 
@@ -115,7 +116,9 @@ export default function ReadinessReview({snapshot,orders,station,scope,clock}){
     </section>}
     {matches&&fileState.planner&&report.orders.length>0&&
       <ReadinessArrivals planner={fileState.planner} base={fileState.exchange} includePreparing={includePreparing}/>}
-    {matches&&fileState.comparison&&<div className="prepReadinessResult prepReadinessArrivals">
+    {matches&&fileState.planner&&report.orders.length>0&&
+      <ReadinessPurchase planner={fileState.planner} source={report.source} includePreparing={includePreparing}/>}
+    {matches&&fileState.comparison&&<div className="prepReadinessResult prepReadinessFollowup">
       <h3>已匯入的到貨試算</h3>
       <ArrivalComparison comparison={fileState.comparison}/>
     </div>}

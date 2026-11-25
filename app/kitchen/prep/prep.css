@@ -23,7 +23,7 @@
 .prepReadinessResult ul {display: grid; gap: .5rem; list-style: none; padding: 0}
 .prepReadinessResult li {border-top: 1px solid var(--line); padding-top: .5rem}
 .prepReadinessResult h3, .prepReadinessResult li p {margin: .25rem 0}
-.prepReadinessArrivals {border-top: 1px solid var(--line); margin-top: 1rem; padding-top: 1rem}
+.prepReadinessFollowup {border-top: 1px solid var(--line); margin-top: 1rem; padding-top: 1rem}
 .prepArrivalRow {display: flex; flex-wrap: wrap; align-items: end; gap: .5rem; margin-bottom: .7rem}
 .prepArrivalRow label {display: grid; gap: .3rem; min-width: 0; max-width: 100%}
 .prepArrivalRow input {width: 9rem; max-width: 100%}

@@ -58,6 +58,14 @@ node kitchen-demo.mjs ../..
 
 ## 從訂單匯出試算採購
 
+在備料頁讀取食譜與盤點庫存完成試算後，可點「計算採購缺口」。這會合併目前範圍的餐單，先共用半成品批次與現有庫存，再列出各項原料缺口。同一份庫存在整批需求中只扣一次。下載的採購資料包含食材需求、庫存與擷取範圍，可直接交給 Pantry Freight 搭配供應商目錄計算整包用量與運費。
+
+```sh
+python ../pantry-freight/purchase.py prep-purchase.json ../pantry-freight/examples/suppliers.json
+```
+
+以原始盤點庫存算出的報告適合核對當下缺口。另有已開單的預計到貨時，可使用下方的帳本模式扣除未收數量。
+
 從店家接單台開啟備料單，再下載訂單 JSON。在 `modules/prep-sheet` 執行以下指令，將 `examples/orders.json` 換成下載的檔案，並提供符合實際菜單的食譜與供應商資料。
 
 ```sh

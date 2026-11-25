@@ -53,7 +53,7 @@ export default function ReadinessArrivals({planner,base,includePreparing}){
     }catch(error){setResult({error:error.message});}
   }
 
-  return <section className="prepReadinessResult prepReadinessArrivals" aria-labelledby="prep-arrivals-title">
+  return <section className="prepReadinessResult prepReadinessFollowup" aria-labelledby="prep-arrivals-title">
     <h3 id="prep-arrivals-title">預計到貨試算</h3>
     <p>以原盤點庫存和同一批餐單試算，預計到貨只用於本次比較。</p>
     <form onSubmit={calculate}>

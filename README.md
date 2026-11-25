@@ -345,6 +345,8 @@ D1 把每次發布及撤回保存為獨立版本，同筆寫入核對餐單狀�
 
 店員可在備料頁選取食譜和庫存 JSON 直接試算。Prep Sheet 依餐單成立順序標出可先做的訂單與各單原料缺口，並在模擬中沿用先前批次餘量。輸入預計到貨的食材及數量，可比較哪些餐單轉為可做或缺料，並下載交班報告供同事重新匯入。[現有庫存備料試算](modules/prep-sheet/README.md#試算現有庫存能做哪些單)
 
+採購試算會合併選定餐單的半成品批次與盤點庫存，匯出各項原料缺口給 Pantry Freight 核對供應商包裝、庫存與運費。[從備料頁匯出採購試算](modules/prep-sheet/README.md#從訂單匯出試算採購)
+
 店員可從備料頁下載目前日期、分站和範圍的試算資料，再匯入 Prep Sheet 報告。畫面會核對同範圍的餐單狀態和份數，吻合後才列出每張單的缺料及備料順序。[備料報告手機測試](qa/ordering.spec.mjs)
 
 「完整餐單」可核對領料。「未完成品項」會從製作中餐單扣除已回報備妥的分站，待接單品項全數列入。切換範圍沿用同一次擷取，列印與 JSON 都依畫面所選範圍。未完成版檔名以 `hey-table-prep-remaining-` 開頭，格式仍可交給 Prep Sheet。API 加上 `stationProgress=1` 可在同一次讀取取得 `orders` 與 `remainingOrders`。[手機匯出測試](qa/ordering.spec.mjs) · [分站與舊單測試](qa/tappay.test.mjs)

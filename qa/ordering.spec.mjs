@@ -1539,6 +1539,23 @@ test("printable kitchen snapshot exports the displayed orders to Prep Sheet",asy
   await expect(results).toHaveCount(0);
   await calculate.click();
   await expect(preparingOrder).toContainText("缺 毛豆 200 g");
+  const purchase=review.getByRole("region",{name:"採購缺口"});
+  await purchase.getByRole("button",{name:"計算採購缺口"}).click();
+  await expect(purchase.getByRole("status")).toHaveText("試算 2 張餐單 · 1 項原料需補貨");
+  await expect(purchase.getByText("毛豆 · 缺 600 g")).toBeVisible();
+  const purchaseDownload=page.waitForEvent("download");
+  await purchase.getByRole("button",{name:"下載 Pantry Freight 採購資料"}).click();
+  const purchasePath=await (await purchaseDownload).path();
+  const purchaseInput=JSON.parse(await readFile(purchasePath,"utf8"));
+  expect(purchaseInput).toMatchObject({format:"hey-table.prep-purchase-input.v1",includePreparing:true,orderCount:2,
+    lines:[{component:"beans",name:"毛豆",unit:"g",action:"purchase",needed:600,available:0}]});
+  expect(Object.keys(purchaseInput.source).sort()).toEqual(["capturedAt","date","scope","station"]);
+  const pantry=join(root,"..","pantry-freight");
+  const purchased=spawnSync("python",[join(pantry,"purchase.py"),purchasePath,join(pantry,"examples","suppliers.json")],
+    {encoding:"utf8",env:{...process.env,PYTHONUTF8:"1"}});
+  expect(purchased.status,purchased.stderr).toBe(3);
+  expect(JSON.parse(purchased.stdout)).toEqual({status:"infeasible",
+    shortages:[{component:"beans",unit:"g",required:600,offered:0,uncovered:600}]});
   const arrivals=review.getByRole("region",{name:"預計到貨試算"});
   const compare=arrivals.getByRole("button",{name:"比較到貨前後"});
   const after=arrivals.getByRole("region",{name:"到貨試算結果"});
@@ -1571,9 +1588,11 @@ test("printable kitchen snapshot exports the displayed orders to Prep Sheet",asy
   expect(Object.keys(comparison).sort()).toEqual(["arrivals","format","includePreparing","orders","source"]);
   await page.getByLabel("未完成品項",{exact:true}).check();
   await expect(arrivals).toHaveCount(0);
+  await expect(purchase).toHaveCount(0);
   await page.getByLabel("完整餐單",{exact:true}).check();
   await expect(reported).toContainText("缺 毛豆 400 g");
   await expect(after).toHaveCount(0);
+  await expect(purchase.getByRole("status")).toHaveCount(0);
   const browserDownload=page.waitForEvent("download");
   await results.getByRole("button",{name:"下載備料試算報告"}).click();
   const browserReport=await readFile(await (await browserDownload).path(),"utf8");
