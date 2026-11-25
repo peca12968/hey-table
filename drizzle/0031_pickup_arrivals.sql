@@ -1,0 +1,1 @@
+ALTER TABLE `orders` ADD `pickup_arrived_at` integer;

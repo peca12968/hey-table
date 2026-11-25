@@ -8,6 +8,7 @@ export const orders = sqliteTable("orders", {
   source: text("source"),
   pickupSlot: integer("pickup_slot"),
   pickupChanges: text("pickup_changes"),
+  pickupArrivedAt: integer("pickup_arrived_at"),
   tableNo: text("table_no"),
   tableMoves: text("table_moves"),
   note: text("note").notNull(),

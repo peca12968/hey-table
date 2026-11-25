@@ -1311,6 +1311,66 @@ test("staff pickup roster groups one Taipei day and excludes private receipt and
   }
 });
 
+test("pickup arrival uses the receipt credential and persists the first time through handoff",async t=>{
+  const oldToken=crypto.randomUUID();
+  let now=Date.parse("2026-11-25T12:00:00+08:00");
+  const db=database((tag,sqlite)=>{
+    if(tag!=="0031_pickup_arrivals")return;
+    sqlite.prepare(`INSERT INTO orders(token,mode,note,items,total,status,created)
+      VALUES (?,'pickup','','[]',45,'preparing',?)`).run(oldToken,now-600_000);
+  });
+  t.after(()=>db.sqlite.close());
+  t.mock.method(Date,"now",()=>now);
+  const runtime={DB:db,STAFF_KEY:"fixture-staff"};
+  const staff={Authorization:"Bearer fixture-staff"};
+  const call=(path,options)=>api(new Request("https://order.example/api"+path,options),runtime);
+  const submit=(token,extra={})=>call("/ticket/arrival",{method:"POST",
+    headers:{"X-Ticket":token,"Content-Type":"application/json",...extra},body:"{}"});
+  const read=async token=>(await (await call("/ticket?progress=1",{headers:{"X-Ticket":token}})).json());
+  const insert=db.sqlite.prepare(`INSERT INTO orders(token,mode,note,items,total,status,created,payment_method,pickup_slot)
+    VALUES (?,?,'','[]',45,?,?,?,?)`);
+  const add=(status,mode="pickup",method="cash",slot=null)=>{
+    const token=crypto.randomUUID();
+    const id=Number(insert.run(token,mode,status,now-600_000,method,slot).lastInsertRowid);
+    return {token,id};
+  };
+  const table=add("ready","table"),pending=add("pending"),unpaid=add("preparing","pickup","line_pay"),closed=add("completed");
+  const online=add("ready","pickup","line_pay",now);
+  const pay=db.sqlite.prepare("INSERT INTO payment_attempts(order_id,reference,merchant,state,created) VALUES (?,?, 'fixture',?,?)");
+  pay.run(online.id,"arrival-paid","paid",now-5000);
+  assert.equal((await submit("wrong-key")).status,404);
+  assert.equal((await submit(crypto.randomUUID())).status,404);
+  assert.equal((await submit(oldToken,{Origin:"https://other.example"})).status,403);
+  for(const item of [table,pending,unpaid,closed])assert.equal((await submit(item.token)).status,409);
+  const before=await read(oldToken);
+  assert.equal(Object.hasOwn(before,"pickupArrivedAt"),false);
+  const [first,repeat]=await Promise.all([submit(oldToken),submit(oldToken)]);
+  assert.equal(first.headers.get("Cache-Control"),"no-store");
+  const saved={id:before.id,pickupArrivedAt:now};
+  assert.deepEqual(await first.json(),saved);
+  assert.deepEqual(await repeat.json(),saved);
+  assert.deepEqual(await read(oldToken),{...before,pickupArrivedAt:now});
+  assert.equal((await submit(online.token)).status,200);
+  assert.equal((await call("/kitchen/pickup?id="+online.id)).status,403);
+  assert.equal((await (await call("/kitchen/pickup?id="+online.id,{headers:staff})).json()).pickupArrivedAt,now);
+  const publicDisplay=await (await call("/kitchen/pickup-display",{headers:staff})).json();
+  assert.deepEqual(publicDisplay,{capturedAt:now,ready:[online.id],preparing:[before.id]});
+  now+=60_000;
+  assert.deepEqual(await (await submit(oldToken)).json(),saved);
+  const closing=add("ready");
+  const [transition,late]=await Promise.all([
+    call("/kitchen/status",{method:"PATCH",headers:{...staff,"Content-Type":"application/json"},
+      body:JSON.stringify({id:closing.id,from:"ready",to:"completed"})}),
+    submit(closing.token),
+  ]);
+  assert.equal(transition.status,200);
+  assert.ok([200,409].includes(late.status));
+  const after=await read(closing.token);
+  assert.equal(after.status,"completed");
+  assert.equal(after.pickupArrivedAt,late.ok?now:undefined);
+  assert.equal((await submit(closing.token)).status,late.status);
+});
+
 test("staff pickup week groups capacity and unfinished prep in the same Taipei snapshot",async t=>{
   const db=database();
   t.after(()=>db.sqlite.close());

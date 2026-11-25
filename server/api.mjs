@@ -62,6 +62,7 @@ function receipt(row) {
   return {id:row.id, mode:row.mode, table:row.table_no, note:row.note, items:JSON.parse(row.items),
     ...(row.source === "staff" ? {source:row.source} : {}),
     ...(row.pickup_slot!=null ? {pickupSlot:row.pickup_slot} : {}),
+    ...(row.mode==="pickup"&&row.pickup_arrived_at!=null ? {pickupArrivedAt:row.pickup_arrived_at} : {}),
     ...(row.combo_quote ? {combo:JSON.parse(row.combo_quote)} : {}),
     ...(row.cash_receipt ? {cashReceipt:JSON.parse(row.cash_receipt)} : {}),
     paymentMethod:row.payment_method,paymentEnv:row.payment_env,paymentState:row.payment_state??'unpaid',total:row.total, status:row.status, created:row.created};
@@ -669,6 +670,20 @@ export async function api(request, env) {
     if(target.results[0].used+row.portions>target.results[0].capacity)
       return json({error:"此時段剩餘份數不足，原預約仍有效。",code:"pickup_slot_full"},409);
     return stale();
+  }
+  if (path === "/api/ticket/arrival" && method === "POST") {
+    const token=request.headers.get("X-Ticket");
+    if(!uuid.test(token))return fail("找不到訂單",404);
+    const [,lookup]=await db.batch([
+      db.prepare(`UPDATE orders SET pickup_arrived_at=?
+        WHERE token=? AND mode='pickup' AND status IN ('preparing','ready')
+        AND pickup_arrived_at IS NULL AND ${payableForKitchen}`).bind(Date.now(),token),
+      db.prepare("SELECT id,pickup_arrived_at FROM orders WHERE token=?").bind(token),
+    ]);
+    const row=lookup.results[0];
+    if(!row)return fail("找不到訂單",404);
+    return row.pickup_arrived_at==null?fail("目前無法回報到店，請核對餐單與付款狀態。",409):
+      json({id:row.id,pickupArrivedAt:row.pickup_arrived_at});
   }
   if (path === "/api/ticket/cancel" && method === "POST") {
     const token=request.headers.get("X-Ticket");

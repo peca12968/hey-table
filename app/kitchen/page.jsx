@@ -22,6 +22,8 @@ const serverSearch=()=>null;
 const browserStaffKey=()=>sessionStorage.getItem("he-ri-staff")||"";
 const anonymousKey=()=>"";
 const ignoreStorageChanges=()=>()=>{};
+const waitingPickup=order=>order.mode==="pickup"&&order.pickupArrivedAt!=null&&
+  ["preparing","ready"].includes(order.status)&&canPrepare(order);
 
 function subscribeToLocation(notify){
   window.addEventListener("popstate",notify);
@@ -104,6 +106,8 @@ function KitchenTicket({order,busy,update,movePickup,recordCash,refresh,today,st
     <div className="menuTitle"><h2>#{numberOf(id)}</h2><Mode table={table} source={order.source}/></div>
     <p aria-live={handoffOnly?"polite":undefined}><b>{labels[status]}</b> · {new Date(created).toLocaleTimeString("zh-TW",{hour:"2-digit",minute:"2-digit",timeZone:"Asia/Taipei"})}</p>
     <PickupAppointment start={order.pickupSlot}/>
+    {waitingPickup(order)&&<p className="pickupArrived">顧客已到店 · <time dateTime={new Date(order.pickupArrivedAt).toISOString()}>
+      {pickupTime(order.pickupArrivedAt)}</time></p>}
     {latestPickup&&<p className="muted" role="status">{latestPickup.actor==="staff"?"店員":"顧客"}已將取餐時段從 {previousWindow} 改到 {newWindow}。</p>}
     {prepAt!==null&&<p className="muted">{prepDay>today?prepDay+" ":""}{pickupTime(prepAt)} 後可接單製作。</p>}
     {showOverdue&&order.overdue&&<p className="kitchenOverdue">逾時 · {overdueStage[status]} {Math.floor(order.overdue.elapsedMs/60_000)} 分鐘</p>}
@@ -239,12 +243,15 @@ export default function Kitchen(){
   const filtered=orders.filter(r=>{
     const statusMatches=filter==="all"||(filter==="active"&&Object.hasOwn(overdueStage,r.status))||
       (filter==="booked"&&r.pickupSlot!=null&&Object.hasOwn(overdueStage,r.status))||
+      (filter==="arrived"&&waitingPickup(r))||
       (filter==="overdue"&&queueAvailable&&r.overdue)||r.status===filter;
     const scopeMatches=scope==="all"||scope===r.mode||scope===r.table||scope===r.source;
     return statusMatches&&scopeMatches&&validNumber&&(!exactNumber||exactNumber===String(r.id));
   });
   if(filter==="overdue")filtered.sort((a,b)=>b.overdue.overByMs-a.overdue.overByMs||a.id-b.id);
   if(filter==="booked")filtered.sort((a,b)=>a.pickupSlot-b.pickupSlot||a.id-b.id);
+  if(filter==="arrived")filtered.sort((a,b)=>Number(b.status==="ready")-Number(a.status==="ready")||
+    a.pickupArrivedAt-b.pickupArrivedAt||a.id-b.id);
   let content;
   if(focus?.number===""){
     content=<p role="alert">{handoffOnly?"取餐 QR 碼的號碼無效。":"預約餐單的取餐號碼無效。"}</p>;
@@ -276,7 +283,7 @@ export default function Kitchen(){
     <Intake key={"intake-"+key} staffKey={key}/>
     <ReturnReceipt key={key} staffKey={key}/>
     <PaymentSnapshot key={"payments-"+key} staffKey={key}/>
-    <nav className="tabs" aria-label="餐單狀態">{[["active","處理中"],["pending","待接單"],["ready","待交餐"],["booked","預約自取"],
+    <nav className="tabs" aria-label="餐單狀態">{[["active","處理中"],["pending","待接單"],["ready","待交餐"],["arrived","已到店"],["booked","預約自取"],
       ["overdue",overdueCount?"逾時 ("+overdueCount+")":"逾時"],["all","含近期結單"]].map(([v,n])=><button aria-pressed={v===filter} key={v} onClick={()=>setFilter(v)}>{n}</button>)}</nav>
     <div className="kitchenFilters">
       <label>管道或桌號<select value={scope} onChange={e=>setScope(e.target.value)}>

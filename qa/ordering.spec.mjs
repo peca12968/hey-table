@@ -556,6 +556,70 @@ test("a ready pickup QR opens the exact staff order without sharing the customer
   }finally{await staff.close();}
 });
 
+test("mobile pickup arrival recovers a lost reply and prioritizes ready arrivals for handoff",async({page,browser,request})=>{
+  const headers={Authorization:"Bearer local-test-kitchen"};
+  const transition=(id,from,to)=>request.patch("/api/kitchen/status",{headers,data:{id,from,to}});
+  async function order(){
+    const token=randomUUID();
+    const response=await request.post("/api/orders",{data:{token,mode:"pickup",note:"",items:[{id:"sencha",qty:1}]}});
+    expect(response.ok()).toBe(true);
+    const {id}=await response.json();
+    return {id,token,label:"#"+String(id).padStart(4,"0")};
+  }
+  const first=await order(),second=await order(),notArrived=await order();
+  await page.setViewportSize({width:360,height:780});
+  await page.goto("/ticket#"+first.token);
+  const report=page.getByRole("button",{name:"我已到店"});
+  await expect(page.getByText("等待接單",{exact:true})).toBeVisible();
+  await expect(report).toHaveCount(0);
+  for(const row of [first,second,notArrived])expect((await transition(row.id,"pending","preparing")).ok()).toBe(true);
+  expect((await transition(second.id,"preparing","ready")).ok()).toBe(true);
+  expect((await transition(notArrived.id,"preparing","ready")).ok()).toBe(true);
+  await page.getByRole("button",{name:"更新進度"}).click();
+  let writes=0;
+  await page.route("**/api/ticket/arrival",async route=>{
+    expect((await route.fetch()).ok()).toBe(true);
+    writes++;
+    await route.abort();
+  },{times:1});
+  await report.click();
+  const confirmed=page.getByRole("status").filter({hasText:"已回報到店"});
+  await expect(confirmed).toBeVisible();
+  const stamp=await confirmed.locator("time").getAttribute("datetime");
+  expect(writes).toBe(1);
+  await page.reload();
+  await expect(confirmed.locator("time")).toHaveAttribute("datetime",stamp);
+  expect((await request.post("/api/ticket/arrival",{headers:{"X-Ticket":second.token},data:{}})).ok()).toBe(true);
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBe(360);
+
+  const staff=await browser.newContext({viewport:{width:360,height:780}});
+  try{
+    await staff.addInitScript(()=>sessionStorage.setItem("he-ri-staff","local-test-kitchen"));
+    const kitchen=await staff.newPage();
+    await kitchen.goto("/kitchen");
+    await kitchen.getByRole("button",{name:"已到店",exact:true}).click();
+    const titles=kitchen.locator(".kitchenTicket h2");
+    await expect(titles).toHaveText([second.label,first.label]);
+    const waiting=kitchen.locator(".kitchenTicket").filter({has:kitchen.getByRole("heading",{name:first.label,exact:true})});
+    await expect(waiting.getByText(/顧客已到店/).locator("time")).toHaveAttribute("datetime",stamp);
+    await kitchen.goto("/kitchen?pickup="+String(second.id).padStart(4,"0"));
+    await expect(kitchen.getByText(/顧客已到店/)).toBeVisible();
+    await kitchen.getByRole("button",{name:"完成交餐"}).click();
+    await expect(kitchen.getByText("已完成交餐。",{exact:true})).toBeVisible();
+    await expect(kitchen.getByText(/顧客已到店/)).toHaveCount(0);
+    await kitchen.goto("/kitchen");
+    await kitchen.getByRole("button",{name:"已到店",exact:true}).click();
+    await expect(titles).toHaveText([first.label]);
+    expect(await kitchen.evaluate(()=>document.documentElement.scrollWidth)).toBe(360);
+  }finally{
+    await staff.close();
+    await transition(first.id,"preparing","ready");
+    await transition(first.id,"ready","completed");
+    await transition(second.id,"ready","completed");
+    await transition(notArrived.id,"ready","completed");
+  }
+});
+
 test("pickup lookup stays scoped and a stale handoff shows the committed status",async({page,request})=>{
   const headers={Authorization:"Bearer local-test-kitchen"};
   async function order(mode){
