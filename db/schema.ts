@@ -42,6 +42,15 @@ export const paymentAttempts = sqliteTable("payment_attempts", {
   kitchenPayableAt: integer("kitchen_payable_at"),
   checked: integer("checked").notNull().default(0),
 }, t => [index("attempt_order").on(t.orderId,t.id)]);
+export const pickupPasses = sqliteTable("pickup_passes", {
+  orderId: integer("order_id").primaryKey().references(()=>orders.id),
+  tokenHash: text("token_hash").unique(),
+  expiresAt: integer("expires_at"),
+  revision: integer("revision").notNull(),
+}, t => [
+  check("pickup_pass_revision",sql`${t.revision}>0`),
+  check("pickup_pass_expiration",sql`(${t.expiresAt} IS NULL)=(${t.tokenHash} IS NULL)`),
+]);
 export const demoRefunds = sqliteTable("demo_refunds", {
   orderId: integer("order_id").primaryKey().notNull().references(()=>orders.id),
   attemptId: integer("attempt_id").notNull().unique().references(()=>paymentAttempts.id),

@@ -1353,6 +1353,71 @@ test("daily arrival waits belong to the Taipei arrival date and group only valid
   assert.equal(Object.hasOwn(await (await call(date,false)).json(),"arrivalTiming"),false);
 });
 
+test("pickup pass scopes access to one receipt and expires, rotates and revokes atomically",async t=>{
+  const original=crypto.randomUUID(),unready=crypto.randomUUID(),table=crypto.randomUUID();
+  const db=database((tag,sqlite)=>{
+    if(tag!=="0033_pickup_passes")return;
+    const add=sqlite.prepare(`INSERT INTO orders(token,mode,status,items,note,total,created,pickup_slot)
+      VALUES (?,?,?,'[]','private note',45,1,1800000)`);
+    add.run(original,"pickup","ready");
+    add.run(unready,"pickup","preparing");
+    add.run(table,"table","ready");
+  });
+  t.after(()=>db.sqlite.close());
+  let now=1000;
+  t.mock.method(Date,"now",()=>now);
+  const env={DB:db,STAFF_KEY:"fixture-staff"},staff={Authorization:"Bearer fixture-staff"};
+  const call=(path,options)=>api(new Request("https://order.example/api"+path,options),env);
+  const read=token=>call("/pickup-pass",{headers:{"X-Pickup-Pass":token}});
+  const owner=(token,method="GET",body)=>call("/ticket/pickup-pass",{method,headers:{"X-Ticket":token,
+    ...(body?{"Content-Type":"application/json"}:{})},...(body?{body:JSON.stringify(body)}:{})});
+  const issue=(pass,revision,token=original)=>owner(token,"POST",{pass,revision});
+  const revoke=revision=>owner(original,"PATCH",{revision});
+  const pass=crypto.randomUUID(),a=crypto.randomUUID(),b=crypto.randomUUID();
+  assert.deepEqual(await (await owner(original)).json(),{active:false,revision:0,expiresAt:null});
+  assert.equal((await issue(pass,0,crypto.randomUUID())).status,404);
+  assert.equal((await issue(pass,0,unready)).status,409);
+  assert.equal((await issue(pass,0,table)).status,409);
+  assert.equal((await issue(original,0)).status,400);
+  assert.equal((await issue([pass],0)).status,400);
+  assert.equal((await issue(pass,0)).status,200);
+  const guest=await read(pass);
+  assert.equal(guest.headers.get("Cache-Control"),"no-store");
+  assert.deepEqual(await guest.json(),{id:1,pickupSlot:1800000,expiresAt:1801000});
+  assert.equal((await call("/ticket",{headers:{"X-Ticket":pass}})).status,404);
+  assert.equal((await owner(pass)).status,404);
+  assert.equal((await call("/kitchen/pickup?id=1",{headers:{"X-Pickup-Pass":pass}})).status,403);
+  assert.equal((await read(original)).status,404);
+  const stored=db.sqlite.prepare("SELECT token_hash FROM pickup_passes").get().token_hash;
+  assert.match(stored,/^[a-f0-9]{64}$/);
+  assert.notEqual(stored,pass);
+  now+=30_000;
+  assert.deepEqual(await (await issue(pass.toUpperCase(),0)).json(),{active:true,revision:1,expiresAt:1801000});
+  const [first,second]=await Promise.all([issue(a,1),issue(b,1)]);
+  assert.deepEqual([first.status,second.status].sort(),[200,409]);
+  const current=first.ok?a:b;
+  assert.equal((await read(pass)).status,404);
+  assert.equal((await read(first.ok?b:a)).status,404);
+  assert.equal((await read(current)).status,200);
+  assert.equal((await revoke(1)).status,409);
+  assert.deepEqual(await (await revoke(2)).json(),{active:false,revision:3,expiresAt:null});
+  assert.equal((await revoke(2)).status,200);
+  assert.equal((await read(current)).status,404);
+  const expiring=crypto.randomUUID();
+  const issued=await (await issue(expiring,3)).json();
+  now=issued.expiresAt-1;
+  assert.equal((await read(expiring)).status,200);
+  now++;
+  assert.equal((await read(expiring)).status,404);
+  assert.deepEqual(await (await owner(original)).json(),{active:false,revision:4,expiresAt:null});
+  const closing=crypto.randomUUID();
+  assert.equal((await issue(closing,4)).status,200);
+  assert.equal((await call("/kitchen/status",{method:"PATCH",headers:{...staff,"Content-Type":"application/json"},
+    body:JSON.stringify({id:1,from:"ready",to:"completed"})})).status,200);
+  assert.equal((await read(closing)).status,404);
+  assert.equal((await issue(closing,4)).status,409);
+});
+
 test("pickup arrival uses the receipt credential and persists the first time through handoff",async t=>{
   const oldToken=crypto.randomUUID();
   let now=Date.parse("2026-11-25T12:00:00+08:00");

@@ -567,6 +567,63 @@ test("a ready pickup QR opens the exact staff order without sharing the customer
   }finally{await staff.close();}
 });
 
+test("a phone can share a revocable pickup pass without sharing the receipt",async({page,browser,request})=>{
+  const headers={Authorization:"Bearer local-test-kitchen"},token=randomUUID();
+  const order=await request.post("/api/orders",{data:{token,mode:"pickup",note:"原訂餐人備註",items:[{id:"sencha",qty:1}]}});
+  expect(order.ok()).toBe(true);
+  const {id}=await order.json(),number=String(id).padStart(4,"0");
+  const advance=(from,to)=>request.patch("/api/kitchen/status",{headers,data:{id,from,to}});
+  expect((await advance("pending","preparing")).ok()).toBe(true);
+  expect((await advance("preparing","ready")).ok()).toBe(true);
+  const guest=await browser.newContext({viewport:{width:360,height:780}});
+  try{
+    await page.setViewportSize({width:360,height:780});
+    await page.goto("/ticket#"+token);
+    await page.getByText("分享代取連結",{exact:true}).click();
+    const share=page.getByRole("region",{name:"代取連結設定"});
+    const attempts=[];
+    await page.route("**/api/ticket/pickup-pass",async route=>{
+      if(route.request().method()!=="POST")return route.continue();
+      attempts.push(route.request().postDataJSON());
+      const response=await route.fetch();
+      expect(response.ok()).toBe(true);
+      if(attempts.length===1)await route.abort();
+      else await route.fulfill({response});
+    });
+    await share.getByRole("button",{name:"產生代取連結",exact:true}).click();
+    await expect(share.getByRole("alert")).toHaveText("尚未收到操作結果，請再試一次。");
+    await share.getByRole("button",{name:"重試產生連結"}).click();
+    const field=share.getByRole("textbox",{name:"親友代取網址"});
+    await expect(field).not.toHaveValue("");
+    const first=await field.inputValue();
+    expect(first).not.toContain(token);
+    expect(attempts[0]).toEqual(attempts[1]);
+    const recipient=await guest.newPage();
+    await recipient.goto(first);
+    await expect(recipient.getByRole("heading",{name:"取餐號碼 "+number})).toBeVisible();
+    await expect(recipient.getByText("原訂餐人備註")).toHaveCount(0);
+    await expect(recipient.getByText("日式熱煎茶")).toHaveCount(0);
+    await recipient.getByText("出示取餐 QR 碼",{exact:true}).click();
+    await expect(recipient.getByRole("img",{name:"取餐 "+number+" QR 碼"})).toBeVisible();
+    expect(await recipient.evaluate(()=>document.documentElement.scrollWidth)).toBe(360);
+    await share.getByRole("button",{name:"重新產生代取連結"}).click();
+    await expect(field).not.toHaveValue(first);
+    const second=await field.inputValue();
+    await recipient.reload();
+    await expect(recipient.getByRole("alert")).toHaveText("代取連結已失效，請向原訂餐人確認。");
+    await recipient.goto(second);
+    await expect(recipient.getByRole("heading",{name:"取餐號碼 "+number})).toBeVisible();
+    await share.getByRole("button",{name:"取消代取連結"}).click();
+    await expect(share.getByRole("status")).toHaveText("代取連結已取消。");
+    await recipient.reload();
+    await expect(recipient.getByRole("alert")).toHaveText("代取連結已失效，請向原訂餐人確認。");
+    expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBe(360);
+  }finally{
+    await guest.close();
+    await advance("ready","completed");
+  }
+});
+
 test("mobile pickup arrival recovers a lost reply and prioritizes ready arrivals for handoff",async({page,browser,request})=>{
   const headers={Authorization:"Bearer local-test-kitchen"};
   const transition=(id,from,to)=>request.patch("/api/kitchen/status",{headers,data:{id,from,to}});

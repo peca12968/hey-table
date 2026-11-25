@@ -1,7 +1,6 @@
 "use client";
 import {useCallback,useEffect,useState} from "react";
 import {ClipboardCheck,RefreshCw} from "lucide-react";
-import qrcode from "qrcode-generator";
 import {Header,Footer,Mode,PickupAppointment,request} from "../shared";
 import {ItemNote} from "../item-notes";
 import {labels,numberOf} from "../../lib/menu.mjs";
@@ -14,6 +13,8 @@ import {QuoteSummary} from "../cart-quote";
 import CancelReceipt from "./cancel-receipt";
 import ReschedulePickup from "../reschedule-pickup";
 import PickupCalendar from "./pickup-calendar";
+import PickupCode from "../pickup-code";
+import PickupPassShare from "./pickup-pass-share";
 import CashReceipt from "../cash-receipt";
 import {pickupCalendarStatus,pickupChangeWindows} from "../../lib/pickup-slots.mjs";
 const progressLabels={
@@ -37,23 +38,6 @@ function OrderProgress({history}){
       {at===null?<small>時間未記錄</small>:<time dateTime={new Date(at).toISOString()}>{progressTime.format(at)}</time>}
     </li>)}</ol>
   </section>;
-}
-
-function PickupCode({number}){
-  const [image,setImage]=useState("");
-  useEffect(()=>{
-    const scanUrl=new URL("/kitchen",location.origin);
-    scanUrl.searchParams.set("pickup",number);
-    const code=qrcode(0,"M");
-    code.addData(scanUrl.href);
-    code.make();
-    setImage(code.createDataURL(6,24));
-  },[number]);
-  return <details className="pickupCode">
-    <summary>出示取餐 QR 碼</summary>
-    {image&&<img src={image} width="184" height="184" alt={"取餐 "+number+" QR 碼"}/>}
-    <p>請讓店員掃描，或直接告知取餐號碼 {number}。</p>
-  </details>;
 }
 
 function PickupArrival({order,token,onChange}){
@@ -179,7 +163,10 @@ export default function Ticket(){
       <QuoteSummary quote={order.kitchenQuote}/>
       <small>工時按完整批次估算，餐點備妥時會更新進度。</small>
     </section>}
-    {order.mode==="pickup"&&order.status==="ready"&&payable&&<PickupCode key={"pickup-code-"+route.token} number={numberOf(order.id)}/>}
+    {order.mode==="pickup"&&order.status==="ready"&&payable&&<>
+      <PickupCode key={"pickup-code-"+route.token} number={numberOf(order.id)}/>
+      <PickupPassShare key={"pickup-pass-"+route.token} token={route.token}/>
+    </>}
     {order.mode==="pickup"&&<PickupArrival key={"pickup-arrival-"+route.token} order={order} token={route.token} onChange={refreshReceipt}/>}
     <OrderProgress history={order.statusHistory}/>
     <ul className="orderLines">{order.items.map(d=><li key={d.id}><div><b>{d.name} × {d.qty}</b><ItemNote note={d.note}/></div><span>NT$ {d.price*d.qty}</span></li>)}</ul>

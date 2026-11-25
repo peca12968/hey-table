@@ -15,6 +15,7 @@ import {canReschedulePickup,capacityAtPickupSlot,editablePickupSlots,orderPortio
   savePickupSlotLimits,suggestCartPickupSlot,
   suggestPickupSlot,usedAtPickupSlot} from "./pickup-slots.mjs";
 import {pickupCalendar} from "./pickup-calendar.mjs";
+import {issuePickupPass,ownerPickupPass,readPickupPass,revokePickupPass} from "./pickup-pass.mjs";
 import {pickupRoster} from "./pickup-roster.mjs";
 import {pickupWeek} from "./pickup-week.mjs";
 import {cashCorrectionHistory,cashReceiptColumn,collectCash,correctCashReceipt,dailyCashReceipts} from "./cash-receipts.mjs";
@@ -533,6 +534,27 @@ export async function api(request, env) {
         submittedSlot!==order.pickupSlot || !sameItems)
       return fail("送單識別碼已用於另一張訂單",409);
     return json(saved);
+  }
+  if(path==="/api/pickup-pass"&&method==="GET"){
+    const pass=request.headers.get("X-Pickup-Pass");
+    const row=uuid.test(pass)?await readPickupPass(db,pass,Date.now()):null;
+    return row?json(row):fail("代取連結已失效，請向原訂餐人確認。",404);
+  }
+  if(path==="/api/ticket/pickup-pass"&&["GET","POST","PATCH"].includes(method)){
+    const token=request.headers.get("X-Ticket");
+    if(!uuid.test(token))return fail("找不到訂單",404);
+    const now=Date.now();
+    if(method==="GET"){
+      const state=await ownerPickupPass(db,token,now);
+      return state?json(state):fail("找不到訂單",404);
+    }
+    const {pass,revision}=input;
+    if(!Number.isSafeInteger(revision)||revision<0||revision>=Number.MAX_SAFE_INTEGER||
+       (method==="POST"&&(typeof pass!=="string"||!uuid.test(pass)||pass.toLowerCase()===token.toLowerCase())))
+      return fail("代取連結或版本無效。");
+    const state=method==="POST"?await issuePickupPass(db,token,pass,revision,now):await revokePickupPass(db,token,revision,now);
+    if(state===null)return fail("找不到訂單",404);
+    return state?json(state):fail("餐單狀態或代取連結已更新，請重新讀取。",409);
   }
   if(path==="/api/ticket/calendar"&&method==="GET"){
     const token=request.headers.get("X-Ticket");
