@@ -17,3 +17,14 @@
 .paymentSummaryAmounts dd { margin: 0; font-weight: 650; }
 .paymentSummaryGroups { list-style: none; margin-block: .7rem; padding: 0; }
 .paymentSummaryGroups h3 { margin-block: .7rem .4rem; }
+
+
+.paymentHandoffComparison { min-width: 0; margin-top: .8rem; overflow-wrap: anywhere; }
+.paymentHandoffComparison summary { cursor: pointer; font-weight: 650; }
+.paymentHandoffFiles { display: flex; flex-wrap: wrap; align-items: end; gap: .7rem; margin-block: .75rem; }
+.paymentHandoffFiles label { display: grid; min-width: 0; gap: .35rem; }
+.paymentHandoffFiles input { width: 100%; max-width: 23rem; }
+.paymentHandoffComparison h3 { margin: .8rem 0 .35rem; }
+.paymentHandoffComparison table { width: 100%; table-layout: fixed; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+.paymentHandoffComparison th,.paymentHandoffComparison td { padding: .4rem .25rem; border-bottom: 1px solid var(--line); text-align: right; }
+.paymentHandoffComparison th:first-child { width: 30%; text-align: left; }

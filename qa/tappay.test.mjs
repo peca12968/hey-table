@@ -9,6 +9,7 @@ import {fileURLToPath} from "node:url";
 import {api} from "../server/api.mjs";
 import {settings,lookup} from "../server/tappay.mjs";
 import {paymentPrime,openPaymentUrl} from "../lib/tappay-client.mjs";
+import {comparePaymentHandoffSummaries,readPaymentHandoffSummary} from "../lib/payment-handoff-compare.mjs";
 import {sqliteD1} from "../scripts/sqlite-d1.mjs";
 import {applyDemoMigrations} from "../scripts/apply-demo-migrations.mjs";
 import {buildReturnLedgerDemo} from "../scripts/return-ledger-demo.mjs";
@@ -424,7 +425,39 @@ test("payment attention handoff totals remain exact even beyond the SQLite signe
   assert.equal(summary.totals.amount,String(expected));
   assert.equal(summary.totals.orders,qty);
   assert.equal(summary.groups[0].amount,String(expected));
+  assert.deepEqual(readPaymentHandoffSummary(summary),summary);
   assert.doesNotMatch(JSON.stringify(summary),/customer|merchant|bank-reference|orderId/);
+});
+
+test("payment handoff comparison validates the export and preserves exact differences across disappearing groups",()=>{
+  const at=Date.parse("2026-11-26T11:00:00+08:00");
+  const format="hey-table.payment-attention-summary.v1",timeZone="Asia/Taipei";
+  const filters={method:null,state:null,environment:null};
+  const pending={method:"line_pay",environment:"demo",orders:1,pending:1,authorized:0,overdue:1,amount:"9007199254740993"};
+  const authorized={method:"unknown",environment:"unknown",orders:1,pending:0,authorized:1,overdue:0,amount:"9007199254740997"};
+  function summary(group,capturedAt=at){
+    const {orders,pending,authorized,overdue,amount}=group;
+    const totals={orders,pending,authorized,overdue,amount};
+    return {format,timeZone,capturedAt,filters,totals,groups:[group]};
+  }
+  const before=readPaymentHandoffSummary(summary(pending)),after=readPaymentHandoffSummary(summary(authorized,at+1));
+  const difference=comparePaymentHandoffSummaries(before,after);
+  assert.deepEqual(difference.totals.delta,{orders:0,pending:-1,authorized:1,overdue:-1,amount:"4"});
+  assert.deepEqual(difference.groups.map(({method,delta})=>[method,delta.orders,delta.amount]),[
+    ["line_pay",-1,"-9007199254740993"],["unknown",1,"9007199254740997"],
+  ]);
+  assert.deepEqual(comparePaymentHandoffSummaries(after,before),{kind:"time"});
+  const filtered=readPaymentHandoffSummary({...summary(pending),filters:{...filters,method:"line_pay"}});
+  assert.deepEqual(comparePaymentHandoffSummaries(filtered,after),{kind:"filters"});
+  assert.deepEqual(comparePaymentHandoffSummaries(before,before).groups,[]);
+  for(const bad of [
+    {...before,filters:{}},
+    {...before,groups:[pending,pending]},
+    {...before,groups:[{...pending,method:{toString:null}}]},
+    {...before,totals:{...before.totals,amount:"9007199254740992"}},
+    {...before,groups:[{...pending,amount:"1.00"}]},
+    {...before,groups:[{...pending,orders:2,pending:1,authorized:0}]},
+  ])assert.throws(()=>readPaymentHandoffSummary(bad),/摘要資料不完整/);
 });
 
 test("staff payment notes follow one attempt, are retry-safe after settlement, and keep older notes readable",async t=>{

@@ -6,6 +6,7 @@ import {labels,numberOf} from "../../../lib/menu.mjs";
 import {downloadJson} from "../../../lib/download-json.mjs";
 import {environmentLabel,methods,onlinePaymentEnvironments,paymentAttentionStates,paymentCheckMessage,
   paymentStates} from "../../../lib/payments.mjs";
+import HandoffComparison from "./handoff-comparison";
 import "../daily/daily.css";
 import "./payment-attention.css";
 
@@ -145,6 +146,7 @@ export default function PaymentAttention(){
       <button className="outline" onClick={refresh} disabled={activeAction?.checking}>重新擷取</button>
     </div>}
     {report?.summary&&<HandoffSummary summary={report.summary}/>}
+    <HandoffComparison summary={report?.summary} timeLabel={timeLabel} environmentName={environmentName}/>
     {report&&<section aria-label="待核對付款清單">
       {report.orders.length>0?<ul className="paymentAttentionList">
         {report.orders.map(order=><PaymentRow key={order.id} order={order} capturedAt={report.capturedAt}

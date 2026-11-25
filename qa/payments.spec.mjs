@@ -271,8 +271,29 @@ test("mobile handoff summary downloads the same filtered capture after another p
   expect(next.totals.orders).toBe(summary.totals.orders-1);
   expect(next.totals.amount).toBe(String(BigInt(summary.totals.amount)-45n));
   await expect(section.getByText("NT$ "+BigInt(next.totals.amount).toLocaleString("zh-TW"),{exact:true}).first()).toBeVisible();
+  await page.getByText("比較付款交班摘要",{exact:true}).click();
+  const input=page.getByLabel("上一班摘要 JSON");
+  const upload=text=>input.setInputFiles({name:"handoff.json",mimeType:"application/json",buffer:Buffer.from(text)});
+  await upload("{}");
+  await expect(page.getByRole("alert")).toContainText("無法讀取摘要");
+  await upload(JSON.stringify({...summary,filters:{...summary.filters,state:null}}));
+  await expect(page.getByRole("alert")).toContainText("篩選不同");
+  await upload(contents);
+  const comparison=page.getByRole("region",{name:"付款交班比較結果"});
+  const totals=comparison.getByRole("table",{name:"整體變化"});
+  await expect(comparison.getByText("上次擷取",{exact:false})).toBeVisible();
+  await expect(totals.getByRole("row",{name:/^待核對/}).getByRole("cell").last()).toHaveText("−1 筆");
+  await expect(totals.getByRole("row",{name:/^原餐單金額/}).getByRole("cell").last()).toHaveText("−45 元");
+  const change=comparison.getByRole("table",{name:"全盈+PAY · 示範環境"});
+  await expect(change.getByRole("cell",{name:"−45 元",exact:true})).toBeVisible();
   expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBe(360);
   expect((await complete(second,"cancelled")).status()).toBe(200);
+  const latest=capture();
+  await page.getByRole("button",{name:"重新擷取"}).click();
+  await latest;
+  await expect(totals.getByRole("row",{name:/^原餐單金額/}).getByRole("cell").last()).toHaveText("−90 元");
+  await page.getByRole("button",{name:"清除已匯入摘要"}).click();
+  await expect(comparison).toHaveCount(0);
 });
 
 test("mobile payment queue preserves unmatched payments and refreshes after a verified lookup",async({page})=>{
