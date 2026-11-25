@@ -121,6 +121,14 @@ class PrepTests(unittest.TestCase):
         self.assertEqual(before[1]["missing"], [initial["arrival"]])
         self.assertEqual([row["status"] for row in after], ["ready", "ready"])
         self.assertEqual(before[0], after[0])
+        cases = {row["id"]: row["result"] for row in initial["purchasing"]["cases"]}
+        standard, storage = cases["standard"], cases["storage"]
+        self.assertEqual((standard["total_twd"], standard["shipping_twd"], standard["packs"]), (165, 0, 7))
+        self.assertEqual((storage["total_twd"], storage["shipping_twd"], storage["packs"]), (170, 29, 6))
+        self.assertEqual(cases["stockout"]["shortages"],
+                         [dict(component="chicken", unit="g", required=280, offered=0, uncovered=280)])
+        self.assertEqual(cases["pack_limit"]["pack_limit"],
+                         dict(component="chicken", unit="g", required=280, max_purchase=290))
 
     def test_scoped_export_retains_only_order_identity_and_rejects_incomplete_scope(self):
         order = dict(example("orders")[0], note="only for the kitchen")

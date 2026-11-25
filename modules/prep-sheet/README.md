@@ -62,6 +62,8 @@ node kitchen-demo.mjs ../..
 
 有採購缺口時，可在「供應商比價」選取供應商目錄 JSON，查看含運最低總價和每家要買的包數。瀏覽器會依目錄核對單位、可供包數、免運門檻和剩餘量上限。下載的採購報告可交給下方的驗收程式開單。組合很大或數字超過瀏覽器可表示範圍時，可沿用採購資料和供應商目錄在命令列試算。
 
+總站的備料與採購 Demo 可比較同一批午餐在一般詢價、限制囤貨、雞肉缺貨及包裝超限時的結果。執行 `python readiness_demo.py` 可由餐單、食譜、盤點庫存和供應商目錄重建展示資料。[試玩備料與採購（私人預覽）](https://peca-github-demo.peca12968.chatgpt.site/?demo=prepReadiness#demos)
+
 ```sh
 python ../pantry-freight/purchase.py prep-purchase.json ../pantry-freight/examples/suppliers.json
 ```

@@ -148,5 +148,339 @@
       "soy": 0,
       "water": 1380
     }
+  },
+  "purchasing": {
+    "ingredients": [
+      {
+        "component": "cutlet",
+        "name": "豬排",
+        "unit": "片",
+        "quantity": 2
+      },
+      {
+        "component": "chicken",
+        "name": "雞肉",
+        "unit": "g",
+        "quantity": 280
+      },
+      {
+        "component": "eggs",
+        "name": "雞蛋",
+        "unit": "顆",
+        "quantity": 3
+      },
+      {
+        "component": "grain",
+        "name": "生米",
+        "unit": "g",
+        "quantity": 360
+      },
+      {
+        "component": "soy",
+        "name": "醬油",
+        "unit": "ml",
+        "quantity": 20
+      },
+      {
+        "component": "kombu",
+        "name": "昆布",
+        "unit": "g",
+        "quantity": 2
+      }
+    ],
+    "cases": [
+      {
+        "id": "standard",
+        "limits": {},
+        "result": {
+          "status": "ok",
+          "currency": "TWD",
+          "orders": [
+            {
+              "supplier": "market",
+              "lines": [
+                {
+                  "sku": "market-chicken",
+                  "component": "chicken",
+                  "packs": 1,
+                  "pack": 300,
+                  "unit": "g",
+                  "unit_price_twd": 45,
+                  "cost_twd": 45
+                },
+                {
+                  "sku": "market-cutlet",
+                  "component": "cutlet",
+                  "packs": 1,
+                  "pack": 2,
+                  "unit": "片",
+                  "unit_price_twd": 58,
+                  "cost_twd": 58
+                },
+                {
+                  "sku": "market-eggs",
+                  "component": "eggs",
+                  "packs": 1,
+                  "pack": 3,
+                  "unit": "顆",
+                  "unit_price_twd": 15,
+                  "cost_twd": 15
+                },
+                {
+                  "sku": "market-grain",
+                  "component": "grain",
+                  "packs": 1,
+                  "pack": 400,
+                  "unit": "g",
+                  "unit_price_twd": 25,
+                  "cost_twd": 25
+                },
+                {
+                  "sku": "market-kombu",
+                  "component": "kombu",
+                  "packs": 1,
+                  "pack": 5,
+                  "unit": "g",
+                  "unit_price_twd": 8,
+                  "cost_twd": 8
+                },
+                {
+                  "sku": "market-soy",
+                  "component": "soy",
+                  "packs": 2,
+                  "pack": 25,
+                  "unit": "ml",
+                  "unit_price_twd": 7,
+                  "cost_twd": 14
+                }
+              ],
+              "subtotal_twd": 165,
+              "shipping_twd": 0,
+              "total_twd": 165
+            }
+          ],
+          "total_twd": 165,
+          "shipping_twd": 0,
+          "packs": 7,
+          "ingredients": [
+            {
+              "component": "chicken",
+              "shortfall": 280,
+              "purchased": 300,
+              "surplus": 20,
+              "unit": "g"
+            },
+            {
+              "component": "cutlet",
+              "shortfall": 2,
+              "purchased": 2,
+              "surplus": 0,
+              "unit": "片"
+            },
+            {
+              "component": "eggs",
+              "shortfall": 3,
+              "purchased": 3,
+              "surplus": 0,
+              "unit": "顆"
+            },
+            {
+              "component": "grain",
+              "shortfall": 360,
+              "purchased": 400,
+              "surplus": 40,
+              "unit": "g"
+            },
+            {
+              "component": "kombu",
+              "shortfall": 2,
+              "purchased": 5,
+              "surplus": 3,
+              "unit": "g"
+            },
+            {
+              "component": "soy",
+              "shortfall": 20,
+              "purchased": 50,
+              "surplus": 30,
+              "unit": "ml"
+            }
+          ],
+          "quantities": {
+            "chicken": 300,
+            "cutlet": 2,
+            "eggs": 3,
+            "grain": 400,
+            "kombu": 5,
+            "soy": 50
+          }
+        }
+      },
+      {
+        "id": "storage",
+        "limits": {
+          "soy": 5,
+          "kombu": 3,
+          "grain": 40,
+          "cutlet": 0,
+          "chicken": 20,
+          "eggs": 0
+        },
+        "result": {
+          "status": "ok",
+          "currency": "TWD",
+          "orders": [
+            {
+              "supplier": "depot",
+              "lines": [
+                {
+                  "sku": "depot-chicken",
+                  "component": "chicken",
+                  "packs": 1,
+                  "pack": 300,
+                  "unit": "g",
+                  "unit_price_twd": 41,
+                  "cost_twd": 41
+                },
+                {
+                  "sku": "depot-cutlet",
+                  "component": "cutlet",
+                  "packs": 1,
+                  "pack": 2,
+                  "unit": "片",
+                  "unit_price_twd": 53,
+                  "cost_twd": 53
+                },
+                {
+                  "sku": "depot-eggs",
+                  "component": "eggs",
+                  "packs": 1,
+                  "pack": 3,
+                  "unit": "顆",
+                  "unit_price_twd": 12,
+                  "cost_twd": 12
+                },
+                {
+                  "sku": "depot-grain",
+                  "component": "grain",
+                  "packs": 1,
+                  "pack": 400,
+                  "unit": "g",
+                  "unit_price_twd": 22,
+                  "cost_twd": 22
+                },
+                {
+                  "sku": "depot-kombu",
+                  "component": "kombu",
+                  "packs": 1,
+                  "pack": 5,
+                  "unit": "g",
+                  "unit_price_twd": 7,
+                  "cost_twd": 7
+                },
+                {
+                  "sku": "depot-soy",
+                  "component": "soy",
+                  "packs": 1,
+                  "pack": 25,
+                  "unit": "ml",
+                  "unit_price_twd": 6,
+                  "cost_twd": 6
+                }
+              ],
+              "subtotal_twd": 141,
+              "shipping_twd": 29,
+              "total_twd": 170
+            }
+          ],
+          "total_twd": 170,
+          "shipping_twd": 29,
+          "packs": 6,
+          "ingredients": [
+            {
+              "component": "chicken",
+              "shortfall": 280,
+              "purchased": 300,
+              "surplus": 20,
+              "unit": "g"
+            },
+            {
+              "component": "cutlet",
+              "shortfall": 2,
+              "purchased": 2,
+              "surplus": 0,
+              "unit": "片"
+            },
+            {
+              "component": "eggs",
+              "shortfall": 3,
+              "purchased": 3,
+              "surplus": 0,
+              "unit": "顆"
+            },
+            {
+              "component": "grain",
+              "shortfall": 360,
+              "purchased": 400,
+              "surplus": 40,
+              "unit": "g"
+            },
+            {
+              "component": "kombu",
+              "shortfall": 2,
+              "purchased": 5,
+              "surplus": 3,
+              "unit": "g"
+            },
+            {
+              "component": "soy",
+              "shortfall": 20,
+              "purchased": 25,
+              "surplus": 5,
+              "unit": "ml"
+            }
+          ],
+          "quantities": {
+            "chicken": 300,
+            "cutlet": 2,
+            "eggs": 3,
+            "grain": 400,
+            "kombu": 5,
+            "soy": 25
+          }
+        }
+      },
+      {
+        "id": "stockout",
+        "limits": {},
+        "result": {
+          "status": "infeasible",
+          "shortages": [
+            {
+              "component": "chicken",
+              "unit": "g",
+              "required": 280,
+              "offered": 0,
+              "uncovered": 280
+            }
+          ]
+        }
+      },
+      {
+        "id": "pack_limit",
+        "limits": {
+          "chicken": 10
+        },
+        "result": {
+          "status": "infeasible",
+          "pack_limit": {
+            "component": "chicken",
+            "unit": "g",
+            "required": 280,
+            "max_purchase": 290
+          }
+        }
+      }
+    ]
   }
 }
