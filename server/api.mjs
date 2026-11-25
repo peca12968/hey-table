@@ -35,7 +35,8 @@ import {settings} from "./tappay.mjs";
 import {canPrepare,methods} from "../lib/payments.mjs";
 import {estimate} from "@peca12968/pickup-window";
 import {activeKitchen,demoKitchen,importTiming,stationBatchLimit,stationLabels,timingChanges} from "../lib/kitchen-timing.mjs";
-import {finishStation,finishStationBatch,preparationByStation,readStationBatch,remainingStationItems,stationBatchHistory,stationQueue} from "./station-work.mjs";
+import {finishStation,finishStationBatch,preparationByStation,readStationBatch,recordedStationProgress,
+  remainingStationItems,stationBatchHistory,stationQueue} from "./station-work.mjs";
 const timingRows = "SELECT revision,config FROM kitchen_timing ORDER BY revision DESC";
 const fromTimingRow = row => ({revision:row?.revision??0, kitchen:activeKitchen(row ? JSON.parse(row.config) : null)});
 const orderColumns = `SELECT orders.*, ${latestState} AS payment_state, ${cashReceiptColumn} AS cash_receipt`;
@@ -901,6 +902,21 @@ export async function api(request, env) {
       FROM orders WHERE id=? AND mode='pickup' AND pickup_slot IS NOT NULL`).bind(id)]);
     const row=lookup.results[0];
     return row?json(kitchenOrder(row,capturedAt)):fail("找不到這張預約自取餐單。",404);
+  }
+  if(path==="/api/kitchen/order-detail"&&method==="GET"){
+    const id=collectionId(url);
+    if(id===null||url.searchParams.getAll("id").length!==1)return fail("請輸入有效的餐號。");
+    const row=await db.prepare(`${orderColumns},${demoRefundReceiptColumn} FROM orders WHERE id=?`).bind(id).first();
+    if(!row)return fail("找不到這張餐單。",404);
+    const {mode,table,source,pickupSlot,pickupArrivedAt,note,items,total,created,status,
+      paymentMethod,paymentEnv,paymentState,cashReceipt,combo}=receipt(row);
+    const demoRefund=row.demo_refund_receipt?JSON.parse(row.demo_refund_receipt):undefined;
+    return json({id,mode,table,source,pickupSlot,pickupArrivedAt,note,total,created,status,
+      items:items.map(({id,name,qty,price,note})=>({id,name,qty,price,note})),
+      paymentMethod,paymentEnv,paymentState,cashReceipt,demoRefund,
+      pricing:combo?{subtotal:combo.quote.subtotal,discount:combo.quote.discount}:undefined,
+      statusHistory:statusHistory(row),stations:recordedStationProgress(row),
+      tableMoves:JSON.parse(row.table_moves??"[]"),pickupChanges:pickupChanges(row)});
   }
   if (path === "/api/kitchen/payment-review" && method === "GET") {
     const id=collectionId(url),dates=url.searchParams.getAll("date");

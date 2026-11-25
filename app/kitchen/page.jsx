@@ -311,6 +311,7 @@ export default function Kitchen(){
     const readyAt=table=>filtered.filter(order=>order.table===table&&order.mode==="table");
     content=<>
     <div className="actions"><a className="outline" href="/kitchen/create-pickup">代建自取單</a>
+      <a className="outline" href="/kitchen/order-detail">查詢餐單紀錄</a>
       <a className="outline" href="/kitchen/prep">查看備料單</a>
       <a className="outline" href="/kitchen/daily">每日訂單摘要</a>
       <a className="outline" href="/kitchen/refunds">示範退款紀錄</a>

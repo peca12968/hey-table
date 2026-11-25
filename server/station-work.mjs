@@ -17,6 +17,12 @@ export function remainingStationItems(row) {
   return Object.entries(groups).flatMap(([station,items])=>Object.hasOwn(done,station)?[]:items);
 }
 
+export function recordedStationProgress(row) {
+  if(!row.station_progress)return [];
+  const {groups,done}=stationProgress(row);
+  return Object.keys(groups).map(station=>({station,doneAt:done[station]??null}));
+}
+
 export function preparationByStation(rows,orders) {
   const stations=Object.fromEntries(Object.keys(stationLabels).map(key=>[key,{orders:[],remainingOrders:[]}]));
   rows.forEach((row,index)=>{

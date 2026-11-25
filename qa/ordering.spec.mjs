@@ -1681,6 +1681,7 @@ test("mobile station history shares the selected date, station and order with a 
   }
   await mark("hot");
   await mark("bar");
+  expect((await request.patch("/api/kitchen/status",{headers:auth,data:{id:ids[0],from:"ready",to:"completed"}})).ok()).toBe(true);
   expect((await request.get(queue+"/history")).status()).toBe(403);
   const formatted=ids.map(id=>String(id).padStart(4,"0"));
   await page.setViewportSize({width:360,height:780});
@@ -1715,8 +1716,40 @@ test("mobile station history shares the selected date, station and order with a 
     await expect(all.getByText("熱台",{exact:true})).toBeVisible();
     await expect(all.getByText("飲品台",{exact:true})).toBeVisible();
   }finally{await second.close();}
+  await report.getByRole("link",{name:"#"+formatted[0],exact:true}).click();
+  const details=page.getByRole("article",{name:"餐單 #"+formatted[0]});
+  await expect(details.getByRole("region",{name:"餐單進度"}).getByText("已交餐",{exact:true})).toBeVisible();
+  const stations=details.getByRole("region",{name:"分站進度"});
+  await expect(stations.getByText("熱台",{exact:true})).toBeVisible();
+  await expect(stations.getByText("飲品台",{exact:true})).toBeVisible();
+  await expect(details.getByText("僅廚房可見的批次備註")).toBeVisible();
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBe(360);
+  await page.getByRole("link",{name:"返回分站批次紀錄"}).click();
+  await expect(report.getByRole("listitem")).toHaveCount(1);
+  expect(new URL(page.url()).searchParams.get("id")).toBe(formatted[0]);
   await page.getByRole("link",{name:"返回分站看板"}).click();
   await expect(page.getByRole("button",{name:"飲品台",exact:true})).toHaveAttribute("aria-pressed","true");
+});
+
+test("the staff lookup form finds one receipt and offers a retry when the requested number is missing",async({page,request})=>{
+  const placed=await request.post("/api/orders",{data:{mode:"table",table:"A03",token:randomUUID(),note:"",
+    items:[{id:"sencha",qty:1}]}});
+  expect(placed.ok(),await placed.text()).toBe(true);
+  const {id}=await placed.json(),number=String(id).padStart(4,"0");
+  await page.setViewportSize({width:360,height:780});
+  await page.addInitScript(()=>sessionStorage.setItem("he-ri-staff","local-test-kitchen"));
+  await page.goto("/kitchen");
+  await page.getByRole("link",{name:"查詢餐單紀錄"}).click();
+  await page.getByRole("textbox",{name:"餐號",exact:true}).fill("999999999");
+  await page.getByRole("button",{name:"查詢餐單",exact:true}).click();
+  await expect(page.getByRole("alert")).toHaveText("找不到這張餐單。");
+  await expect(page.getByRole("button",{name:"重新查詢"})).toBeVisible();
+  await page.getByRole("textbox",{name:"餐號",exact:true}).fill(number);
+  await page.getByRole("button",{name:"查詢餐單",exact:true}).click();
+  const details=page.getByRole("article",{name:"餐單 #"+number});
+  await expect(details.getByText("A03 桌內用")).toBeVisible();
+  await expect(details.getByText("日式熱煎茶 × 1")).toBeVisible();
+  await expect(page.getByRole("alert")).toHaveCount(0);
 });
 
 test("mobile prep can print and export the remaining items from one station snapshot",async({page,request})=>{

@@ -1,6 +1,6 @@
 "use client";
 
-import {useEffect,useState,useSyncExternalStore} from "react";
+import {Fragment,useEffect,useState,useSyncExternalStore} from "react";
 import {Header,Footer,request} from "../../shared";
 import {useBusinessToday} from "../../use-business-today.mjs";
 import {stationLabels} from "../../../lib/kitchen-timing.mjs";
@@ -79,7 +79,9 @@ export default function StationHistory(){
             <strong>{stationLabels[batch.station]}</strong>
             <span>{batch.completed} 張餐單</span>
           </div>
-          <p>{batch.orderIds.map(orderId=>"#"+numberOf(orderId)).join("、")}</p>
+          <p>{batch.orderIds.map((orderId,index)=><Fragment key={orderId}>{index>0?"、":""}<a className="stationHistoryOrder"
+            href={"/kitchen/order-detail?"+new URLSearchParams({id:numberOf(orderId),from:pagePath+"?"+queryString})}>
+            #{numberOf(orderId)}</a></Fragment>)}</p>
         </li>)}
       </ul>:<p>沒有符合條件的批次紀錄。</p>}
       {(query.has("before")||nextPage)&&<nav className="actions" aria-label="批次紀錄分頁">

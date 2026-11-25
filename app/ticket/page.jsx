@@ -18,30 +18,12 @@ import PickupCode from "../pickup-code";
 import PickupPassShare from "./pickup-pass-share";
 import TextDownload from "./text-download";
 import CashReceipt from "../cash-receipt";
+import OrderProgress,{progressTime} from "../order-progress";
 import {pickupCalendarStatus,pickupChangeWindows} from "../../lib/pickup-slots.mjs";
-const progressLabels={
-  pending:"已送單",preparing:"店家接單，開始製作",ready:"餐點已備妥",completed:"已交餐",cancelled:"店家已取消",
-};
-const cancellationLabels={customer:"顧客已取消",payment_expiry:"付款保留已到期",demo_refund:"店家退款並取消"};
 const cancellationMessages={
   customer:"這張餐單已由顧客取消。",
   payment_expiry:"付款保留時間已到，餐點份數已釋回。可返回菜單重新點餐。",
 };
-const progressTime=new Intl.DateTimeFormat("zh-TW",{
-  timeZone:"Asia/Taipei",month:"numeric",day:"numeric",hour:"2-digit",minute:"2-digit",second:"2-digit",hourCycle:"h23",
-});
-
-function OrderProgress({history}){
-  if(!history?.length)return null;
-  return <section className="receiptProgress" aria-labelledby="receipt-progress">
-    <h2 id="receipt-progress">餐單進度</h2>
-    <ol role="list">{history.map(({status,at,actor},index)=><li key={status} aria-current={index===history.length-1?"step":undefined}>
-      <span>{status==="cancelled"?(cancellationLabels[actor]??progressLabels[status]):progressLabels[status]}</span>
-      {at===null?<small>時間未記錄</small>:<time dateTime={new Date(at).toISOString()}>{progressTime.format(at)}</time>}
-    </li>)}</ol>
-  </section>;
-}
-
 function ReceiptHistory({entries,active,open,onRemove}){
   if(!entries.length)return null;
   return <details className="receiptHistory" open={open}>

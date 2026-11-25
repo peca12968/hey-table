@@ -770,6 +770,55 @@ test("station batch history isolates Taipei days, station and order filters, and
   assert.ok(plan.some(row=>row.detail.includes("station_batch_receipts_station_day")));
 });
 
+test("staff can read orders beyond the recent board without exposing checkout references or changing state",async t=>{
+  const db=database();
+  t.after(()=>db.sqlite.close());
+  const runtime={DB:db,STAFF_KEY:"staff"};
+  const headers={Authorization:"Bearer staff"};
+  const call=(path,staff=headers)=>api(new Request("https://order.example"+path,{headers:staff}),runtime);
+  const detail="/api/kitchen/order-detail";
+  const now=Date.parse("2026-11-25T12:00:00+08:00");
+  t.mock.method(Date,"now",()=>now);
+  const item={id:"katsudon",name:"滑蛋豬排丼",qty:1,price:190,note:"醬汁另外放",internal:"private item field"};
+  const day=86400000;
+  const insert=db.sqlite.prepare(`INSERT INTO orders
+    (token,mode,table_no,note,items,total,created,status,payment_method,payment_env,status_history)
+    VALUES (?,'table','A04','',?,190,?,?,?,?,?)`);
+  const add=(created,status="completed",method="cash",environment="cash",history=null)=>{
+    const token=crypto.randomUUID(),{lastInsertRowid}=insert.run(token,JSON.stringify([item]),created,status,method,environment,history);
+    return {id:Number(lastInsertRowid),token};
+  };
+  const old=add(now-day);
+  for(let i=0;i<21;i++)add(now+i);
+  const cancellation=JSON.stringify([{from:"pending",status:"cancelled",at:now,actor:"demo_refund"}]);
+  const refunded=add(now-1000,"cancelled","line_pay","demo",cancellation);
+  db.sqlite.prepare(`INSERT INTO payment_attempts(order_id,reference,merchant,state,trade_id,redirect_url,created)
+    VALUES (?,'private reference','private merchant','refunded','private trace','https://example.com/private',?)`).run(refunded.id,now);
+  assert.equal((await call(detail+"?id="+old.id,{})).status,403);
+  assert.equal((await call(detail+"?id=0")).status,400);
+  assert.equal((await call(detail+"?id=1&id=1")).status,400);
+  assert.equal((await call(detail+"?id=9999")).status,404);
+  const board=await (await call("/api/kitchen")).json();
+  assert.equal(board.some(order=>order.id===old.id),false);
+  const response=await call(detail+"?id="+String(old.id).padStart(4,"0"));
+  assert.equal(response.headers.get("Cache-Control"),"no-store");
+  const order=await response.json();
+  assert.equal(order.id,old.id);
+  assert.equal(order.table,"A04");
+  assert.deepEqual(order.statusHistory,[{status:"pending",at:now-day},{status:"completed",at:null}]);
+  assert.deepEqual(order.stations,[]);
+  assert.deepEqual(order.items,[{id:item.id,name:item.name,qty:1,price:190,note:item.note}]);
+  assert.ok(!JSON.stringify(order).includes(old.token));
+  const refund=await (await call(detail+"?id="+refunded.id)).json();
+  assert.deepEqual(refund.demoRefund,{amount:190,refundedAt:now});
+  assert.equal(refund.statusHistory.at(-1).actor,"demo_refund");
+  assert.ok(!JSON.stringify(refund).includes("private"));
+  const pending=add(now-day,"pending","line_pay","demo");
+  db.sqlite.prepare("UPDATE orders SET payment_due_at=? WHERE id=?").run(now-1,pending.id);
+  assert.equal((await (await call(detail+"?id="+pending.id)).json()).status,"pending");
+  assert.equal(db.sqlite.prepare("SELECT status FROM orders WHERE id=?").get(pending.id).status,"pending");
+});
+
 test("prep station views use saved assignments and group old stations without exposing order notes",async t=>{
   const db=database();
   t.after(()=>db.sqlite.close());

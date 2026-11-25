@@ -100,6 +100,9 @@
 .section .stationHistoryFilters{max-width:none}
 .stationHistoryFilters input[name=id]{width:9rem}
 .stationHistoryFilters select{padding:8px;max-width:100%;border-radius:7px;border:1px solid #c7cdbf;background:#fffefa}
+.orderLookup,.orderLookupRefresh{margin-top:16px}
+.orderLookup{overflow-wrap:anywhere}
+.stationHistoryOrder{color:var(--green);font-weight:650}
 .kitchenOverdue{width:fit-content;margin:8px 0;padding:4px 8px;border-radius:6px;background:#fff0e6;color:#932e21;font-weight:700}
 .itemNotes{margin:12px 0}.itemNotes summary{color:var(--green);font-weight:700;cursor:pointer}
 .itemNotes p{margin:6px 0}.itemNotes label{display:block;margin:8px 0;font-weight:600}
