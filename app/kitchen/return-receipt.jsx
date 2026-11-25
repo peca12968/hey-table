@@ -9,20 +9,23 @@ import "./return-receipt.css";
 const endpoint="/api/kitchen/return-receipt";
 const taipei=new Intl.DateTimeFormat("zh-TW",{timeZone:"Asia/Taipei",dateStyle:"short",timeStyle:"short"});
 const staffHeaders=key=>key?{Authorization:"Bearer "+key}:{};
+const focusHeading=node=>node?.focus();
 
-function ReturnPreview({ticket,ledger,staffKey,onSaved,onReload}){
+function ReturnPreview({ticket,ledger,staffKey,onChanged,onReload}){
   const [quantities,setQuantities]=useState(()=>new Map()),[result,setResult]=useState(null),[error,setError]=useState("");
   const [attempt,setAttempt]=useState(null),[busy,setBusy]=useState(false),[stale,setStale]=useState(false);
   const [notice,setNotice]=useState(""),inFlight=useRef(false);
+  const [voidTarget,setVoidTarget]=useState(null),[reason,setReason]=useState("");
   const pricing=useMemo(()=>{
     try{return remainingReturnLots(returnLots(ticket),ledger.records);}catch{return null;}
   },[ticket,ledger.records]);
   const names=new Map(ticket.items.map(({id,name})=>[id,name]));
   const remaining=id=>pricing?.lots.get(id)?.reduce((sum,lot)=>sum+lot.qty,0)??0;
+  const blocked=busy||stale||!!attempt;
 
   function preview(event){
     event.preventDefault();
-    if(busy||stale||attempt)return;
+    if(blocked||voidTarget)return;
     setNotice("");
     const selection=new Map();
     for(const {id,name} of ticket.items){
@@ -36,22 +39,41 @@ function ReturnPreview({ticket,ledger,staffKey,onSaved,onReload}){
     catch(error){setError(error.message);}
   }
 
-  async function record(){
-    if(inFlight.current||!result||stale||result.revision!==ledger.revision)return;
+  async function mutate(method,data){
+    if(inFlight.current||stale)return;
     inFlight.current=true;setBusy(true);setError("");setNotice("");
-    const data=attempt??{id:ticket.id,revision:result.revision,operationId:crypto.randomUUID(),amount:result.amount,
-      items:[...result.selection].map(([id,qty])=>({id,qty}))};
     setAttempt(data);
     try{
-      const saved=await request(endpoint,{method:"POST",headers:{"Content-Type":"application/json",...staffHeaders(staffKey)},
+      const saved=await request(endpoint,{method,headers:{"Content-Type":"application/json",...staffHeaders(staffKey)},
         body:JSON.stringify(data),signal:AbortSignal.timeout(15_000)});
-      onSaved(ticket.id,saved);setAttempt(null);setResult(null);setQuantities(new Map());
-      setNotice("已記入第 "+saved.revision+" 筆試算。");
+      onChanged(ticket.id,method,saved);
+      setAttempt(null);setResult(null);setQuantities(new Map());setVoidTarget(null);setReason("");
+      setNotice(method==="POST"?"已記入第 "+saved.revision+" 筆試算。":
+        "已撤銷第 "+saved.targetRevision+" 筆試算，恢復 NT$ "+saved.restoredAmount+" 可試算金額。");
     }catch(failure){
       if([400,404,409].includes(failure.status)){
         setAttempt(null);setResult(null);setStale(failure.status===409);setError(failure.message);
-      }else setError(failure.status===403?failure.message:"尚未收到登記結果，請重試同一筆試算。");
+        if(failure.status===409)setVoidTarget(null);
+      }else setError(failure.status===403?failure.message:method==="POST"?
+        "尚未收到登記結果，請重試同一筆試算。":"尚未收到撤銷結果，請重試撤銷同一筆。");
     }finally{inFlight.current=false;setBusy(false);}
+  }
+
+  function record(){
+    if(!result||voidTarget||result.revision!==ledger.revision)return;
+    void mutate("POST",attempt??{id:ticket.id,revision:result.revision,operationId:crypto.randomUUID(),amount:result.amount,
+      items:[...result.selection].map(([id,qty])=>({id,qty}))});
+  }
+
+  function voidQuote(event){
+    event.preventDefault();
+    if(!voidTarget||!reason.trim())return;
+    void mutate("PATCH",attempt??{id:ticket.id,revision:ledger.revision,operationId:crypto.randomUUID(),
+      targetRevision:voidTarget.revision,reason:reason.trim()});
+  }
+
+  function beginVoid(record){
+    setVoidTarget(record);setReason("");setResult(null);setError("");setNotice("");
   }
 
   return <section className="returnQuote" aria-labelledby="return-quote">
@@ -61,13 +83,13 @@ function ReturnPreview({ticket,ledger,staffKey,onSaved,onReload}){
       {ticket.items.map(({id,name,qty})=><label key={id}>{name}退餐份數
         <small className="muted">原單 {qty} 份 · 可試算 {remaining(id)} 份</small>
         <input type="text" inputMode="numeric" pattern="[0-9]+" maxLength={16} placeholder="0" value={quantities.get(id)??""}
-          disabled={busy||stale||!!attempt||remaining(id)===0}
+          disabled={blocked||!!voidTarget||remaining(id)===0}
           onChange={event=>{
             const value=event.target.value;
             setQuantities(current=>new Map(current).set(id,value));setResult(null);setError("");
           }}/>
       </label>)}
-      <button type="submit" className="outline" disabled={busy||stale||!!attempt||!ticket.items.some(item=>remaining(item.id)>0)}>試算退餐金額</button>
+      <button type="submit" className="outline" disabled={blocked||!!voidTarget||!ticket.items.some(item=>remaining(item.id)>0)}>試算退餐金額</button>
     </form>:<p role="alert">收據計價資料不完整，請核對原單。</p>}
     {error&&<p className="error" role="alert">{error}</p>}
     {notice&&<p role="status">{notice}</p>}
@@ -88,11 +110,27 @@ function ReturnPreview({ticket,ledger,staffKey,onSaved,onReload}){
     </section>}
     {ledger.records.length>0&&<details className="returnQuoteHistory" open>
       <summary>試算登記紀錄（{ledger.records.length} 筆）</summary>
+      {pricing&&<p>目前試算餘額 <strong>NT$ {pricing.total}</strong></p>}
       <ol>{ledger.records.map(record=><li key={record.revision}>
         <strong>第 {record.revision} 筆 · NT$ {record.amount}</strong>
         <small> <time dateTime={new Date(record.recordedAt).toISOString()}>{taipei.format(record.recordedAt)}</time></small>
         <p>{record.lines.map(({dish,qty,unit})=>names.get(dish)+" "+qty+" 份 × NT$ "+unit).join("、")}</p>
         <p>登記後餘額 NT$ {record.remainingValue}</p>
+        {record.voided?<>
+          <p><strong>已撤銷</strong> · {record.voided.reason}</p>
+          <p>撤銷時間 <time dateTime={new Date(record.voided.recordedAt).toISOString()}>{taipei.format(record.voided.recordedAt)}</time></p>
+        </>:<button className="outline" disabled={blocked||!!voidTarget} onClick={()=>beginVoid(record)}>更正第 {record.revision} 筆</button>}
+        {voidTarget?.revision===record.revision&&<section className="supplyReview" aria-labelledby="void-return-title">
+          <h4 id="void-return-title" tabIndex={-1} ref={focusHeading}>撤銷第 {record.revision} 筆試算</h4>
+          <p>這次更正會恢復 NT$ {record.amount} 及該筆的餐點份數。</p>
+          <form onSubmit={voidQuote}>
+            <label>撤銷原因<textarea required value={reason} maxLength={160} disabled={busy||!!attempt}
+              onChange={event=>{setReason(event.target.value);setError("");}}/></label>
+            <button type="submit" className="outline" disabled={busy||!reason.trim()}>
+              {busy?"撤銷中…":attempt?"重試撤銷同一筆":"確認撤銷試算"}</button>
+            <button type="button" className="outline" disabled={busy||!!attempt} onClick={()=>{setVoidTarget(null);setError("");}}>返回紀錄</button>
+          </form>
+        </section>}
       </li>)}</ol>
     </details>}
   </section>;
@@ -120,9 +158,13 @@ export default function ReturnReceipt({staffKey}) {
       setBusy(false);
     }
   }
-  function applyEntry(id,entry){
-    setView(current=>current?.ticket.id===id&&entry.revision===current.ledger.revision+1
-      ?{ticket:current.ticket,ledger:{revision:entry.revision,records:[...current.ledger.records,entry]}}:current);
+  function applyChange(id,method,entry){
+    setView(current=>{
+      if(current?.ticket.id!==id||entry.revision!==current.ledger.revision+1)return current;
+      const records=method==="POST"?[...current.ledger.records,entry]:current.ledger.records.map(record=>
+        record.revision===entry.targetRevision?{...record,voided:entry}:record);
+      return {ticket:current.ticket,ledger:{revision:entry.revision,records}};
+    });
   }
   const {ticket,ledger}=view??{};
   const quote=ticket?.combo?.quote;
@@ -148,7 +190,7 @@ export default function ReturnReceipt({staffKey}) {
       <div className="total"><span>原單合計</span><b>NT$ {ticket.total}</b></div>
       <button type="button" className="outline" onClick={()=>
         downloadJson("hey-table-return-"+numberOf(ticket.id)+"-",ticket.created,ticket)}>下載試算收據 JSON</button>
-      <ReturnPreview ticket={ticket} ledger={ledger} staffKey={staffKey} onSaved={applyEntry} onReload={()=>lookup()}/>
+      <ReturnPreview ticket={ticket} ledger={ledger} staffKey={staffKey} onChanged={applyChange} onReload={()=>lookup()}/>
     </section>}
   </details>;
 }

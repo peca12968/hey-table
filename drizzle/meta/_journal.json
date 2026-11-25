@@ -281,6 +281,13 @@
       "when": 1795608298670,
       "tag": "0039_return_quote_entries",
       "breakpoints": true
+    },
+    {
+      "idx": 40,
+      "version": "6",
+      "when": 1795609133437,
+      "tag": "0040_return_quote_voids",
+      "breakpoints": true
     }
   ]
 }

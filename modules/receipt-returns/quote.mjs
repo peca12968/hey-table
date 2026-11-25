@@ -88,6 +88,7 @@ export function remainingReturnLots(pricing,entries){
   const lots=new Map([...pricing.lots].map(([dish,portions])=>[dish,portions.map(lot=>({...lot}))]));
   let total=pricing.total;
   for(const entry of entries){
+    if(entry.voided)continue;
     for(const {dish,bundle,qty,unit,amount} of entry.lines){
       const lot=lots.get(dish)?.find(portion=>portion.bundle===bundle);
       if(!lot||lot.unit!==unit||!whole(qty)||!qty||qty>lot.qty||amount!==qty*unit)throw invalid();

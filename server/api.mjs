@@ -24,7 +24,7 @@ import {pickupWeek} from "./pickup-week.mjs";
 import {cashCorrectionHistory,cashReceiptColumn,collectCash,correctCashReceipt,dailyCashReceipts} from "./cash-receipts.mjs";
 import {cashCloseVersion,cashCloseVersions,saveCashClose} from "./cash-close-versions.mjs";
 import {cashAmount} from "../lib/cash-reconciliation.mjs";
-import {readReturnReceipt,recordReturnQuote} from "./return-ledger.mjs";
+import {readReturnReceipt,recordReturnQuote,voidReturnQuote} from "./return-ledger.mjs";
 
 const json = (value, status=200) => Response.json(value,{status,headers:{"Cache-Control":"no-store"}});
 const fail = (message,status=400) => json({error:message},status);
@@ -954,14 +954,24 @@ export async function api(request, env) {
     const ticket=await readReturnReceipt(db,id,url.searchParams.get("ledger")==="1");
     return ticket?json(ticket):fail("找不到這個取餐號碼",404);
   }
-  if(path==="/api/kitchen/return-receipt"&&method==="POST"){
-    const {id,revision,operationId,items,amount}=input;
+  if(path==="/api/kitchen/return-receipt"&&["POST","PATCH"].includes(method)){
+    const {id,revision,operationId}=input;
     if(!Number.isSafeInteger(id)||id<1||!Number.isSafeInteger(revision)||revision<0||revision>=Number.MAX_SAFE_INTEGER||
-      typeof operationId!=="string"||!uuid.test(operationId)||!Number.isSafeInteger(amount)||amount<0||
-      !Array.isArray(items)||!items.length||items.length>24||
-      items.some(item=>!item||typeof item.id!=="string"||!item.id.trim()||item.id.length>100||!Number.isSafeInteger(item.qty)||item.qty<1)||
-      new Set(items.map(item=>item.id)).size!==items.length)return fail("請確認餐號、份數及試算版本。");
-    const result=await recordReturnQuote(db,{id,revision,operationId:operationId.toLowerCase(),items,amount},Date.now());
+      typeof operationId!=="string"||!uuid.test(operationId))return fail("請確認餐號與試算版本。");
+    const operation={id,revision,operationId:operationId.toLowerCase()};
+    let result;
+    if(method==="POST"){
+      const {items,amount}=input;
+      if(!Number.isSafeInteger(amount)||amount<0||!Array.isArray(items)||!items.length||items.length>24||
+        items.some(item=>!item||typeof item.id!=="string"||!item.id.trim()||item.id.length>100||!Number.isSafeInteger(item.qty)||item.qty<1)||
+        new Set(items.map(item=>item.id)).size!==items.length)return fail("請確認試算份數與金額。");
+      result=await recordReturnQuote(db,{...operation,items,amount},Date.now());
+    }else{
+      const {targetRevision,reason}=input;
+      if(!Number.isSafeInteger(targetRevision)||targetRevision<1||targetRevision>revision||
+        typeof reason!=="string"||!reason.trim()||reason.trim().length>160)return fail("請選擇要撤銷的試算並填寫原因。");
+      result=await voidReturnQuote(db,{...operation,targetRevision,reason:reason.trim()},Date.now());
+    }
     if(result.kind==="saved")return json(result.entry);
     if(result.kind==="missing")return fail("找不到這個取餐號碼",404);
     if(result.kind==="invalid")return fail(result.message);

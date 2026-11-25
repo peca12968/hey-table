@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { check, index, integer, primaryKey, sqliteTable, text } from "drizzle-orm/sqlite-core";
+import { check, foreignKey, index, integer, primaryKey, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
 
 export const orders = sqliteTable("orders", {
   id: integer("id").primaryKey({ autoIncrement: true }),
@@ -228,4 +228,21 @@ export const returnQuoteEntries = sqliteTable("return_quote_entries", {
 }, t => [
   primaryKey({columns:[t.orderId,t.revision]}),
   check("return_quote_revision",sql`${t.revision} > 0`),
+]);
+
+export const returnQuoteVoids = sqliteTable("return_quote_voids", {
+  orderId: integer("order_id").notNull(),
+  revision: integer("revision").notNull(),
+  targetRevision: integer("target_revision").notNull(),
+  operationId: text("operation_id").notNull().unique(),
+  reason: text("reason").notNull(),
+  restoredAmount: integer("restored_amount").notNull(),
+  remainingValue: integer("remaining_value").notNull(),
+  recordedAt: integer("recorded_at").notNull(),
+}, t => [
+  primaryKey({columns:[t.orderId,t.revision]}),
+  foreignKey({columns:[t.orderId,t.targetRevision],foreignColumns:[returnQuoteEntries.orderId,returnQuoteEntries.revision]}),
+  uniqueIndex("return_quote_void_target").on(t.orderId,t.targetRevision),
+  check("return_quote_void_values",sql`${t.targetRevision} > 0 AND ${t.revision} > ${t.targetRevision}
+    AND ${t.restoredAmount} >= 0 AND ${t.remainingValue} >= 0`),
 ]);

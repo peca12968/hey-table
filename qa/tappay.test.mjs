@@ -57,6 +57,10 @@ test("partial-return quotes recover frozen price lots and reject inconsistent re
   const following=remainingReturnLots(pricing,[first]);
   assert.equal(quoteReturn(following,new Map([["gyoza",1]])).amount,72);
   assert.throws(()=>remainingReturnLots(pricing,[first,first]),/計價資料不完整/);
+  const second=quoteReturn(following,new Map([["gyoza",1]]));
+  const corrected=remainingReturnLots(pricing,[{...first,voided:{revision:3}},second]);
+  assert.equal(corrected.total,273);
+  assert.equal(quoteReturn(corrected,new Map([["gyoza",1]])).amount,85);
   assert.equal(returns(["gyoza",1]).amount,85);
   assert.equal(returns(["sencha",1],["gyoza",2],["oyakodon",1]).remainingValue,0);
   assert.throws(()=>returns(["gyoza",3]),/超出原單/);
