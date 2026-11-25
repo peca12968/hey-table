@@ -1,0 +1,129 @@
+{
+  "format": "stockroom.sku-allocations-demo.v1",
+  "before": {
+    "captured_at_ms": 110000,
+    "product": {
+      "sku": "KIT-01",
+      "capacity": 19,
+      "available": 10
+    },
+    "summary": {
+      "reservation_count": 3,
+      "held": 9,
+      "without_deadline_count": 1,
+      "without_deadline_held": 3,
+      "next_expiry_at_ms": 120000
+    },
+    "reservations": [
+      {
+        "reservation_id": "a-dispatch",
+        "batch_id": null,
+        "expires_at_ms": 125000,
+        "quantity": 4,
+        "shipped": 1,
+        "released": 0,
+        "held": 3
+      }
+    ],
+    "next_after_id": "a-dispatch"
+  },
+  "continuation": {
+    "captured_at_ms": 110000,
+    "product": {
+      "sku": "KIT-01",
+      "capacity": 19,
+      "available": 10
+    },
+    "summary": {
+      "reservation_count": 3,
+      "held": 9,
+      "without_deadline_count": 1,
+      "without_deadline_held": 3,
+      "next_expiry_at_ms": 120000
+    },
+    "reservations": [
+      {
+        "reservation_id": "b-expiring",
+        "batch_id": null,
+        "expires_at_ms": 120000,
+        "quantity": 3,
+        "shipped": 0,
+        "released": 0,
+        "held": 3
+      },
+      {
+        "reservation_id": "c-legacy",
+        "batch_id": null,
+        "expires_at_ms": null,
+        "quantity": 3,
+        "shipped": 0,
+        "released": 0,
+        "held": 3
+      }
+    ],
+    "next_after_id": null
+  },
+  "after_expiry": {
+    "captured_at_ms": 120000,
+    "product": {
+      "sku": "KIT-01",
+      "capacity": 19,
+      "available": 13
+    },
+    "summary": {
+      "reservation_count": 2,
+      "held": 6,
+      "without_deadline_count": 1,
+      "without_deadline_held": 3,
+      "next_expiry_at_ms": 125000
+    },
+    "reservations": [
+      {
+        "reservation_id": "a-dispatch",
+        "batch_id": null,
+        "expires_at_ms": 125000,
+        "quantity": 4,
+        "shipped": 1,
+        "released": 0,
+        "held": 3
+      },
+      {
+        "reservation_id": "c-legacy",
+        "batch_id": null,
+        "expires_at_ms": null,
+        "quantity": 3,
+        "shipped": 0,
+        "released": 0,
+        "held": 3
+      }
+    ],
+    "next_after_id": null
+  },
+  "after_dispatch": {
+    "captured_at_ms": 120000,
+    "product": {
+      "sku": "KIT-01",
+      "capacity": 16,
+      "available": 13
+    },
+    "summary": {
+      "reservation_count": 1,
+      "held": 3,
+      "without_deadline_count": 1,
+      "without_deadline_held": 3,
+      "next_expiry_at_ms": null
+    },
+    "reservations": [
+      {
+        "reservation_id": "c-legacy",
+        "batch_id": null,
+        "expires_at_ms": null,
+        "quantity": 3,
+        "shipped": 0,
+        "released": 0,
+        "held": 3
+      }
+    ],
+    "next_after_id": null
+  }
+}

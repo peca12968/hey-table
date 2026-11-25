@@ -101,6 +101,12 @@ SQLite 會核對每個 SKU 的原入帳後版次，並嘗試恢復原批次調�
 
 從兩台服務的並行測試可看到，同車出貨的 5 件在快照建立前仍分別保留於兩張單，提交後的新快照則同時反映兩張箱單與減少的庫存。舊版無期限的保留仍可出現在同一快照。執行 `python demo.py --batch` 可透過本機 HTTP 看到跨訂單快照。[跨訂單並行測試](tests/test_packing_snapshots.py)
 
+### 依 SKU 核對目前保留來源
+
+`GET /inventory/KIT-01/allocations?limit=50` 會先回收到期保留，再從同一筆 SQLite 交易讀取 SKU 的實體庫存、可用件數與保留明細。匯總包含整個 SKU 的單數、尚在保留的件數、無期限的單數和件數，以及最早到期時間。各列列出原件數、已出貨、已減量、尚在保留、批號及期限。期限為 `null` 代表舊單無期限。查無 SKU 回傳 404。
+
+每頁最多 100 筆，按不會被續期改動的保留編號排序。將 `next_after_id` 帶入 `after_id` 可取得下一頁。各頁都會按當時庫存重新擷取，匯總始終涵蓋該 SKU 的完整有效保留。執行 `python sku_allocation_demo.py` 可重建同一 SKU 的續頁、到期與出貨快照。[並行、升級與續頁測試](tests/test_sku_allocations.py) · [保留來源試玩（私人預覽）](https://peca-github-demo.peca12968.chatgpt.site/?demo=skuAllocations#demos)
+
 ### 先列出即將到期的保留
 
 `GET /expiring-reservations?within_seconds=900&limit=50&sku=KIT-01` 先結算已到期保留，再以同一交易列出仍有保留量、在指定時間內到期的單品。結果依截止毫秒與保留編號排序，包含批號、已出貨與剩餘保留件數。省略 `sku` 可查全庫。查詢時間最長 24 小時，每頁最多 100 筆。

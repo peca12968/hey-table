@@ -116,6 +116,32 @@ class InventorySnapshot(BaseModel):
     products: list[Product]
 
 
+class AllocationLine(BaseModel):
+    reservation_id: str
+    batch_id: str | None
+    expires_at_ms: int | None
+    quantity: int
+    shipped: int
+    released: int
+    held: int
+
+
+class AllocationSummary(BaseModel):
+    reservation_count: int
+    held: int
+    without_deadline_count: int
+    without_deadline_held: int
+    next_expiry_at_ms: int | None
+
+
+class SKUAllocations(BaseModel):
+    captured_at_ms: int
+    product: Product
+    summary: AllocationSummary
+    reservations: list[AllocationLine]
+    next_after_id: str | None
+
+
 class StockCountBasisProduct(Product):
     held: int
     revision: int
@@ -514,6 +540,16 @@ def create_app(path: Path, *, ttl_seconds=900, clock=time.time):
     def inventory_snapshot(response: Response):
         response.headers["Cache-Control"] = "no-store"
         return store.inventory_snapshot()
+
+    @app.get("/inventory/{sku}/allocations", response_model=SKUAllocations)
+    def sku_allocations(
+        sku: str,
+        response: Response,
+        limit: Annotated[int, Query(ge=1, le=100)] = 50,
+        after_id: Annotated[str | None, Query(min_length=1, max_length=80)] = None,
+    ):
+        response.headers["Cache-Control"] = "no-store"
+        return store.sku_allocations(sku, limit, after_id)
 
     @app.get("/inventory/{sku}/count-basis", response_model=StockCountBasis)
     def stock_count_basis(sku: str, response: Response):

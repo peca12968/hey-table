@@ -67,6 +67,7 @@ CREATE TABLE IF NOT EXISTS reservations (
     quantity INTEGER NOT NULL CHECK (quantity > 0),
     state TEXT NOT NULL CHECK (state IN ('held', 'released'))
 );
+CREATE INDEX IF NOT EXISTS active_allocations_by_sku ON reservations(sku, id) WHERE state='held';
 CREATE TABLE IF NOT EXISTS reservation_replacements (
     source_id TEXT PRIMARY KEY REFERENCES reservations(id),
     replacement_id TEXT NOT NULL UNIQUE REFERENCES reservations(id),
@@ -280,6 +281,27 @@ class Store:
     def stock_count_bases(self, skus):
         with self.current_inventory() as (conn, now):
             return {"captured_at_ms": now, "products": [self.count_basis_row(conn, sku) for sku in sorted(skus)]}
+
+    def sku_allocations(self, sku, limit, after_id):
+        with self.current_inventory() as (conn, now):
+            product = self.stock_count_product(conn, sku)
+            scope = "r.sku=? AND r.state='held' AND r.quantity>r.shipped+r.reduced"
+            summary = conn.execute(f"""SELECT COUNT(*) AS reservation_count,
+                COALESCE(SUM(r.quantity-r.shipped-r.reduced), 0) AS held,
+                COUNT(*) FILTER (WHERE r.expires_at_ms IS NULL) AS without_deadline_count,
+                COALESCE(SUM(r.quantity-r.shipped-r.reduced) FILTER (WHERE r.expires_at_ms IS NULL), 0)
+                    AS without_deadline_held,
+                MIN(r.expires_at_ms) AS next_expiry_at_ms
+                FROM reservations r WHERE {scope}""", (sku,)).fetchone()
+            cursor = "" if after_id is None else "AND r.id>?"
+            args = (sku,) if after_id is None else (sku, after_id)
+            rows = conn.execute(f"""SELECT r.id AS reservation_id, b.batch_id, r.expires_at_ms,
+                    r.quantity, r.shipped, r.reduced AS released, r.quantity-r.shipped-r.reduced AS held
+                FROM reservations r LEFT JOIN reservation_batch_items b ON b.reservation_id=r.id
+                WHERE {scope} {cursor} ORDER BY r.id LIMIT ?""", (*args, limit + 1)).fetchall()
+            return {"captured_at_ms": now, "product": product, "summary": dict(summary),
+                    "reservations": [dict(row) for row in rows[:limit]],
+                    "next_after_id": rows[limit - 1]["reservation_id"] if len(rows) > limit else None}
 
     @staticmethod
     def stock_count_row(conn, key):
