@@ -99,11 +99,8 @@ def order_identity(receipt):
     return {"created": at, "items": sorted(pairs)}
 
 
-def plan(orders, book, stock, include_preparing=False, issued=None):
-    components, order, revisions = catalog(book)
-    quantities(stock, components, 0, "stock")
-    demand, portions = Counter(), Counter()
-    selected, seen = [], set()
+def active_orders(orders, include_preparing, issued):
+    seen = set()
     for receipt in orders:
         mapping(receipt, "order")
         order_id = integer(receipt["id"], 1, "order ID")
@@ -119,10 +116,15 @@ def plan(orders, book, stock, include_preparing=False, issued=None):
             if issued[order_id] != order_identity(receipt):
                 raise ValueError(f"Order {order_id} differs from its issue receipt")
             continue
-        ingredients, servings = dish_demand(receipt, book, revisions)
-        selected.append(order_id)
-        demand.update(ingredients)
-        portions.update(servings)
+        yield receipt
+
+
+def portion_rows(portions):
+    return [{"dish": dish, "from_ms": at, "quantity": qty}
+            for (dish, at), qty in sorted(portions.items())]
+
+
+def production_lines(components, order, stock, demand):
     lines = []
     for key in order:
         if not demand[key]:
@@ -139,9 +141,45 @@ def plan(orders, book, stock, include_preparing=False, issued=None):
                       "action": "prepare" if inputs else "purchase", "needed": demand[key],
                       "available": available, "batch_size": size, "batches": batches,
                       "remaining": available + batches * size - demand[key]})
-    return {"included_orders": sorted(selected),
-            "portions": [{"dish": dish, "from_ms": at, "quantity": qty} for (dish, at), qty in sorted(portions.items())],
-            "lines": lines}
+    return lines
+
+
+def plan(orders, book, stock, include_preparing=False, issued=None):
+    components, order, revisions = catalog(book)
+    quantities(stock, components, 0, "stock")
+    demand, portions = Counter(), Counter()
+    selected = []
+    for receipt in active_orders(orders, include_preparing, issued):
+        ingredients, servings = dish_demand(receipt, book, revisions)
+        selected.append(receipt["id"])
+        demand.update(ingredients)
+        portions.update(servings)
+    return {"included_orders": sorted(selected), "portions": portion_rows(portions),
+            "lines": production_lines(components, order, stock, demand)}
+
+
+def readiness(orders, book, stock, include_preparing=False, issued=None):
+    """Simulate whole-order prep from current stock, in creation and ID order."""
+    components, order, revisions = catalog(book)
+    quantities(stock, components, 0, "stock")
+    pending = sorted(active_orders(orders, include_preparing, issued),
+                     key=lambda receipt: (integer(receipt["created"], 0, "order creation timestamp"), receipt["id"]))
+    available = dict(stock)
+    result = []
+    for receipt in pending:
+        demand, portions = dish_demand(receipt, book, revisions)
+        lines = production_lines(components, order, available, demand)
+        missing = [{"component": line["component"], "name": line["name"], "unit": line["unit"],
+                    "quantity": line["needed"] - line["available"]}
+                   for line in lines if line["action"] == "purchase" and line["batches"]]
+        batches = []
+        if not missing:
+            available.update((line["component"], line["remaining"]) for line in lines)
+            batches = [{"component": line["component"], "name": line["name"], "batches": line["batches"]}
+                       for line in reversed(lines) if line["action"] == "prepare" and line["batches"]]
+        result.append({"order_id": receipt["id"], "portions": portion_rows(portions),
+                       "status": "shortage" if missing else "ready", "missing": missing, "prep": batches})
+    return {"orders": result, "remaining_stock": dict(sorted(available.items()))}
 
 
 def snapshot(path):
@@ -160,6 +198,7 @@ if __name__ == "__main__":
     inventory.add_argument("--stock", type=Path)
     inventory.add_argument("--ledger", type=Path, help="Read balances and skip previously issued orders")
     parser.add_argument("--include-preparing", action="store_true")
+    parser.add_argument("--readiness", action="store_true", help="Show which whole orders fit current stock before buying ingredients")
     args = parser.parse_args()
     def read(path):
         return json.loads(path.read_text(encoding="utf-8"))
@@ -171,7 +210,8 @@ if __name__ == "__main__":
             stock, issued = inventory_snapshot(args.ledger, book)
         else:
             stock, issued = read(args.stock), {}
-        result = plan(orders, book, stock, args.include_preparing, issued)
+        report = readiness if args.readiness else plan
+        result = report(orders, book, stock, args.include_preparing, issued)
         print(json.dumps(result, ensure_ascii=False, indent=2))
     except (OSError, sqlite3.Error, TypeError, ValueError, KeyError) as error:
         parser.exit(2, f"{error}\n")

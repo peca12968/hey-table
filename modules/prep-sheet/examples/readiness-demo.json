@@ -1,0 +1,152 @@
+{
+  "format": "prep-sheet.readiness-demo.v1",
+  "arrival": {
+    "component": "chicken",
+    "name": "雞肉",
+    "unit": "g",
+    "quantity": 280
+  },
+  "before": {
+    "orders": [
+      {
+        "order_id": 1,
+        "portions": [
+          {
+            "dish": "katsudon",
+            "from_ms": 0,
+            "quantity": 2
+          }
+        ],
+        "status": "ready",
+        "missing": [],
+        "prep": [
+          {
+            "component": "dashi",
+            "name": "高湯",
+            "batches": 1
+          },
+          {
+            "component": "sauce",
+            "name": "丼飯醬",
+            "batches": 1
+          },
+          {
+            "component": "rice",
+            "name": "白飯",
+            "batches": 1
+          }
+        ]
+      },
+      {
+        "order_id": 2,
+        "portions": [
+          {
+            "dish": "katsudon",
+            "from_ms": 1000,
+            "quantity": 1
+          },
+          {
+            "dish": "oyakodon",
+            "from_ms": 0,
+            "quantity": 2
+          }
+        ],
+        "status": "shortage",
+        "missing": [
+          {
+            "component": "chicken",
+            "name": "雞肉",
+            "unit": "g",
+            "quantity": 280
+          }
+        ],
+        "prep": []
+      }
+    ],
+    "remaining_stock": {
+      "cutlet": 1,
+      "dashi": 95,
+      "eggs": 3,
+      "grain": 180,
+      "kombu": 0,
+      "rice": 260,
+      "sauce": 50,
+      "soy": 10,
+      "water": 1620
+    }
+  },
+  "after": {
+    "orders": [
+      {
+        "order_id": 1,
+        "portions": [
+          {
+            "dish": "katsudon",
+            "from_ms": 0,
+            "quantity": 2
+          }
+        ],
+        "status": "ready",
+        "missing": [],
+        "prep": [
+          {
+            "component": "dashi",
+            "name": "高湯",
+            "batches": 1
+          },
+          {
+            "component": "sauce",
+            "name": "丼飯醬",
+            "batches": 1
+          },
+          {
+            "component": "rice",
+            "name": "白飯",
+            "batches": 1
+          }
+        ]
+      },
+      {
+        "order_id": 2,
+        "portions": [
+          {
+            "dish": "katsudon",
+            "from_ms": 1000,
+            "quantity": 1
+          },
+          {
+            "dish": "oyakodon",
+            "from_ms": 0,
+            "quantity": 2
+          }
+        ],
+        "status": "ready",
+        "missing": [],
+        "prep": [
+          {
+            "component": "sauce",
+            "name": "丼飯醬",
+            "batches": 1
+          },
+          {
+            "component": "rice",
+            "name": "白飯",
+            "batches": 1
+          }
+        ]
+      }
+    ],
+    "remaining_stock": {
+      "chicken": 0,
+      "cutlet": 0,
+      "dashi": 0,
+      "eggs": 0,
+      "grain": 0,
+      "kombu": 0,
+      "rice": 100,
+      "sauce": 40,
+      "soy": 0,
+      "water": 1380
+    }
+  }
+}

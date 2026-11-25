@@ -10,7 +10,8 @@ import sys
 from tempfile import TemporaryDirectory
 import unittest
 
-from prep import plan, snapshot
+from prep import order_identity, plan, readiness, snapshot
+from readiness_demo import demo
 
 ROOT = Path(__file__).resolve().parent
 
@@ -71,6 +72,56 @@ class PrepTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             plan(orders, book, {"rice": -1})
 
+    def test_readiness_is_fifo_and_a_short_order_cannot_consume_stock(self):
+        book = {"components": {
+            "rice": {"unit": "g", "yield": 2, "inputs": {"grain": 1}},
+            "grain": {"unit": "g", "pack": 10},
+            "sauce": {"unit": "ml", "pack": 10},
+        }, "dishes": {
+            "with-sauce": [{"from_ms": 0, "uses": {"rice": 1, "sauce": 1}}],
+            "plain": [{"from_ms": 0, "uses": {"rice": 1}}],
+        }}
+        all_orders = [{"id": order_id, "status": "pending", "created": at,
+                       "items": [{"id": dish, "qty": 1}]}
+                      for order_id, at, dish in [(30, 1, "plain"), (21, 0, "plain"),
+                                                 (20, 0, "with-sauce"), (22, 0, "plain")]]
+        stock = {"grain": 1}
+        result = readiness(all_orders, book, stock)
+        rows = result["orders"]
+        self.assertEqual([(row["order_id"], row["status"]) for row in rows],
+                         [(20, "shortage"), (21, "ready"), (22, "ready"), (30, "shortage")])
+        self.assertEqual(rows[0]["missing"], [{"component": "sauce", "name": "sauce", "unit": "ml", "quantity": 1}])
+        self.assertEqual(rows[0]["prep"], [])
+        self.assertEqual(rows[1]["prep"], [{"component": "rice", "name": "rice", "batches": 1}])
+        self.assertEqual(rows[2]["prep"], [])
+        self.assertEqual(rows[3]["missing"], [{"component": "grain", "name": "grain", "unit": "g", "quantity": 1}])
+        self.assertEqual(result["remaining_stock"], {"grain": 0, "rice": 0})
+        self.assertEqual(stock, {"grain": 1})
+
+    def test_readiness_preserves_recipe_revisions_and_validates_prior_issue_receipts(self):
+        book, stock, orders = map(example, ["recipes", "stock", "orders"])
+        issued = {orders[0]["id"]: order_identity(orders[0])}
+        result = readiness(orders, book, stock, issued=issued)
+        self.assertEqual([line["order_id"] for line in result["orders"]], [2])
+        self.assertEqual(result["orders"][0]["portions"], [
+            {"dish": "katsudon", "from_ms": 1000, "quantity": 1},
+            {"dish": "oyakodon", "from_ms": 0, "quantity": 2},
+        ])
+        with self.assertRaisesRegex(ValueError, "differs from its issue receipt"):
+            readiness([dict(orders[0], created=1000)], book, stock, issued=issued)
+        all_pending = readiness(orders, book, stock, include_preparing=True)
+        self.assertEqual([line["order_id"] for line in all_pending["orders"]], [1, 2, 3])
+
+    def test_readiness_demo_can_be_regenerated_from_committed_orders(self):
+        initial = demo()
+        self.assertEqual(initial, example("readiness-demo"))
+        before = initial["before"]["orders"]
+        after = initial["after"]["orders"]
+        self.assertEqual([row["status"] for row in before], ["ready", "shortage"])
+        self.assertEqual(before[1]["missing"], [initial["arrival"]])
+        self.assertEqual([row["status"] for row in after], ["ready", "ready"])
+        self.assertEqual(before[0], after[0])
+
     def test_sqlite_snapshot_and_cli_match_kitchen_json(self):
         orders = example("orders")
         with TemporaryDirectory() as temp:
@@ -94,3 +145,5 @@ class PrepTests(unittest.TestCase):
             import os
             result = subprocess.check_output(cli, env={**os.environ, **env})
             self.assertEqual(json.loads(result), plan(orders, example("recipes"), example("stock")))
+            forecast = subprocess.check_output([*cli, "--readiness"], env={**os.environ, **env})
+            self.assertEqual(json.loads(forecast), readiness(orders, example("recipes"), example("stock")))

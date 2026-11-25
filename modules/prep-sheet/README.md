@@ -68,6 +68,12 @@ python lunch.py --orders examples/orders.json --recipes examples/recipes.json --
 
 已有確定會到貨的採購單時，在 `--ledger kitchen.db` 後加上 `--incoming LUNCH`。可重複指定不同單號。報告的 `incoming` 列出這些單的未收數量，新採購會扣掉這些數量。廚房備料仍依可立即使用的庫存計算。驗收入庫與待收數會從同一份 SQLite 快照讀取。
 
+## 試算現有庫存能做哪些單
+
+`python prep.py --orders orders.json --recipes examples/recipes.json --ledger kitchen.db --readiness` 會依成立時間逐單試算，同時成立的餐單依餐號排序。可改用 `--stock stock.json` 提供盤點數量。每張可做餐單會附上實際的備料順序，例如先做高湯，再做用到高湯的丼飯醬。餘量可供後續餐單使用。缺料會列出該單輪到時所缺的原料與數量。
+
+暫緩的餐單會保留所有模擬庫存給後續餐單。輸出的餘額是試算結果，領料與備料仍依店家的帳本操作。帳本模式會核對並跳過已登記領料的餐單。加上 `--include-preparing` 可納入製作中餐單。執行 `python readiness_demo.py` 可重建補入 280 g 雞肉前後的報告。[試玩現有庫存備料（私人預覽）](https://peca-github-demo.peca12968.chatgpt.site/?demo=prepReadiness#demos) · [範例資料](examples/readiness-demo.json)
+
 ## 核對採購單與分批到貨
 
 例如午餐採購單列了兩包醬油，每包 25 ml。上午先到一包，驗收後帳上增加 25 ml，下午仍可查到另一包待收。初次開單時會在既有的庫存帳加上採購單明細，保留原有收據與餘額。

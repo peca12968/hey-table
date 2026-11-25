@@ -8,7 +8,7 @@ from threading import Barrier
 import unittest
 
 from ledger import connect, initialize, inventory_snapshot, post
-from prep import plan
+from prep import plan, readiness
 
 
 class KitchenLedgerTests(unittest.TestCase):
@@ -69,6 +69,23 @@ class KitchenLedgerTests(unittest.TestCase):
         with self.assertRaises(FileExistsError):
             initialize(self.path)
         self.assertEqual(self.state()[0], {"grain": 0, "water": 0, "rice": 400})
+
+    def test_readiness_is_read_only_and_its_batch_order_can_be_executed(self):
+        self.post("receive", "morning", {"grain": 180, "water": 380, "soy": 10, "kombu": 2, "cutlet": 1, "eggs": 1})
+        order = {"id": 5, "status": "pending", "created": 1000, "items": [{"id": "katsudon", "qty": 1}]}
+        stock, issued = self.state()
+        report = readiness([order], self.book, stock, issued=issued)
+        self.assertEqual(self.state(), (stock, issued))
+        row = report["orders"][0]
+        self.assertEqual(row["status"], "ready")
+        planned_steps = [line["component"] for line in row["prep"]]
+        self.assertLess(planned_steps.index("dashi"), planned_steps.index("sauce"))
+        for line in row["prep"]:
+            self.post("make", line["component"], {"component": line["component"], "batches": line["batches"]})
+        self.post("issue", "5", order)
+        actual_stock, issued = self.state()
+        self.assertEqual(actual_stock, report["remaining_stock"])
+        self.assertEqual(readiness([order], self.book, actual_stock, issued=issued)["orders"], [])
 
     def test_units_order_identity_and_closed_orders(self):
         self.post("receive", "a", {"tea": 8, "water": 440})

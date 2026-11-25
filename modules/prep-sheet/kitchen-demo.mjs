@@ -79,6 +79,10 @@ try {
   const post=(...args)=>python("ledger.py","--db",ledger,"--recipes",recipes,...args);
   post("init");
   post("receive","opening",delivery);
+  const forecast=()=>python("prep.py","--orders",orders,"--recipes",recipes,"--ledger",ledger,"--readiness");
+  const opening=forecast();
+  assert.deepEqual(opening.orders.map(({order_id,status,prep})=>[order_id,status,prep.map(row=>row.component)]),
+    [[older.id,"ready",["rice"]]]);
   const cooked=post("make","pot-1","rice","1");
   assert.equal(cooked.movements.rice.balance,400);
   const issued=post("issue",orders,String(older.id));
@@ -86,6 +90,7 @@ try {
   assert.deepEqual(issued.movements.rice,{unit:"g",delta:-360,balance:40});
   const outstanding=python("prep.py","--orders",orders,"--recipes",recipes,"--ledger",ledger);
   assert.deepEqual(outstanding.included_orders,[]);
+  assert.deepEqual(forecast(),{orders:[],remaining_stock:opening.remaining_stock});
   assert.equal(post("history").length,3);
   console.log(JSON.stringify({receipts:6,selected:first.included_orders.length,riceGrams:rice.needed,
     riceBatches:rice.batches,afterCancellation:{riceGrams:after.needed,riceBatches:after.batches},
