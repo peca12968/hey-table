@@ -24,11 +24,12 @@ import {pickupWeek} from "./pickup-week.mjs";
 import {cashCorrectionHistory,cashReceiptColumn,collectCash,correctCashReceipt,dailyCashReceipts} from "./cash-receipts.mjs";
 import {cashCloseVersion,cashCloseVersions,saveCashClose} from "./cash-close-versions.mjs";
 import {cashAmount} from "../lib/cash-reconciliation.mjs";
-import {confirmReturnLedger,readReturnReceipt,recordReturnQuote,returnLedgerReport,voidReturnQuote} from "./return-ledger.mjs";
+import {confirmReturnLedger,readReturnLedgerReview,readReturnReceipt,recordReturnQuote,returnLedgerReport,voidReturnQuote} from "./return-ledger.mjs";
 
 const json = (value, status=200) => Response.json(value,{status,headers:{"Cache-Control":"no-store"}});
 const fail = (message,status=400) => json({error:message},status);
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const returnReviewFingerprint = /^[a-f0-9]{64}$/;
 
 import {latestState,payableForKitchen,paymentApi,checkKitchenPayment,refundDemoPayment} from "./payment-api.mjs";
 import {demoRefundDetail,demoRefundReport,demoRefundReceiptColumn,demoRefundReceiptText} from "./demo-refund-report.mjs";
@@ -952,14 +953,25 @@ export async function api(request, env) {
     const dates=url.searchParams.getAll("date"),[date]=dates;
     const range=dates.length===1?businessDayRange(date):null;
     if(!range)return fail("請選擇有效的試算交班日期。");
+    const versions=url.searchParams.getAll("review");
+    if(versions.length){
+      const [fingerprint]=versions;
+      if(versions.length!==1||!returnReviewFingerprint.test(fingerprint))return fail("請選擇有效的交班確認版本。");
+      const saved=await readReturnLedgerReview(db,date,fingerprint,range);
+      if(saved.kind==="found")return json(saved.report);
+      if(saved.kind==="unverified")return fail("無法完整核對這份歷史報表，請使用原始匯出檔。",409);
+      return fail("這個日期找不到該份交班確認。",404);
+    }
     return json(await returnLedgerReport(db,date,range,Date.now()));
   }
   if(path==="/api/kitchen/return-ledger-report"&&method==="POST"){
     const {date,fingerprint,note}=input;
     const range=typeof date==="string"?businessDayRange(date):null,now=Date.now();
-    if(!range||range[0]>now||typeof fingerprint!=="string"||!/^[a-f0-9]{64}$/.test(fingerprint)||
+    const {capturedAt=now}=input;
+    if(!range||!Number.isSafeInteger(capturedAt)||capturedAt<range[0]||capturedAt>now||
+      typeof fingerprint!=="string"||!returnReviewFingerprint.test(fingerprint)||
       typeof note!=="string"||note.trim().length>160)return fail("請確認交班日期與報表，備註最多 160 字。");
-    const saved=await confirmReturnLedger(db,{date,fingerprint,note:note.trim()},range,now);
+    const saved=await confirmReturnLedger(db,{date,fingerprint,note:note.trim(),capturedAt},range,now);
     return saved?json(saved):fail("報表或確認紀錄已更新，請重新擷取後核對。",409);
   }
   if (path === "/api/kitchen/return-receipt" && method === "GET") {

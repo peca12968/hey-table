@@ -256,7 +256,23 @@ export const returnLedgerReviews = sqliteTable("return_ledger_reviews", {
   netAmount: integer("net_amount").notNull(),
   reviewedAt: integer("reviewed_at").notNull(),
   note: text("note").notNull(),
+  capturedAt: integer("captured_at"),
 }, t => [
   primaryKey({columns:[t.date,t.fingerprint]}),
   check("return_review_event_count",sql`${t.eventCount} >= 0`),
+]);
+
+export const returnLedgerReviewEvents = sqliteTable("return_ledger_review_events", {
+  date: text("date").notNull(),
+  fingerprint: text("fingerprint").notNull(),
+  orderId: integer("order_id").notNull(),
+  revision: integer("revision").notNull(),
+  recordedAt: integer("recorded_at").notNull(),
+  kind: text("kind",{enum:["recorded","voided"]}).notNull(),
+  amount: integer("amount").notNull(),
+  targetRevision: integer("target_revision"),
+  reason: text("reason"),
+}, t => [
+  primaryKey({columns:[t.date,t.fingerprint,t.orderId,t.revision]}),
+  foreignKey({columns:[t.date,t.fingerprint],foreignColumns:[returnLedgerReviews.date,returnLedgerReviews.fingerprint]}),
 ]);

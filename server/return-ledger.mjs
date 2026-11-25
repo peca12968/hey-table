@@ -48,17 +48,18 @@ export async function readReturnReceipt(db,id,includeLedger){
 
 const reviewColumns="fingerprint,event_count,net_amount,reviewed_at,note";
 const reviewLimit=10;
+const eventOrder="recordedAt DESC,orderId DESC,revision DESC";
+const dailyEventRows=`SELECT order_id AS orderId,revision,recorded_at AS recordedAt,
+    'recorded' AS kind,json_extract(quote,'$.amount') AS amount,NULL AS targetRevision,NULL AS reason
+  FROM return_quote_entries WHERE recorded_at>=? AND recorded_at<? AND recorded_at<=?
+  UNION ALL
+  SELECT order_id,revision,recorded_at,'voided',restored_amount,target_revision,reason
+  FROM return_quote_voids WHERE recorded_at>=? AND recorded_at<? AND recorded_at<=?`;
 const reviewFromRow=({fingerprint,event_count,net_amount,reviewed_at,note})=>
   ({fingerprint,eventCount:event_count,netAmount:net_amount,reviewedAt:reviewed_at,note});
 
 function dailyEvents(db,[start,end],capturedAt){
-  return db.prepare(`SELECT order_id AS orderId,revision,recorded_at AS recordedAt,
-      'recorded' AS kind,json_extract(quote,'$.amount') AS amount,NULL AS targetRevision,NULL AS reason
-    FROM return_quote_entries WHERE recorded_at>=? AND recorded_at<? AND recorded_at<=?
-    UNION ALL
-    SELECT order_id,revision,recorded_at,'voided',restored_amount,target_revision,reason
-    FROM return_quote_voids WHERE recorded_at>=? AND recorded_at<? AND recorded_at<=?
-    ORDER BY recordedAt DESC,orderId DESC,revision DESC`)
+  return db.prepare(dailyEventRows+" ORDER BY "+eventOrder)
     .bind(start,end,capturedAt,start,end,capturedAt);
 }
 
@@ -87,22 +88,51 @@ export async function returnLedgerReport(db,date,range,capturedAt){
   return {...await reportFromRows(events.results,date,capturedAt),reviews:reviews.results.map(reviewFromRow)};
 }
 
-export async function confirmReturnLedger(db,{date,fingerprint,note},range,now){
+export async function readReturnLedgerReview(db,date,fingerprint,range){
+  const [found,snapshot]=await db.batch([
+    db.prepare(`SELECT ${reviewColumns},captured_at FROM return_ledger_reviews WHERE date=? AND fingerprint=?`)
+      .bind(date,fingerprint),
+    db.prepare(`SELECT order_id AS orderId,revision,recorded_at AS recordedAt,kind,amount,
+      target_revision AS targetRevision,reason FROM return_ledger_review_events
+      WHERE date=? AND fingerprint=? ORDER BY ${eventOrder}`).bind(date,fingerprint),
+  ]);
+  const saved=found.results[0];
+  if(!saved)return {kind:"missing"};
+  const captureSource=saved.captured_at==null?"reconstructed":"saved";
+  const capturedAt=saved.captured_at??saved.reviewed_at;
+  let events=snapshot.results;
+  if(captureSource==="reconstructed"&&saved.event_count>0){
+    const {results}=await dailyEvents(db,range,capturedAt).all();
+    // Older confirmations carry a fingerprint but no snapshot of the event rows.
+    events=results.slice(-saved.event_count);
+  }
+  const report=await reportFromRows(events,date,capturedAt),review=reviewFromRow(saved);
+  if(report.fingerprint!==fingerprint||events.length!==review.eventCount||report.totals.netAmount!==review.netAmount)
+    return {kind:"unverified"};
+  return {kind:"found",report:{...report,review,captureSource}};
+}
+
+export async function confirmReturnLedger(db,{date,fingerprint,note,capturedAt},range,now){
   const byFingerprint=db.prepare(`SELECT ${reviewColumns} FROM return_ledger_reviews WHERE date=? AND fingerprint=?`)
     .bind(date,fingerprint);
   const replay=row=>row?.note===note?reviewFromRow(row):null;
   const already=await byFingerprint.first();
   if(already)return replay(already);
-  const {results}=await dailyEvents(db,range,now).all();
-  const report=await reportFromRows(results,date,now);
+  const {results}=await dailyEvents(db,range,capturedAt).all();
+  const report=await reportFromRows(results,date,capturedAt);
   if(report.fingerprint!==fingerprint)return null;
   const {recordedCount,voidedCount,netAmount}=report.totals;
   // Both event tables only grow. Day-wide counts detect inserts even if their timestamp equals or follows the capture.
-  const [,saved]=await db.batch([db.prepare(`INSERT INTO return_ledger_reviews(date,fingerprint,event_count,net_amount,reviewed_at,note)
-    SELECT ?,?,?,?,?,?
+  const [, ,saved]=await db.batch([db.prepare(`INSERT INTO return_ledger_reviews(date,fingerprint,event_count,net_amount,reviewed_at,note,captured_at)
+    SELECT ?,?,?,?,?,?,?
     WHERE (SELECT COUNT(*) FROM return_quote_entries WHERE recorded_at>=? AND recorded_at<?)=?
       AND (SELECT COUNT(*) FROM return_quote_voids WHERE recorded_at>=? AND recorded_at<?)=?
-    ON CONFLICT DO NOTHING`).bind(date,fingerprint,results.length,netAmount,now,note,...range,recordedCount,...range,voidedCount),
+    ON CONFLICT DO NOTHING`).bind(date,fingerprint,results.length,netAmount,now,note,capturedAt,...range,recordedCount,...range,voidedCount),
+    // changes() refers to the preceding INSERT in the same D1 transaction. A replay never rewrites archived rows.
+    db.prepare(`INSERT INTO return_ledger_review_events
+      (date,fingerprint,order_id,revision,recorded_at,kind,amount,target_revision,reason)
+      SELECT ?,?,orderId,revision,recordedAt,kind,amount,targetRevision,reason FROM (${dailyEventRows})
+      WHERE changes()=1`).bind(date,fingerprint,...range,capturedAt,...range,capturedAt),
     byFingerprint,
   ]);
   return replay(saved.results[0]);

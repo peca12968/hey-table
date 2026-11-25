@@ -874,7 +874,7 @@ test("return ledger report groups cross-day corrections by Taipei event date and
   assert.deepEqual(tomorrow.events,[{orderId:3,revision:1,recordedAt:end,kind:"recorded",amount:45}]);
 });
 
-test("return ledger confirmation persists exact activity and rejects a change before the transaction",async t=>{
+test("return ledger confirmation archives exact activity and rolls back incomplete or stale writes",async t=>{
   const db=database(),date="2026-11-25";
   t.after(()=>db.sqlite.close());
   const start=Date.parse(date+"T00:00:00+08:00");
@@ -883,9 +883,12 @@ test("return ledger confirmation persists exact activity and rejects a change be
   const runtime={DB:db,STAFF_KEY:"staff"},url="https://order.example/api/kitchen/return-ledger-report";
   const headers={Authorization:"Bearer staff","Content-Type":"application/json"};
   const get=async(day=date)=>(await api(new Request(url+"?date="+day,{headers}),runtime)).json();
-  const confirm=(fingerprint,note,day=date,access=headers)=>api(new Request(url,{
-    method:"POST",headers:access,body:JSON.stringify({fingerprint,note,date:day}),
+  const confirm=(fingerprint,note,day=date,access=headers,capturedAt)=>api(new Request(url,{
+    method:"POST",headers:access,body:JSON.stringify({fingerprint,note,date:day,capturedAt}),
   }),runtime);
+  const archive=(fingerprint,day=date,access=headers)=>api(new Request(url+"?"+new URLSearchParams({
+    date:day,review:fingerprint,
+  }),{headers:access}),runtime);
   db.sqlite.prepare(`INSERT INTO orders(id,token,mode,note,items,total,created) VALUES (1,?,'pickup','','[]',200,?)`)
     .run(crypto.randomUUID(),start-1);
   const insert=db.sqlite.prepare(`INSERT INTO return_quote_entries (order_id,revision,operation_id,selection,quote,recorded_at)
@@ -898,7 +901,13 @@ test("return ledger confirmation persists exact activity and rejects a change be
   for(const [fingerprint,note,day] of [["invalid","",date],[original.fingerprint,"a".repeat(161),date],
     [original.fingerprint,"",{toString:1}],[original.fingerprint,"","2026-11-26"]])
     assert.equal((await confirm(fingerprint,note,day)).status,400);
-  const competing=await Promise.all([confirm(original.fingerprint,"  晚班核對  "),confirm(original.fingerprint,"另一份備註")]);
+  for(const capture of [null,start-1,now+1])assert.equal((await confirm(original.fingerprint,"",date,headers,capture)).status,400);
+  assert.equal((await archive(original.fingerprint,date,{})).status,403);
+  assert.equal((await archive("unverified")).status,400);
+  assert.equal((await archive(original.fingerprint)).status,404);
+  now++;
+  const competing=await Promise.all(["  晚班核對  ","另一份備註"].map(note=>
+    confirm(original.fingerprint,note,date,headers,original.capturedAt)));
   assert.deepEqual(competing.map(response=>response.status).sort(),[200,409]);
   const first=await competing.find(response=>response.ok).json();
   assert.equal(first.reviewedAt,now);
@@ -909,7 +918,7 @@ test("return ledger confirmation persists exact activity and rejects a change be
   assert.equal((await get()).fingerprint,original.fingerprint);
   assert.deepEqual(await (await confirm(original.fingerprint,first.note)).json(),first);
 
-  append(2,0);
+  append(2,0,original.capturedAt);
   const newer=await get();
   assert.notEqual(newer.fingerprint,original.fingerprint);
   assert.deepEqual(newer.reviews,[first]);
@@ -925,6 +934,12 @@ test("return ledger confirmation persists exact activity and rejects a change be
   now++;
   const latest=await get();
   assert.equal(latest.events.length,3);
+  db.sqlite.exec(`CREATE TEMP TRIGGER block_archived_review_events BEFORE INSERT ON return_ledger_review_events
+    BEGIN SELECT RAISE(ABORT,'simulated archive write failure'); END;`);
+  await assert.rejects(confirm(latest.fingerprint,"完成交班"),/simulated archive write failure/);
+  db.sqlite.exec("DROP TRIGGER block_archived_review_events");
+  assert.deepEqual((await get()).reviews,[first]);
+  assert.equal((await archive(latest.fingerprint)).status,404);
   const responses=await Promise.all([confirm(latest.fingerprint,"完成交班"),confirm(latest.fingerprint,"完成交班")]);
   const second=await responses[0].json();
   assert.deepEqual(responses.map(response=>response.status),[200,200]);
@@ -934,6 +949,50 @@ test("return ledger confirmation persists exact activity and rejects a change be
   assert.deepEqual(await (await confirm(original.fingerprint,first.note)).json(),first);
   assert.deepEqual((await get("2026-11-24")).reviews,[]);
   assert.equal(db.sqlite.prepare("SELECT COUNT(*) AS count FROM return_ledger_reviews").get().count,2);
+  assert.equal(db.sqlite.prepare("SELECT COUNT(*) AS count FROM return_ledger_review_events").get().count,4);
+  const response=await archive(original.fingerprint);
+  assert.equal(response.headers.get("Cache-Control"),"no-store");
+  const {reviews,...snapshot}=original;
+  assert.deepEqual(reviews,[]);
+  assert.deepEqual(await response.json(),{...snapshot,review:first,captureSource:"saved"});
+  assert.equal((await archive(original.fingerprint,"2026-11-24")).status,404);
+});
+
+test("older return-ledger confirmations only reopen when the original event fingerprint is provable",async t=>{
+  const date="2026-11-25",now=Date.parse(date+"T12:00:00+08:00");
+  const oldEvents=[[1,1,now-100,"recorded",75,null,null]];
+  const hash=async rows=>Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256",
+    new TextEncoder().encode(JSON.stringify(["hey-table.return-ledger-review.v1",date,rows])))),
+  byte=>byte.toString(16).padStart(2,"0")).join("");
+  const fingerprint=await hash(oldEvents),emptyFingerprint=await hash([]);
+  const db=database((tag,sqlite)=>{
+    if(tag!=="0043_return_ledger_review_events")return;
+    sqlite.prepare("INSERT INTO orders(id,token,mode,note,items,total,created) VALUES (1,?,'pickup','','[]',200,?)")
+      .run(crypto.randomUUID(),now-1000);
+    sqlite.prepare(`INSERT INTO return_quote_entries(order_id,revision,operation_id,selection,quote,recorded_at)
+      VALUES (1,1,?,'[]','{"amount":75}',?)`).run(crypto.randomUUID(),now-100);
+    const review=sqlite.prepare(`INSERT INTO return_ledger_reviews(date,fingerprint,event_count,net_amount,reviewed_at,note)
+      VALUES (?,?,?,?,?,?)`);
+    review.run(date,emptyFingerprint,0,0,now-200,"空班");
+    review.run(date,fingerprint,1,75,now,"舊班備註");
+  });
+  t.after(()=>db.sqlite.close());
+  const runtime={DB:db,STAFF_KEY:"staff"};
+  const archive=value=>api(new Request("https://order.example/api/kitchen/return-ledger-report?"+
+    new URLSearchParams({date,review:value}),{headers:{Authorization:"Bearer staff"}}),runtime);
+  const insert=db.sqlite.prepare(`INSERT INTO return_quote_entries(order_id,revision,operation_id,selection,quote,recorded_at)
+    VALUES (1,?,?,'[]','{"amount":25}',?)`);
+  insert.run(2,crypto.randomUUID(),now+1);
+  const archived=await (await archive(fingerprint)).json();
+  assert.equal(archived.captureSource,"reconstructed");
+  assert.equal(archived.capturedAt,now);
+  assert.equal(archived.review.note,"舊班備註");
+  assert.deepEqual(archived.events,[{orderId:1,revision:1,recordedAt:now-100,kind:"recorded",amount:75}]);
+  assert.deepEqual((await (await archive(emptyFingerprint)).json()).events,[]);
+  insert.run(3,crypto.randomUUID(),now-110);
+  const unsafe=await archive(fingerprint);
+  assert.equal(unsafe.status,409);
+  assert.match((await unsafe.json()).error,/無法完整核對/);
 });
 
 test("staff can read orders beyond the recent board without exposing checkout references or changing state",async t=>{

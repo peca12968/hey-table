@@ -344,7 +344,9 @@ test("mobile staff confirms one ledger capture and reviews new activity without 
   const refresh=async()=>(await request.get(url,{headers:staff})).json();
   await page.setViewportSize({width:360,height:780});
   await page.addInitScript(()=>sessionStorage.setItem("he-ri-staff","local-test-kitchen"));
+  const initial=page.waitForResponse(response=>new URL(response.url()).pathname===api);
   await page.goto("/kitchen/return-ledger?date="+date);
+  const firstCapture=await (await initial).json();
   const review=page.getByRole("region",{name:"交班確認"});
   const note=review.getByRole("textbox",{name:"交班備註（選填）"});
   const confirm=review.getByRole("button",{name:"確認這份報表"});
@@ -394,4 +396,27 @@ test("mobile staff confirms one ledger capture and reviews new activity without 
   await page.emulateMedia({media:"print"});
   await expect(review.getByText("晚班已核對")).toBeVisible();
   await expect(review.getByText("較早的確認紀錄（1 筆）")).toBeHidden();
+  await page.emulateMedia({media:"screen"});
+
+  const earlier=review.getByRole("listitem").filter({hasText:"早班已核對"});
+  await earlier.getByRole("link",{name:"開啟已確認報表"}).click();
+  await expect(page).toHaveURL(/review=[a-f0-9]{64}$/);
+  await expect(page.getByRole("heading",{name:"已確認的退餐試算報表"})).toBeVisible();
+  await expect(review.getByText("早班已核對")).toBeVisible();
+  await expect(review.getByText("晚班已核對")).toHaveCount(0);
+  await expect(confirm).toHaveCount(0);
+  const archive=page.getByRole("region",{name:date+" 試算簿異動"});
+  await expect(archive.getByRole("listitem")).toHaveCount(firstCapture.events.length);
+  const [archiveFile]=await Promise.all([page.waitForEvent("download"),page.getByRole("button",{name:"下載試算交班 JSON"}).click()]);
+  expect(archiveFile.suggestedFilename()).toContain("-confirmed-");
+  const {reviews,...snapshot}=firstCapture;
+  expect(reviews).toEqual([]);
+  expect(JSON.parse(await readFile(await archiveFile.path(),"utf8"))).toEqual({...snapshot,review:first,captureSource:"saved"});
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBe(360);
+  await page.emulateMedia({media:"print"});
+  await expect(review.getByText("早班已核對")).toBeVisible();
+  await expect(page.getByRole("link",{name:"返回當日交班"})).toBeHidden();
+  await page.emulateMedia({media:"screen"});
+  await page.getByRole("link",{name:"返回當日交班"}).click();
+  await expect(review.getByText("晚班已核對")).toBeVisible();
 });
