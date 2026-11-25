@@ -68,11 +68,12 @@ export default function ReadinessReview({snapshot,orders,station,scope,clock}){
       const ledger=stock?.format===procurementFormat?readProcurementSnapshot(stock):null;
       const {orders,excluded}=ledger?unissuedPrepOrders(source.orders,snapshot.orders,ledger.issued,includePreparing):
         {orders:source.orders,excluded:[]};
-      const planner=prepReadinessPlanner(recipes,ledger?.stock??stock,ledger?.incoming);
+      const planner=prepReadinessPlanner(recipes,ledger?.stock??stock);
       if(ledger){
-        for(const {component,name,unit} of planner.components){
-          if(ledger.units.has(component)&&ledger.units.get(component)!==unit)
-            throw new Error(name+" 的帳本單位與食譜不同。");
+        const components=new Map(planner.components.map(row=>[row.component,row]));
+        for(const [component,unit] of ledger.units){
+          if(components.get(component)?.unit!==unit)
+            throw new Error((components.get(component)?.name??component)+" 的帳本單位與食譜不同。");
         }
       }
       const result=planner.forecast(orders,includePreparing);

@@ -8,7 +8,7 @@ import unittest
 from unittest.mock import patch
 
 from ledger import connect, initialize, inventory_snapshot, post, read_inventory, read_json
-from receiving import DELIVERY_DRAFT, accept, accept_draft, cancel, open_order, procurement_snapshot, status
+from receiving import DELIVERY_DRAFT, accept, accept_draft, cancel, open_order, procurement_snapshot, procurement_with_orders, status
 
 
 def vendor(name, *lines):
@@ -161,6 +161,22 @@ class ReceivingTests(unittest.TestCase):
         self.assertEqual(self.stock(), {"soy": 25})
         with closing(connect(self.path, "ro")) as db:
             self.assertEqual(db.execute("SELECT kind FROM receipts").fetchall(), [("purchase_receive",)])
+
+    def test_procurement_details_include_only_outstanding_packs_per_order(self):
+        self.open()
+        self.open("q", {"status": "ok", "orders": [vendor("market", ("S", 25, 1))]})
+        self.receive({"S": 1})
+        self.receive({"S": 1}, order_id="q")
+        cancel(self.path, "p", "market", "cancelled-part", {"L": 1})
+        stock, issued, incoming, orders = procurement_with_orders(self.path, self.book, ["p", "q", "p"])
+        self.assertEqual((stock, issued, incoming), ({"soy": 50}, {}, {"soy": 35}))
+        self.assertEqual(orders, [
+            {"purchase_order": "p", "lines": [
+                {"supplier": "depot", "sku": "S", "component": "soy", "unit": "ml", "pack": 10, "remaining_packs": 1},
+                {"supplier": "market", "sku": "S", "component": "soy", "unit": "ml", "pack": 25, "remaining_packs": 1},
+            ]},
+            {"purchase_order": "q", "lines": []},
+        ])
 
     def test_cancel_and_receive_cannot_both_use_last_outstanding_pack(self):
         self.open(report={"status": "ok", "orders": [vendor("market", ("L", 50, 1))]})

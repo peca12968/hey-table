@@ -87,11 +87,19 @@ def status(db, order_id):
 
 
 def procurement_snapshot(path, book, order_ids):
+    stock, issued, incoming, _ = procurement_with_orders(path, book, order_ids)
+    return stock, issued, incoming
+
+
+def procurement_with_orders(path, book, order_ids):
     incoming = Counter()
+    incoming_orders = []
+    fields = ("supplier", "sku", "component", "unit", "pack", "remaining_packs")
     with closing(connect(path, "ro")) as db:
         db.execute("BEGIN")
         stock, issued = read_inventory(db, book)
         for order_id in dict.fromkeys(order_ids):
+            lines = []
             for line in status(db, order_id)["lines"]:
                 if not line["remaining_packs"]:
                     continue
@@ -100,7 +108,9 @@ def procurement_snapshot(path, book, order_ids):
                 if recipe.get("unit") != line["unit"] or "pack" not in recipe:
                     raise ValueError(f"{order_id}/{component}: purchase order and recipe no longer match")
                 incoming[component] += line["remaining_packs"] * line["pack"]
-    return stock, issued, dict(incoming)
+                lines.append({field: line[field] for field in fields})
+            incoming_orders.append({"purchase_order": order_id, "lines": lines})
+    return stock, issued, dict(incoming), incoming_orders
 
 
 def open_order(path, book, order_id, report):
@@ -264,11 +274,12 @@ def main():
                 result = accept_draft(args.db, book, read_json(args.draft))
             elif args.command == "procurement":
                 purchase_orders = list(dict.fromkeys(args.incoming))
-                stock, issued, incoming = procurement_snapshot(args.db, book, purchase_orders)
+                stock, issued, incoming, incoming_orders = procurement_with_orders(args.db, book, purchase_orders)
                 result = {"format": "prep-sheet.procurement.v1", "stock": stock, "incoming": incoming,
                           "units": {component: book["components"][component]["unit"]
                                     for component in sorted(stock.keys() | incoming.keys())},
                           "purchase_orders": purchase_orders,
+                          "incoming_orders": incoming_orders,
                           "issued": [{"id": key, **identity} for key, identity in sorted(issued.items())]}
             else:
                 result = accept(args.db, book, args.order_id, args.supplier, args.reference, read_json(args.packs))

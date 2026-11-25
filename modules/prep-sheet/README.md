@@ -74,6 +74,8 @@ python ../pantry-freight/purchase.py prep-purchase.json ../pantry-freight/exampl
 python receiving.py --db kitchen.db --recipes examples/recipes.json procurement --incoming LUNCH > procurement.json
 ```
 
+可在「在途採購單明細」展開各張採購單，核對供應商、SKU、包裝與待收包數。勾選或取消計入會更新採購缺口，下載會帶上此次選取的採購單。舊版快照仍可按彙總量試算。
+
 從店家接單台開啟備料單，再下載訂單 JSON。在 `modules/prep-sheet` 執行以下指令，將 `examples/orders.json` 換成下載的檔案，並提供符合實際菜單的食譜與供應商資料。
 
 ```sh

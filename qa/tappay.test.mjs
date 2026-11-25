@@ -14,6 +14,7 @@ import {planSupplyReview,supplyReviewRows} from "../lib/supply-review.mjs";
 import {matchesPrepOrderSource,prepArrivalReportFormat,prepOrderSource,readPrepArrivalReport,
   readPrepReadinessReport} from "../lib/prep-readiness-report.mjs";
 import {forecastPrepReadiness,prepReadinessPlanner} from "../lib/prep-readiness.mjs";
+import {readProcurementSnapshot,summarizeIncomingOrders} from "../lib/prep-procurement.mjs";
 import {quotePantryPurchase} from "../lib/pantry-purchase.mjs";
 import {dishes} from "../lib/menu.mjs";
 import {sqliteD1} from "../scripts/sqlite-d1.mjs";
@@ -691,6 +692,31 @@ test("browser supplier quotes match Python across freight, pack limits, stock an
   const suppliers=[{id:"vendor",shipping:1,free_at:1_000_000}];
   const offers=[{sku:"salt",supplier:"vendor",component:"salt",unit:"g",pack:1,price:1,stock:1_000_000}];
   assert.throws(()=>quotePantryPurchase(large,{currency:"TWD",suppliers,offers}),/試算上限/);
+});
+
+test("procurement detail reconciles each order with the aggregate and retains legacy snapshots",()=>{
+  const first={supplier:"a",sku:"X",component:"soy",unit:"ml",pack:25,remaining_packs:2};
+  const second={...first,supplier:"b",pack:15,remaining_packs:1};
+  const legacy={format:"prep-sheet.procurement.v1",stock:{soy:5},incoming:{soy:65},units:{soy:"ml"},
+    purchase_orders:["P","Q"],issued:[]};
+  assert.equal(readProcurementSnapshot(legacy).incomingOrders,null);
+  const value={...legacy,incoming_orders:[{purchase_order:"P",lines:[first]},{purchase_order:"Q",lines:[second]}]};
+  const parsed=readProcurementSnapshot(value);
+  const all=summarizeIncomingOrders(parsed.incomingOrders);
+  assert.deepEqual(all.incoming,{soy:65});
+  assert.deepEqual([...all.sources.get("soy")],[["P",50],["Q",15]]);
+  assert.deepEqual(summarizeIncomingOrders(parsed.incomingOrders.slice(1)).incoming,{soy:15});
+  for(const mutate of [
+    item=>{item.incoming.soy++;},
+    item=>{item.incoming_orders.reverse();},
+    item=>{item.incoming_orders[0].lines.push(first);},
+    item=>{item.incoming_orders[1].lines[0].unit="L";},
+    item=>{item.incoming_orders[1].lines[0].pack=Number.MAX_SAFE_INTEGER;},
+  ]){
+    const changed=structuredClone(value);
+    mutate(changed);
+    assert.throws(()=>readProcurementSnapshot(changed),/無法讀取採購快照/);
+  }
 });
 
 test("purchase input counts shared batches once across orders that individually lack stock",()=>{

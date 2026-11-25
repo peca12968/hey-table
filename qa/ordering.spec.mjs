@@ -1489,7 +1489,7 @@ test("kitchen procurement uses in-transit stock for purchases and checks issued 
     "import json, subprocess, sys, tempfile",
     "from pathlib import Path",
     "from ledger import initialize, post, read_json",
-    "from receiving import accept, open_order",
+    "from receiving import accept, cancel, open_order",
     'recipe = Path("examples/recipes.json")',
     "book = read_json(recipe)",
     "with tempfile.TemporaryDirectory() as folder:",
@@ -1498,18 +1498,25 @@ test("kitchen procurement uses in-transit stock for purchases and checks issued 
     '    post(db,book,"receive","opening",{"beans":100,"tea":4,"water":220})',
     '    line = dict(sku="bean-crate",component="beans",unit="g",pack=200,packs=2)',
     '    open_order(db,book,"WEEK",dict(status="ok",orders=[dict(supplier="market",lines=[line])]))',
+    '    open_order(db,book,"RESERVE",dict(status="ok",orders=[dict(supplier="spare",lines=[dict(line,sku="small-crate",pack=50,packs=1)])]))',
+    '    open_order(db,book,"DONE",dict(status="ok",orders=[dict(supplier="market",lines=[dict(line,packs=1)])]))',
+    '    cancel(db,"DONE","market","cancelled",{"bean-crate":1})',
     '    accept(db,book,"WEEK","market","first",{"bean-crate":1})',
     "    issued = json.load(sys.stdin)",
     '    post(db,book,"issue",str(issued["id"]),issued)',
     '    command = [sys.executable,"-B","receiving.py","--db",str(db),"--recipes",str(recipe)]',
-    '    print(subprocess.check_output(command+["procurement","--incoming","WEEK","--incoming","WEEK"],encoding="utf-8"))',
+    '    print(subprocess.check_output(command+["procurement","--incoming","WEEK","--incoming","RESERVE","--incoming","DONE","--incoming","WEEK"],encoding="utf-8"))',
   ].join("\n");
   const exported=spawnSync("python",["-B","-c",script],{
     cwd,input:JSON.stringify(issued),encoding:"utf8",env:{...process.env,PYTHONUTF8:"1"},
   });
   expect(exported.status,exported.stderr).toBe(0);
-  expect(JSON.parse(exported.stdout)).toMatchObject({format:"prep-sheet.procurement.v1",purchase_orders:["WEEK"],
-    stock:{beans:100},incoming:{beans:200},units:{beans:"g"},
+  expect(JSON.parse(exported.stdout)).toMatchObject({format:"prep-sheet.procurement.v1",purchase_orders:["WEEK","RESERVE","DONE"],
+    stock:{beans:100},incoming:{beans:250},units:{beans:"g"},incoming_orders:[
+      {purchase_order:"WEEK",lines:[{sku:"bean-crate",pack:200,remaining_packs:1}]},
+      {purchase_order:"RESERVE",lines:[{sku:"small-crate",pack:50,remaining_packs:1}]},
+      {purchase_order:"DONE",lines:[]},
+    ],
     issued:[{id:issued.id,created:issued.created,items:[["edamame",2],["sencha",1]]}]});
   await page.setViewportSize({width:360,height:780});
   let changed=false;
@@ -1528,6 +1535,7 @@ test("kitchen procurement uses in-transit stock for purchases and checks issued 
   const stock=review.getByLabel("庫存 JSON",{exact:true});
   const incorrectUnit=JSON.parse(exported.stdout);
   incorrectUnit.units.beans="kg";
+  incorrectUnit.incoming_orders.forEach(order=>order.lines.forEach(line=>{line.unit="kg";}));
   await stock.setInputFiles({name:"procurement.json",mimeType:"application/json",buffer:Buffer.from(JSON.stringify(incorrectUnit))});
   await review.getByRole("button",{name:"開始試算"}).click();
   await expect(review.getByRole("alert")).toContainText("毛豆 的帳本單位與食譜不同");
@@ -1538,6 +1546,22 @@ test("kitchen procurement uses in-transit stock for purchases and checks issued 
   await expect(readiness.getByText("缺 毛豆 300 g")).toBeVisible();
   const purchase=review.getByRole("region",{name:"採購缺口"});
   await purchase.getByRole("button",{name:"計算採購缺口"}).click();
+  await expect(purchase.getByText("毛豆 · 缺 50 g")).toBeVisible();
+  await expect(purchase.getByText("在途來源 WEEK 200 g、RESERVE 50 g")).toBeVisible();
+  await expect(purchase.getByRole("checkbox",{name:"計入 DONE",exact:true})).toBeDisabled();
+  await purchase.getByText("RESERVE 未到貨品項",{exact:true}).click();
+  await expect(purchase.getByText("毛豆 · spare · small-crate · 1 包 × 50 g")).toBeVisible();
+  const suppliers=purchase.getByRole("region",{name:"供應商比價"});
+  const catalog={currency:"TWD",suppliers:[{id:"discount",shipping:0}],offers:[
+    {supplier:"discount",sku:"edamame-pack",component:"beans",unit:"g",pack:50,stock:2,price:10},
+  ]};
+  await suppliers.getByLabel("供應商目錄 JSON",{exact:true}).setInputFiles({name:"suppliers.json",
+    mimeType:"application/json",buffer:Buffer.from(JSON.stringify(catalog))});
+  await suppliers.getByRole("button",{name:"開始供應商比價"}).click();
+  const quote=suppliers.getByRole("region",{name:"供應商比價結果"});
+  await expect(quote.getByRole("status")).toContainText("總價 NT$10");
+  await purchase.getByRole("checkbox",{name:"計入 RESERVE",exact:true}).uncheck();
+  await expect(quote).toHaveCount(0);
   await expect(purchase.getByText("計入在途採購單 WEEK")).toBeVisible();
   await expect(purchase.getByText("毛豆 · 缺 100 g")).toBeVisible();
   await expect(purchase.getByText("總需求 400 g · 盤點庫存 100 g · 在途 200 g")).toBeVisible();
@@ -1551,6 +1575,10 @@ test("kitchen procurement uses in-transit stock for purchases and checks issued 
     {encoding:"utf8",env:{...process.env,PYTHONUTF8:"1"}});
   expect(purchased.status,purchased.stderr).toBe(3);
   expect(JSON.parse(purchased.stdout).shortages[0].uncovered).toBe(100);
+  await purchase.getByRole("checkbox",{name:"計入 WEEK",exact:true}).uncheck();
+  await expect(purchase.getByText("本次以現貨計算採購。")).toBeVisible();
+  await expect(purchase.getByText("毛豆 · 缺 300 g")).toBeVisible();
+  await expect(readiness.getByText("缺 毛豆 300 g")).toBeVisible();
   const arrivals=review.getByRole("region",{name:"預計到貨試算"});
   await arrivals.getByRole("combobox",{name:"食材 1",exact:true}).selectOption("beans");
   await arrivals.getByLabel("數量 1 (g)",{exact:true}).fill("300");
