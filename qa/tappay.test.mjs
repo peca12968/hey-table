@@ -721,6 +721,17 @@ test("D1 reserves supply by pickup day and moves that supply atomically across d
   assert.deepEqual(shortage.shortages,["sencha"]);
   assert.ok(shortage.slots.some(slot=>slot.remaining>=2));
   assert.deepEqual(await (await call(staffOptions+dayAfter,staff)).json(),shortage);
+  const paused="2026-11-28",alternative="2026-11-29",closed=start(alternative,"11:00");
+  assert.equal((await write("/api/kitchen/pickup-day",{date:paused,accepting:false,revision:0},staff,"PATCH")).status,200);
+  assert.equal((await write("/api/kitchen/pickup-slots",{date:alternative,start:closed,capacity:1,revision:0},staff,"PATCH")).status,200);
+  const suggest=day=>options+day+"&suggest=1";
+  const suggested=await call(suggest(tomorrow),guest);
+  assert.equal(suggested.headers.get("Cache-Control"),"no-store");
+  assert.deepEqual(await suggested.json(),{suggestion:{date:alternative,start:closed+900_000}});
+  assert.deepEqual(await (await call(staffOptions+tomorrow+"&suggest=1",staff)).json(),
+    {suggestion:{date:alternative,start:closed+900_000}});
+  assert.deepEqual(await (await call(suggest(last),guest)).json(),{suggestion:null});
+  assert.equal((await call(suggest(tomorrow))).status,404);
   const move=(from,to,revision)=>write("/api/kitchen/pickup-reschedule",{id:accepted.id,from,to,revision},staff,"PATCH");
   const receipt=async()=>(await (await call("/api/ticket?progress=1",guest)).json());
   const sameDay=start(tomorrow,"12:30"),nextDay=start(dayAfter);

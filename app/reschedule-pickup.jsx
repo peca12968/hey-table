@@ -3,22 +3,25 @@ import {pickupBookingDays,pickupWindow} from "../lib/pickup-slots.mjs";
 import {businessDate} from "../lib/business-day.mjs";
 import {PickupDate,usePickupSlotAvailability} from "./pickup-slots";
 import {useBusinessToday} from "./use-business-today.mjs";
+import {request} from "./shared";
 
 export default function ReschedulePickup({order,canReschedule=order.canReschedulePickup,disabled=false,submit,onChange,ticket,staffKey}){
   const [review,setReview]=useState(null);
   const [busy,setBusy]=useState(false),[failure,setFailure]=useState("");
+  const [finding,setFinding]=useState(false),[suggestionStatus,setSuggestionStatus]=useState("");
   const inFlight=useRef(false);
   const revision=order.pickupRevision??order.pickupChanges?.length??0;
   const latest=order.latestPickupChange??order.pickupChanges?.at(-1);
-  const locked=busy||disabled;
+  const locked=busy||disabled||finding;
   const confirmed=review?.uncertain&&revision===review.revision+1&&latest?.from===review.from&&latest.to===review.to;
   const opened=!!review&&!confirmed;
   const day=review?.day??"";
   const today=useBusinessToday();
   const date=day||today;
   const crossesDay=date&&businessDate(order.pickupSlot)!==date;
-  const requestUrl=crossesDay?(ticket?"/api/ticket/reschedule-options?"+new URLSearchParams({date}):
-    "/api/kitchen/pickup-reschedule-options?"+new URLSearchParams({date,id:String(order.id)})):undefined;
+  const optionsUrl=ticket?"/api/ticket/reschedule-options?"+new URLSearchParams({date}):
+    "/api/kitchen/pickup-reschedule-options?"+new URLSearchParams({date,id:String(order.id)});
+  const requestUrl=crossesDay?optionsUrl:undefined;
   const validReview=opened&&canReschedule&&review.from===order.pickupSlot&&review.revision===revision;
   const count=order.items.reduce((sum,item)=>sum+item.qty,0);
   const {slots,snapshot,error,selectedBlocked,refresh}=usePickupSlotAvailability({
@@ -28,15 +31,29 @@ export default function ReschedulePickup({order,canReschedule=order.canReschedul
   const canConfirm=validReview&&review.to!==null&&(review.uncertain||!selectedBlocked);
 
   function showChoices(){
-    setFailure("");refresh();
+    setFailure("");setSuggestionStatus("");refresh();
     const orderDay=businessDate(order.pickupSlot);
     const [, ...future]=pickupBookingDays(Date.now());
     setReview({from:order.pickupSlot,to:null,day:future.includes(orderDay)?orderDay:"",revision,uncertain:false});
   }
+  async function findNext(){
+    if(locked||!validReview)return;
+    setFinding(true);setSuggestionStatus("");setFailure("");
+    try{
+      const headers=ticket?{"X-Ticket":ticket}:staffKey?{Authorization:"Bearer "+staffKey}:{};
+      const {suggestion}=await request(optionsUrl+"&suggest=1",{headers,signal:AbortSignal.timeout(10_000)});
+      if(suggestion){
+        refresh();
+        setReview(current=>current===review?{...current,day:suggestion.date,to:suggestion.start}:current);
+        setSuggestionStatus(`已選擇 ${suggestion.date} ${pickupWindow(suggestion.start)}，請核對時段後確認。`);
+      }else setSuggestionStatus("接下來的可預約日期沒有符合這張餐單的時段。");
+    }catch{setSuggestionStatus("暫時無法尋找可用日期，請再試一次。");}
+    finally{setFinding(false);}
+  }
   async function confirm(event){
     event.preventDefault();
-    if(inFlight.current||disabled||!canConfirm)return;
-    inFlight.current=true;setBusy(true);setFailure("");
+    if(inFlight.current||locked||!canConfirm)return;
+    inFlight.current=true;setBusy(true);setFailure("");setSuggestionStatus("");
     const {from,to,revision}=review;
     try{
       await submit({from,to,revision},AbortSignal.timeout(15_000));
@@ -56,13 +73,15 @@ export default function ReschedulePickup({order,canReschedule=order.canReschedul
 
   const alternatives=slots.filter(slot=>slot.start!==review.from&&slot.remaining>=count);
   const shortages=snapshot?.shortages??[];
+  const canSuggest=validReview&&!review.uncertain&&snapshot&&
+    (snapshot.paused||shortages.length>0||alternatives.length===0||selectedBlocked);
   return <form className="pickupSlots pickupReschedule" aria-label="更改取餐時段" onSubmit={confirm}>
     {validReview?<>
       <PickupDate label="新的取餐日期" value={day} disabled={locked||review.uncertain} onChange={value=>{
-        setFailure("");refresh();setReview({...review,day:value,to:null});
+        setFailure("");setSuggestionStatus("");refresh();setReview({...review,day:value,to:null});
       }}/>
       <label>新的取餐時段<select value={review.to??""} disabled={locked||review.uncertain} onChange={event=>{
-        setFailure("");setReview({...review,to:event.target.value===""?null:Number(event.target.value)});
+        setFailure("");setSuggestionStatus("");setReview({...review,to:event.target.value===""?null:Number(event.target.value)});
       }}>
         <option value="">選擇時段</option>
         {review.to!==null&&!alternatives.some(slot=>slot.start===review.to)&&<option value={review.to}>{pickupWindow(review.to)}</option>}
@@ -77,11 +96,15 @@ export default function ReschedulePickup({order,canReschedule=order.canReschedul
         {error?<p role="status">{error}</p>:!snapshot&&<p role="status">正在讀取可選時段…</p>}
       </>}
     </>:<p role="status">餐單已更新，請核對最新預約時段。</p>}
+    {validReview&&suggestionStatus&&<p role="status">{suggestionStatus}</p>}
     {failure&&<p className="error" role="alert">{failure}</p>}
     <div className="actions">
       {validReview&&<button className="primary" disabled={locked||!canConfirm}>{busy?"改期確認中…":review.uncertain?"重試同一次改期":"確認改期"}</button>}
       {validReview&&!review.uncertain&&(error||snapshot)&&<button type="button" className="outline" disabled={locked} onClick={refresh}>
         {error?"重讀時段":"重新檢查時段"}
+      </button>}
+      {(canSuggest||finding)&&<button type="button" className="outline" disabled={locked} onClick={findNext}>
+        {finding?"正在尋找…":"找下一個可用日期"}
       </button>}
       {!validReview&&canReschedule&&<button type="button" className="outline" disabled={locked} onClick={showChoices}>重新選擇時段</button>}
       <button type="button" className="outline" disabled={locked} onClick={()=>setReview(null)}>關閉改期</button>

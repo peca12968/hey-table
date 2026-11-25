@@ -97,6 +97,17 @@ test("guest and staff see cross-day dish shortages before confirmation and can c
       await expect(browser.locator(".pickupSlotTime time")).toHaveAttribute("datetime",new Date(start).toISOString());
       expect(await browser.evaluate(()=>document.documentElement.scrollWidth)).toBe(360);
     }
+    const another=businessDate(today+3*86_400_000),suggested=Date.parse(another+"T11:00:00+08:00");
+    for(const browser of [page,operator]){
+      await browser.getByRole("button",{name:"找下一個可用日期"}).click();
+      await expect(browser.getByLabel("新的取餐日期")).toHaveValue(another);
+      await expect(browser.getByLabel("新的取餐時段")).toHaveValue(String(suggested));
+      await expect(browser.getByRole("button",{name:"確認改期"})).toBeEnabled();
+      await expect(browser.locator(".pickupSlotTime time")).toHaveAttribute("datetime",new Date(start).toISOString());
+      await browser.getByLabel("新的取餐日期").selectOption(later);
+      await browser.getByLabel("新的取餐時段").selectOption(String(target));
+      await expect(browser.getByRole("button",{name:"確認改期"})).toBeDisabled();
+    }
     const current=await setting();
     expect((await set(current.used+2,current.revision)).ok()).toBe(true);
     for(const browser of [page,operator]){

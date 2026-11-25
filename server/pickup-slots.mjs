@@ -1,11 +1,14 @@
-import {businessDate} from "../lib/business-day.mjs";
-import {bookablePickupSlots,pickupPrepLead,pickupSlotCapacity,pickupSlotDuration,pickupSlotsForDay} from "../lib/pickup-slots.mjs";
+import {businessDate,businessDayRange} from "../lib/business-day.mjs";
+import {bookablePickupSlots,pickupBookingDays,pickupPrepLead,pickupSlotCapacity,pickupSlotDuration,pickupSlotsForDay} from "../lib/pickup-slots.mjs";
+import {exceededOrderPortions} from "./daily-limits.mjs";
 import {expirePaymentHolds} from "./payment-holds.mjs";
 
 const portions="SUM(json_extract(line.value,'$.qty'))";
 const activeSlots="FROM orders JOIN json_each(orders.items) AS line WHERE status<>'cancelled'";
-export const usedAtPickupSlot=`COALESCE((SELECT ${portions} ${activeSlots} AND pickup_slot=?),0)`;
-export const capacityAtPickupSlot=`COALESCE((SELECT capacity FROM pickup_slot_limits WHERE start=?),${pickupSlotCapacity})`;
+const usedAt=start=>`COALESCE((SELECT ${portions} ${activeSlots} AND pickup_slot=${start}),0)`;
+const capacityAt=start=>`COALESCE((SELECT capacity FROM pickup_slot_limits WHERE start=${start}),${pickupSlotCapacity})`;
+export const usedAtPickupSlot=usedAt("?");
+export const capacityAtPickupSlot=capacityAt("?");
 export const pickupDayPaused="EXISTS (SELECT 1 FROM pickup_day_intake WHERE date=? AND accepting=0)";
 export const orderPortions=`(SELECT ${portions} FROM json_each(orders.items) AS line)`;
 export const pickupChanges=row=>JSON.parse(row.pickup_changes??"[]");
@@ -44,6 +47,26 @@ export async function pickupSlotOptions(db,now,day,orderLookup){
 
 export async function pickupSlots(db,now,day){
   return (await pickupSlotOptions(db,now,day)).availability;
+}
+
+export async function suggestPickupSlot(db,now,after,orderKey,ref){
+  const days=pickupBookingDays(now).filter(day=>day>after);
+  const searches=days.map(day=>{
+    const range=businessDayRange(day);
+    return db.prepare(`SELECT (
+      SELECT candidate.value FROM json_each(?) AS candidate
+      WHERE candidate.value<>orders.pickup_slot
+      AND ${usedAt("candidate.value")}+${orderPortions}<=${capacityAt("candidate.value")}
+      ORDER BY candidate.value LIMIT 1
+    ) AS start FROM orders WHERE ${orderKey}=? AND mode='pickup' AND status='pending' AND pickup_slot>?
+    AND NOT ${pickupDayPaused}
+    AND ((pickup_slot>=? AND pickup_slot<?) OR NOT EXISTS (${exceededOrderPortions}))`)
+      .bind(JSON.stringify(bookablePickupSlots(now,day)),ref,now+pickupPrepLead,day,...range,day,...range);
+  });
+  const [,found,...options]=await db.batch([expirePaymentHolds(db,now),
+    db.prepare(`SELECT mode,status,pickup_slot FROM orders WHERE ${orderKey}=?`).bind(ref),...searches]);
+  const index=options.findIndex(result=>result.results[0]?.start!=null);
+  return {order:found.results[0],suggestion:index===-1?null:{date:days[index],start:options[index].results[0].start}};
 }
 
 export async function pickupSlotLimits(db,date,now){
