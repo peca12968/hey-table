@@ -372,6 +372,24 @@ test("staff can refund a ready demo pickup and the mobile receipt withdraws its 
     expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBe(360);
     const after=await (await request.get("/api/ticket?progress=1",{headers:ticket})).json();
     expect(after.statusHistory.filter(event=>event.actor==="demo_refund")).toHaveLength(1);
+    const {refundedAt}=after.demoRefund;
+    expect(refundedAt).toBe(after.statusHistory.at(-1).at);
+    const payment=page.getByRole("region",{name:"線上付款"});
+    await expect(payment.locator("time")).toHaveAttribute("datetime",new Date(refundedAt).toISOString());
+    const endpoint="/api/ticket/refund-receipt";
+    await page.route(url=>url.pathname===endpoint,route=>route.fulfill({status:503,body:"暫時中斷"}),{times:1});
+    const download=payment.getByRole("button",{name:"下載示範退款收據"});
+    await download.click();
+    await expect(payment.getByRole("alert")).toHaveText("暫時無法下載退款收據，請再試一次。");
+    const [file]=await Promise.all([page.waitForEvent("download"),download.click()]);
+    expect(file.suggestedFilename()).toBe("hey-table-refund-"+String(id).padStart(4,"0")+".txt");
+    const text=await readFile(await file.path(),"utf8");
+    expect(text).toContain("示範付款，無實際退款。");
+    expect(text).toContain("支付方式 LINE Pay");
+    expect(text).toContain("退款金額 NT$ 45");
+    expect(text).toContain(await payment.locator("time").textContent());
+    expect(text).not.toContain(token);
+    expect(text).not.toContain(attempt.ref);
   }finally{await operator.close();}
 });
 

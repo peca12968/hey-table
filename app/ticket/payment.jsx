@@ -4,6 +4,7 @@ import {request} from "../shared";
 import {methods,paymentStates,environmentLabel} from "../../lib/payments.mjs";
 import {save} from "../../lib/order-storage.mjs";
 import {paymentPrime,openPaymentUrl} from "../../lib/tappay-client.mjs";
+import DemoRefund from "./demo-refund";
 
 let sdk;
 function loadSdk() {
@@ -92,7 +93,7 @@ export default function Payment({order,token,onChange}){
   const name=methods[order.paymentMethod];
   return <section className="payBox" aria-label="線上付款"><h2>{name}</h2>
     <p>{environmentLabel(order.paymentEnv)} · <strong role="status">{paymentStates[state]}</strong></p>
-    {demo&&state==="refunded"&&<p>已模擬全額退款 NT$ {order.total}。</p>}
+    {demo&&state==="refunded"&&<DemoRefund order={order} token={token}/>}
     {canStart&&<form onSubmit={e=>{e.preventDefault();act("start");}}>
       {!demo&&<><label>付款人姓名<input required maxLength={40} autoComplete="name" value={buyer.name} onChange={e=>setBuyer({...buyer,name:e.target.value})}/></label>
         <label>手機號碼<input required type="tel" pattern="[+]?[0-9]{8,15}" autoComplete="tel" value={buyer.phone_number} onChange={e=>setBuyer({...buyer,phone_number:e.target.value})}/></label>

@@ -522,6 +522,35 @@ test("refund handoff uses Taiwan transaction dates, preserves the first refund t
     {orderId:yesterday,mode:"pickup",paymentMethod:"px_pay_plus",amount:90,previousStatus:"completed",refundedAt:boundary-1,source:"recorded"},
   ]);
   assert.deepEqual((await (await call(endpoint+"?date=2026-11-26")).json()).refunds,[]);
+
+  const tokenFor=id=>db.sqlite.prepare("SELECT token FROM orders WHERE id=?").get(id).token;
+  const privateReceipt="/api/ticket/refund-receipt";
+  const readRefund=(path,id)=>call(path,{"X-Ticket":tokenFor(id)});
+  assert.equal((await call(privateReceipt,{})).status,404);
+  assert.equal((await call(privateReceipt,{"X-Ticket":crypto.randomUUID()})).status,404);
+  assert.equal((await readRefund(privateReceipt,purchase())).status,409);
+  const production=purchase();
+  db.sqlite.prepare("UPDATE orders SET payment_env='production' WHERE id=?").run(production);
+  db.sqlite.prepare("UPDATE payment_attempts SET state='refunded' WHERE order_id=?").run(production);
+  assert.equal((await readRefund(privateReceipt,production)).status,409);
+  assert.ok(!Object.hasOwn(await (await readRefund("/api/ticket",production)).json(),"demoRefund"));
+  for(const [id,amount,at] of [[today,90,boundary],[cancelledId,45,boundary],[undatedId,45,null]]){
+    const ticket=await (await readRefund("/api/ticket?progress=1",id)).json();
+    assert.deepEqual(ticket.demoRefund,{amount,refundedAt:at});
+    const file=await readRefund(privateReceipt,id);
+    assert.equal(file.status,200);
+    assert.equal(file.headers.get("Content-Type"),"text/plain; charset=utf-8");
+    assert.equal(file.headers.get("Cache-Control"),"private, no-store");
+    assert.equal(file.headers.get("X-Content-Type-Options"),"nosniff");
+    const padded=String(id).padStart(4,"0");
+    assert.equal(file.headers.get("Content-Disposition"),`attachment; filename="hey-table-refund-${padded}.txt"`);
+    const contents=await file.text();
+    assert.ok(contents.includes("取餐號碼 "+padded));
+    assert.ok(contents.includes(`退款金額 NT$ ${amount}`));
+    assert.ok(contents.includes(id===today?"支付方式 全支付":"支付方式 LINE Pay"));
+    assert.equal(contents.includes("退款時間（台灣） 未記錄"),at===null);
+    assert.ok(!contents.includes(tokenFor(id))&&!contents.includes("不應匯出的備註")&&!contents.includes("older-"));
+  }
 });
 
 test("pickup display omits refunded orders even if their kitchen status is still ready",async t=>{

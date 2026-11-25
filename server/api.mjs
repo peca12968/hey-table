@@ -23,7 +23,7 @@ const fail = (message,status=400) => json({error:message},status);
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 import {latestState,payableForKitchen,paymentApi,checkKitchenPayment,refundDemoPayment} from "./payment-api.mjs";
-import {demoRefundReport} from "./demo-refund-report.mjs";
+import {demoRefundReport,demoRefundReceiptColumn,demoRefundReceiptText} from "./demo-refund-report.mjs";
 import {settings} from "./tappay.mjs";
 import {methods} from "../lib/payments.mjs";
 import {estimate} from "@peca12968/pickup-window";
@@ -33,6 +33,7 @@ const timingRows = "SELECT revision,config FROM kitchen_timing ORDER BY revision
 const fromTimingRow = row => ({revision:row?.revision??0, kitchen:activeKitchen(row ? JSON.parse(row.config) : null)});
 const orderColumns = `SELECT orders.*, ${latestState} AS payment_state, ${cashReceiptColumn} AS cash_receipt`;
 const selectOrders = orderColumns+" FROM orders";
+const ticketWithRefund=`${orderColumns},${demoRefundReceiptColumn} FROM orders WHERE token=?`;
 const kitchenPayableAt=`, CASE WHEN orders.status='pending' AND orders.payment_method<>'cash'
   THEN (SELECT kitchen_payable_at FROM payment_attempts WHERE order_id=orders.id ORDER BY id DESC LIMIT 1) END AS kitchen_payable_at`;
 const intakeRows = "SELECT mode,accepting,revision FROM order_intake";
@@ -485,10 +486,20 @@ export async function api(request, env) {
     return new Response(file,{headers:{"Content-Type":"text/calendar; charset=utf-8","Cache-Control":"private, no-store",
       "Content-Disposition":`attachment; filename="hey-table-pickup-${numberOf(order.id)}.ics"`,"X-Content-Type-Options":"nosniff"}});
   }
+  if(path==="/api/ticket/refund-receipt"&&method==="GET"){
+    const token=request.headers.get("X-Ticket");
+    if(!uuid.test(token))return fail("找不到訂單",404);
+    const row=await db.prepare(`SELECT id,payment_method,${demoRefundReceiptColumn} FROM orders WHERE token=?`).bind(token).first();
+    if(!row)return fail("找不到訂單",404);
+    if(!row.demo_refund_receipt)return fail("這張餐單目前沒有示範退款收據。",409);
+    const file=demoRefundReceiptText({id:row.id,paymentMethod:row.payment_method},JSON.parse(row.demo_refund_receipt));
+    return new Response("\uFEFF"+file,{headers:{"Content-Type":"text/plain; charset=utf-8","Cache-Control":"private, no-store",
+      "Content-Disposition":`attachment; filename="hey-table-refund-${numberOf(row.id)}.txt"`,"X-Content-Type-Options":"nosniff"}});
+  }
   if (path === "/api/ticket" && method === "GET") {
     const token = request.headers.get("X-Ticket");
     if (!uuid.test(token)) return fail("找不到訂單",404);
-    const lookup=db.prepare(selectOrders+" WHERE token=?").bind(token);
+    const lookup=db.prepare(ticketWithRefund).bind(token);
     const now=Date.now();
     const expiry=expirePaymentHolds(db,now,token);
     const withTiming=url.searchParams.get("timing")==="1";
@@ -512,6 +523,7 @@ export async function api(request, env) {
     }
     if (!row) return fail("找不到訂單",404);
     const saved = receipt(row);
+    if(row.demo_refund_receipt)saved.demoRefund=JSON.parse(row.demo_refund_receipt);
     if (url.searchParams.get("progress") === "1") {
       saved.statusHistory = statusHistory(row);
       if(row.payment_due_at!==null)saved.paymentDueAt=row.payment_due_at;
