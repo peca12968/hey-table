@@ -48,6 +48,8 @@ export async function readReturnReceipt(db,id,includeLedger){
 
 const reviewColumns="fingerprint,event_count,net_amount,reviewed_at,note";
 const reviewLimit=10;
+const byReviewDate="ORDER BY event_count DESC,reviewed_at DESC,fingerprint DESC";
+const reviewBoundary="SELECT event_count,reviewed_at,fingerprint FROM return_ledger_reviews WHERE date=? AND fingerprint=?";
 const eventOrder="recordedAt DESC,orderId DESC,revision DESC";
 const dailyEventRows=`SELECT order_id AS orderId,revision,recorded_at AS recordedAt,
     'recorded' AS kind,json_extract(quote,'$.amount') AS amount,NULL AS targetRevision,NULL AS reason
@@ -82,10 +84,29 @@ async function reportFromRows(results,date,capturedAt){
   return {format:"hey-table.return-ledger-report.v1",date,timeZone:"Asia/Taipei",capturedAt,totals,events,fingerprint};
 }
 
+function dailyReviews(db,date,limit,before){
+  const older=before?" AND (event_count,reviewed_at,fingerprint)<("+reviewBoundary+")":"";
+  return db.prepare(`SELECT ${reviewColumns} FROM return_ledger_reviews WHERE date=?${older} ${byReviewDate} LIMIT ?`)
+    .bind(date,...(before?[date,before]:[]),limit);
+}
+
 export async function returnLedgerReport(db,date,range,capturedAt){
-  const [events,reviews]=await db.batch([dailyEvents(db,range,capturedAt),db.prepare(`SELECT ${reviewColumns}
-    FROM return_ledger_reviews WHERE date=? ORDER BY event_count DESC,reviewed_at DESC,fingerprint LIMIT ?`).bind(date,reviewLimit)]);
+  const [events,reviews]=await db.batch([dailyEvents(db,range,capturedAt),dailyReviews(db,date,reviewLimit)]);
   return {...await reportFromRows(events.results,date,capturedAt),reviews:reviews.results.map(reviewFromRow)};
+}
+
+export async function returnLedgerReviewHistory(db,date,before){
+  const query=dailyReviews(db,date,reviewLimit+1,before);
+  let rows;
+  if(before){
+    const [boundary,page]=await db.batch([db.prepare(reviewBoundary).bind(date,before),query]);
+    if(!boundary.results.length)return null;
+    rows=page.results;
+  }else{
+    rows=(await query.all()).results;
+  }
+  const reviews=rows.slice(0,reviewLimit).map(reviewFromRow);
+  return {date,reviews,nextBefore:rows.length>reviewLimit?reviews.at(-1).fingerprint:null};
 }
 
 export async function readReturnLedgerReview(db,date,fingerprint,range){

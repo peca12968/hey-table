@@ -420,3 +420,53 @@ test("mobile staff confirms one ledger capture and reviews new activity without 
   await page.getByRole("link",{name:"返回當日交班"}).click();
   await expect(review.getByText("晚班已核對")).toBeVisible();
 });
+
+test("mobile staff can reopen an older handoff and return to the same history page after a new confirmation",async({page,request})=>{
+  const api="/api/kitchen/return-ledger-report";
+  async function confirmReview(number){
+    const {ticket}=await place(request);
+    const recorded=await request.post(endpoint,{headers:staff,data:{id:ticket.id,revision:0,amount:45,
+      operationId:randomUUID(),items:[{id:"sencha",qty:1}]}});
+    expect(recorded.status()).toBe(200);
+    const date=businessDate((await recorded.json()).recordedAt);
+    const report=await (await request.get(api+"?date="+date,{headers:staff})).json();
+    const confirmation=await request.post(api,{headers:staff,data:{date,fingerprint:report.fingerprint,
+      capturedAt:report.capturedAt,note:"交班版本 "+number}});
+    expect(confirmation.status()).toBe(200);
+    return {date,...await confirmation.json()};
+  }
+  const seeded=[];
+  for(let number=1;number<=12;number++)seeded.push(await confirmReview(number));
+  const {date}=seeded[0];
+  await page.setViewportSize({width:360,height:780});
+  await page.addInitScript(()=>sessionStorage.setItem("he-ri-staff","local-test-kitchen"));
+  await page.goto("/kitchen/return-ledger?date="+date);
+  await page.getByRole("link",{name:"查看完整確認紀錄"}).click();
+  await expect(page.getByRole("heading",{name:"退餐交班確認紀錄"})).toBeVisible();
+  const history=page.getByRole("region",{name:date+" 交班確認"});
+  const entries=history.getByRole("listitem");
+  await expect(entries).toHaveCount(10);
+  await expect(entries.first()).toContainText("交班版本 12");
+  await expect(entries.last().getByText("交班版本 3",{exact:true})).toBeVisible();
+  const more=page.getByRole("link",{name:"查看更早的確認"});
+  const secondPage="/kitchen/return-ledger?"+new URLSearchParams({date,history:"1",before:seeded[2].fingerprint});
+  await expect(more).toHaveAttribute("href",secondPage);
+  await confirmReview(13);
+  await more.click();
+  await expect(page).toHaveURL(url=>url.pathname+url.search===secondPage);
+  await expect(entries.first().getByText("交班版本 2",{exact:true})).toBeVisible();
+  await expect(history.getByText("交班版本 13",{exact:true})).toHaveCount(0);
+  await expect(history.getByText("交班版本 3",{exact:true})).toHaveCount(0);
+  await expect(more).toHaveCount(0);
+  const earliest=entries.filter({has:page.getByText("交班版本 1",{exact:true})});
+  await earliest.getByRole("link",{name:"開啟已確認報表"}).click();
+  await expect(page.getByRole("heading",{name:"已確認的退餐試算報表"})).toBeVisible();
+  await expect(page.getByRole("region",{name:"交班確認",exact:true}).getByText("交班版本 1",{exact:true})).toBeVisible();
+  const back=page.getByRole("link",{name:"返回確認紀錄"});
+  await expect(back).toHaveAttribute("href",secondPage);
+  await back.click();
+  await expect(entries.first().getByText("交班版本 2",{exact:true})).toBeVisible();
+  await page.getByRole("link",{name:"返回最新確認"}).click();
+  await expect(entries.first().getByText("交班版本 13",{exact:true})).toBeVisible();
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBe(360);
+});

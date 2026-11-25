@@ -14,6 +14,8 @@
 .returnReviewForm textarea { width: 100%; min-width: 0; resize: vertical; }
 .returnReviewForm button { justify-self: start; min-height: 40px; }
 .returnReview details { margin-top: .7rem; }
+.returnHistoryLink { margin-left: .75rem; }
+.returnReviewPages { margin-top: .8rem; }
 @media print {
   .dailyOperations .returnReviewForm { display: none; }
   .returnReview { break-inside: avoid; }

@@ -1,0 +1,1 @@
+CREATE INDEX `return_ledger_reviews_by_day` ON `return_ledger_reviews` (`date`,`event_count`,`reviewed_at`,`fingerprint`);

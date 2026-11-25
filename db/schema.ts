@@ -260,6 +260,7 @@ export const returnLedgerReviews = sqliteTable("return_ledger_reviews", {
 }, t => [
   primaryKey({columns:[t.date,t.fingerprint]}),
   check("return_review_event_count",sql`${t.eventCount} >= 0`),
+  index("return_ledger_reviews_by_day").on(t.date,t.eventCount,t.reviewedAt,t.fingerprint),
 ]);
 
 export const returnLedgerReviewEvents = sqliteTable("return_ledger_review_events", {

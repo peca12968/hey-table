@@ -24,7 +24,8 @@ import {pickupWeek} from "./pickup-week.mjs";
 import {cashCorrectionHistory,cashReceiptColumn,collectCash,correctCashReceipt,dailyCashReceipts} from "./cash-receipts.mjs";
 import {cashCloseVersion,cashCloseVersions,saveCashClose} from "./cash-close-versions.mjs";
 import {cashAmount} from "../lib/cash-reconciliation.mjs";
-import {confirmReturnLedger,readReturnLedgerReview,readReturnReceipt,recordReturnQuote,returnLedgerReport,voidReturnQuote} from "./return-ledger.mjs";
+import {confirmReturnLedger,readReturnLedgerReview,readReturnReceipt,recordReturnQuote,returnLedgerReport,returnLedgerReviewHistory,
+  voidReturnQuote} from "./return-ledger.mjs";
 
 const json = (value, status=200) => Response.json(value,{status,headers:{"Cache-Control":"no-store"}});
 const fail = (message,status=400) => json({error:message},status);
@@ -948,6 +949,14 @@ export async function api(request, env) {
       return json(await pickupRoster(db,date,[start,start+1],capturedAt));
     }
     return json(await pickupRoster(db,date,range,capturedAt));
+  }
+  if(path==="/api/kitchen/return-ledger-review-history"&&method==="GET"){
+    const dates=url.searchParams.getAll("date"),befores=url.searchParams.getAll("before");
+    const [date]=dates,[before]=befores;
+    if(dates.length!==1||!businessDayRange(date))return fail("請選擇有效的試算交班日期。");
+    if(befores.length>1||(befores.length===1&&!returnReviewFingerprint.test(before)))return fail("請使用有效的交班確認翻頁連結。");
+    const page=await returnLedgerReviewHistory(db,date,before);
+    return page?json(page):fail("這個日期找不到交班確認的翻頁位置。",404);
   }
   if(path==="/api/kitchen/return-ledger-report"&&method==="GET"){
     const dates=url.searchParams.getAll("date"),[date]=dates;

@@ -996,6 +996,53 @@ test("older return-ledger confirmations only reopen when the original event fing
   assert.match((await unsafe.json()).error,/無法完整核對/);
 });
 
+test("return review history pages by a stable date-scoped boundary across newer writes and tied counts",async t=>{
+  const db=database();
+  t.after(()=>db.sqlite.close());
+  const date="2026-11-25",otherDate="2026-11-24",stamp=Date.parse(date+"T12:00:00+08:00");
+  const runtime={DB:db,STAFF_KEY:"staff"};
+  const url="https://order.example/api/kitchen/return-ledger-review-history?";
+  const staff={Authorization:"Bearer staff"};
+  const read=(query,headers=staff)=>api(new Request(url+query,{headers}),runtime);
+  const insert=db.sqlite.prepare(`INSERT INTO return_ledger_reviews(date,fingerprint,event_count,net_amount,reviewed_at,note)
+    VALUES (?,?,?,?,?,?)`);
+  const key=n=>n.toString(16).padStart(64,"0");
+  for(let n=1;n<=23;n++)insert.run(date,key(n),Math.floor(n/3),n-10,stamp,"確認 "+n);
+  insert.run(otherDate,key(40),999,32,stamp,"隔日獨立");
+  const query=new URLSearchParams({date});
+  const first=await read(query);
+  assert.equal(first.headers.get("Cache-Control"),"no-store");
+  const firstPage=await first.json();
+  assert.equal(firstPage.date,date);
+  assert.deepEqual(firstPage.reviews.map(row=>row.fingerprint),[23,22,21,20,19,18,17,16,15,14].map(key));
+  assert.equal(firstPage.nextBefore,key(14));
+  assert.deepEqual(firstPage.reviews[0],{fingerprint:key(23),eventCount:7,netAmount:13,reviewedAt:stamp,note:"確認 23"});
+  insert.run(date,key(24),8,14,stamp,"同時新增");
+  query.set("before",firstPage.nextBefore);
+  const second=await (await read(query)).json();
+  assert.deepEqual(second.reviews.map(row=>row.fingerprint),[13,12,11,10,9,8,7,6,5,4].map(key));
+  assert.equal(second.nextBefore,key(4));
+  query.set("before",second.nextBefore);
+  const third=await (await read(query)).json();
+  assert.deepEqual(third.reviews.map(row=>row.fingerprint),[3,2,1].map(key));
+  assert.equal(third.nextBefore,null);
+  assert.equal((await (await read("date="+date)).json()).reviews[0].fingerprint,key(24));
+  assert.equal((await (await read("date="+otherDate)).json()).reviews[0].fingerprint,key(40));
+  assert.equal((await read("date="+date+"&before="+key(40))).status,404);
+  assert.equal((await read("date="+date+"&before="+key(999))).status,404);
+  for(const invalid of ["date=2026-02-30","date="+date+"&date="+otherDate,
+    "date="+date+"&before=","date="+date+"&before=invalid","date="+date+"&before="+key(4)+"&before="+key(5)])
+    assert.equal((await read(invalid)).status,400);
+  assert.equal((await read("date="+date,{})).status,403);
+  assert.deepEqual(await (await read("date=2026-11-23")).json(),{date:"2026-11-23",reviews:[],nextBefore:null});
+
+  const plan=db.sqlite.prepare(`EXPLAIN QUERY PLAN SELECT note FROM return_ledger_reviews WHERE date=?
+    AND (event_count,reviewed_at,fingerprint) < (?,?,?) ORDER BY event_count DESC,reviewed_at DESC,fingerprint DESC LIMIT 11`)
+    .all(date,4,stamp,key(14));
+  assert.ok(plan.some(row=>row.detail.includes("return_ledger_reviews_by_day")));
+  assert.ok(plan.every(row=>!row.detail.includes("TEMP B-TREE")));
+});
+
 test("the return handoff demo reproduces the real report, cross-day void and archive from synthetic data",async()=>{
   const checkedIn=JSON.parse(readFileSync(new URL("../examples/return-ledger-demo.json",import.meta.url),"utf8"));
   const sample=await buildReturnLedgerDemo();
