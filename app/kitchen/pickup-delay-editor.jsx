@@ -5,7 +5,7 @@ import {PickupDelayTime,request} from "../shared";
 
 const initial={revision:0,readyAt:null};
 
-export default function PickupDelayEditor({id,record,staffKey,disabled,onChange}){
+export default function PickupDelayEditor({id,record,staffKey,disabled,onChange,showEstimate=true}){
   const [local,setLocal]=useState(null),[draft,setDraft]=useState(null),[pending,setPending]=useState(null);
   const [busy,setBusy]=useState(false),[notice,setNotice]=useState(""),[error,setError]=useState("");
   const server=record??initial, current=local&&local.revision>server.revision?local:server;
@@ -35,7 +35,7 @@ export default function PickupDelayEditor({id,record,staffKey,disabled,onChange}
   return <details className="pickupPassShare pickupDelay">
     <summary><span>通知取餐延誤</span>{current.readyAt!==null&&
       <small className="muted"> · {current.acknowledgedAt!=null?"顧客已確認":"等待顧客確認"}</small>}</summary>
-    {current.readyAt!==null&&<p>目前預計 <PickupDelayTime at={current.readyAt}/> 備妥</p>}
+    {showEstimate&&current.readyAt!==null&&<p>目前預計 <PickupDelayTime at={current.readyAt}/> 備妥</p>}
     <form onSubmit={event=>{
       event.preventDefault();
       if(!disabled&&!busy&&(pending||!stale&&valid))void save(minutes);

@@ -700,6 +700,64 @@ test("a phone downloads private order details and retries a lost download",async
   }finally{await advance("ready","completed");}
 });
 
+test("the pickup delay queue prioritizes the earliest estimates and follows confirmations and withdrawals",async({page,browser,request})=>{
+  const headers={Authorization:"Bearer local-test-kitchen"},orders=[];
+  const advance=(id,from,to)=>request.patch("/api/kitchen/status",{headers,data:{id,from,to}});
+  const customers=await browser.newContext({viewport:{width:360,height:780}});
+  try{
+    for(const minutes of [12,4,2]){
+      const token=randomUUID();
+      const placed=await request.post("/api/orders",{data:{token,mode:"pickup",note:"",items:[{id:"sencha",qty:1}]}});
+      expect(placed.ok()).toBe(true);
+      const {id}=await placed.json();
+      orders.push({token,id,number:"#"+String(id).padStart(4,"0")});
+      expect((await advance(id,"pending","preparing")).ok()).toBe(true);
+      const changed=await request.patch("/api/kitchen/pickup-delay",{headers,
+        data:{id,revision:0,operationId:randomUUID(),minutes}});
+      expect(changed.ok()).toBe(true);
+    }
+    const [later,sooner,confirmed]=orders;
+    expect((await request.post("/api/ticket/pickup-delay/acknowledge",
+      {headers:{"X-Ticket":confirmed.token},data:{revision:1}})).ok()).toBe(true);
+    await page.setViewportSize({width:360,height:780});
+    await page.addInitScript(()=>sessionStorage.setItem("he-ri-staff","local-test-kitchen"));
+    await page.goto("/kitchen");
+    await page.getByRole("button",{name:"待確認延誤 (2)",exact:true}).click();
+    await expect(page).toHaveURL(/\/kitchen\?view=pickup-delay$/);
+    const cards=page.locator(".kGrid .kitchenTicket");
+    await expect(cards.getByRole("heading")).toHaveText([sooner.number,later.number]);
+    await expect(cards.first().getByText("預計備妥時間",{exact:false}).locator("time")).toBeVisible();
+    const search=page.locator(".kitchenFilters").getByLabel("取餐號碼");
+    await search.fill(later.number);
+    await expect(cards.getByRole("heading")).toHaveText([later.number]);
+    await search.clear();
+    await expect(cards.getByRole("heading")).toHaveText([sooner.number,later.number]);
+    await page.reload();
+    await expect(page.getByRole("button",{name:"待確認延誤 (2)",exact:true})).toHaveAttribute("aria-pressed","true");
+    await expect(cards.getByRole("heading")).toHaveText([sooner.number,later.number]);
+    const customer=await customers.newPage();
+    await customer.goto("/ticket#"+sooner.token);
+    await customer.getByRole("button",{name:"已收到通知"}).click();
+    await expect(customer.getByText("已確認收到這版通知。")).toBeVisible();
+    await expect(cards.getByRole("heading")).toHaveText([later.number],{timeout:12000});
+    await expect(page.getByRole("button",{name:"待確認延誤 (1)",exact:true})).toBeVisible();
+    await cards.getByText("通知取餐延誤",{exact:true}).click();
+    await cards.getByRole("button",{name:"撤回通知"}).click();
+    await expect(page.getByText("目前沒有待確認的延誤通知。")).toBeVisible();
+    await expect(cards).toHaveCount(0);
+    expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBe(360);
+    await page.getByRole("button",{name:"處理中",exact:true}).click();
+    await expect(page).toHaveURL(/\/kitchen$/);
+    await expect(cards.getByRole("heading",{name:later.number,exact:true})).toBeVisible();
+  }finally{
+    await customers.close();
+    for(const {id} of orders){
+      await advance(id,"preparing","ready");
+      await advance(id,"ready","completed");
+    }
+  }
+});
+
 test("a staff phone updates the pickup estimate while the customer follows the original receipt",async({page,browser,request})=>{
   const headers={Authorization:"Bearer local-test-kitchen"},token=randomUUID();
   const response=await request.post("/api/orders",{data:{token,mode:"pickup",note:"",items:[{id:"sencha",qty:1}]}});

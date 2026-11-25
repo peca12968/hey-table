@@ -1,7 +1,7 @@
 "use client";
 import {useEffect,useMemo,useState,useSyncExternalStore} from "react";
 import {RefreshCw} from "lucide-react";
-import {Header,Footer,Mode,PickupAppointment,request} from "../shared";
+import {Header,Footer,Mode,PickupAppointment,PickupDelayTime,request} from "../shared";
 import {pickupChangeWindows,pickupPrepLead,pickupRosterPath,pickupSlotsForDay,pickupTime} from "../../lib/pickup-slots.mjs";
 import {businessDate,businessDayRange} from "../../lib/business-day.mjs";
 import {ItemNote} from "../item-notes";
@@ -25,6 +25,9 @@ const anonymousKey=()=>"";
 const ignoreStorageChanges=()=>()=>{};
 const waitingPickup=order=>order.mode==="pickup"&&order.pickupArrivedAt!=null&&
   ["preparing","ready"].includes(order.status)&&canPrepare(order);
+const canAdjustPickupDelay=order=>order.mode==="pickup"&&order.status==="preparing"&&canPrepare(order);
+const needsDelayConfirmation=order=>canAdjustPickupDelay(order)&&
+  order.pickupDelay?.readyAt!=null&&order.pickupDelay.acknowledgedAt==null;
 
 function subscribeToLocation(notify){
   window.addEventListener("popstate",notify);
@@ -100,7 +103,8 @@ function TableHandoff({table,orders,busy,update}){
   </section>;
 }
 
-function KitchenTicket({order,busy,update,movePickup,recordCash,refresh,today,staffKey,showOverdue=false,handoffOnly=false,paymentReview=false,paymentCheck}){
+function KitchenTicket({order,busy,update,movePickup,recordCash,refresh,today,staffKey,showOverdue=false,
+  showDelayEstimate=false,handoffOnly=false,paymentReview=false,paymentCheck}){
   const {id,status,table,created,items,note,paymentMethod,paymentEnv,paymentState,total}=order;
   const actions=handoffOnly ? transitions[status].filter(next=>next==="completed") : transitions[status];
   const workingByStation=order.stationProgress&&status==="preparing";
@@ -121,6 +125,8 @@ function KitchenTicket({order,busy,update,movePickup,recordCash,refresh,today,st
     {latestPickup&&<p className="muted" role="status">{latestPickup.actor==="staff"?"店員":"顧客"}已將取餐時段從 {previousWindow} 改到 {newWindow}。</p>}
     {prepAt!==null&&<p className="muted">{prepDay>today?prepDay+" ":""}{pickupTime(prepAt)} 後可接單製作。</p>}
     {showOverdue&&order.overdue&&<p className="kitchenOverdue">逾時 · {overdueStage[status]} {Math.floor(order.overdue.elapsedMs/60_000)} 分鐘</p>}
+    {showDelayEstimate&&<p className={order.pickupDelay.passed?"kitchenOverdue":"muted"}>
+      {order.pickupDelay.passed?"已過預計備妥時間":"預計備妥時間"} <PickupDelayTime at={order.pickupDelay.readyAt}/></p>}
     <ul className="orderLines">{items.map(dish=><li key={dish.id}><div>{dish.name}<ItemNote note={dish.note}/></div><b>×{dish.qty}</b></li>)}</ul>
     {note&&<p>備註　{note}</p>}
     <p>{Object.hasOwn(methods,paymentMethod)?methods[paymentMethod]:"付款方式未記錄"} {paymentMethod!=="cash"&&
@@ -130,8 +136,9 @@ function KitchenTicket({order,busy,update,movePickup,recordCash,refresh,today,st
     <div className="total"><span>合計</span><b>NT$ {total}</b></div>
     {paymentMethod==="cash"&&["ready","completed"].includes(status)&&
       <CashCollection order={order} disabled={busy} submit={recordCash} onChange={refresh}/>}
-    {!handoffOnly&&order.mode==="pickup"&&status==="preparing"&&canPrepare(order)&&
-      <PickupDelayEditor id={id} record={order.pickupDelay} staffKey={staffKey} disabled={busy} onChange={refresh}/>}
+    {!handoffOnly&&canAdjustPickupDelay(order)&&
+      <PickupDelayEditor id={id} record={order.pickupDelay} staffKey={staffKey} disabled={busy} onChange={refresh}
+        showEstimate={!showDelayEstimate}/>}
     <div className="actions">
       {["ready","completed"].includes(status)&&<a className="outline" href={"/kitchen/handoff?id="+numberOf(id)}>交餐小票</a>}
       {workingByStation&&<a className="primary" href="/kitchen/station-work">查看分站進度</a>}
@@ -158,7 +165,7 @@ function KitchenTicket({order,busy,update,movePickup,recordCash,refresh,today,st
 
 export default function Kitchen(){
   const [entry,setEntry]=useState(""),[denied,setDenied]=useState(false),[rows,setRows]=useState(null);
-  const [sold,setSold]=useState([]),[filter,setFilter]=useState("active"),[error,setError]=useState(""),[revision,setRevision]=useState(0),[busy,setBusy]=useState(false);
+  const [sold,setSold]=useState([]),[boardFilter,setBoardFilter]=useState("active"),[error,setError]=useState(""),[revision,setRevision]=useState(0),[busy,setBusy]=useState(false);
   const [exporting,setExporting]=useState(false),[exportMessage,setExportMessage]=useState("");
   const [scope,setScope]=useState("all"),[search,setSearch]=useState("");
   const [queueAvailable,setQueueAvailable]=useState(false);
@@ -169,6 +176,8 @@ export default function Kitchen(){
   const locationSearch=useSyncExternalStore(subscribeToLocation,browserSearch,serverSearch);
   const focus=useMemo(()=>kitchenFocus(locationSearch),[locationSearch]);
   const focused=Boolean(focus),handoffOnly=focus?.kind==="pickup";
+  const delayLink=new URLSearchParams(locationSearch).get("view")==="pickup-delay";
+  const filter=delayLink?"pickup-delay":boardFilter;
   const paymentReview=focus?.kind==="payment-review";
   const title=paymentReview?"交班付款核對":handoffOnly?"自取交餐":focused?"自取預約餐單":"店家接單台";
   useEffect(()=>{
@@ -256,6 +265,15 @@ export default function Kitchen(){
       ...(key?{Authorization:"Bearer "+key}:{})},body:JSON.stringify(input),signal:AbortSignal.timeout(15_000)});
   }
   const refresh=()=>setRevision(value=>value+1);
+  function chooseFilter(next){
+    if(next!=="pickup-delay")setBoardFilter(next);
+    if((next==="pickup-delay")===delayLink)return;
+    const url=new URL(window.location.href);
+    if(next==="pickup-delay")url.searchParams.set("view","pickup-delay");
+    else url.searchParams.delete("view");
+    window.history.replaceState(window.history.state,"",url);
+    window.dispatchEvent(new PopStateEvent("popstate",{state:window.history.state}));
+  }
   async function exportStations(){
     setExporting(true);setExportMessage("");
     try{
@@ -271,23 +289,27 @@ export default function Kitchen(){
   const exactNumber=ticket.replace(/^0+(?=\d)/,"");
   const orders=rows??[];
   const overdueCount=queueAvailable?orders.filter(order=>order.overdue).length:0;
+  const delayCount=queueAvailable?orders.filter(needsDelayConfirmation).length:0;
   const filtered=orders.filter(r=>{
     const statusMatches=filter==="all"||(filter==="active"&&Object.hasOwn(overdueStage,r.status))||
       (filter==="booked"&&r.pickupSlot!=null&&Object.hasOwn(overdueStage,r.status))||
       (filter==="arrived"&&waitingPickup(r))||
+      (filter==="pickup-delay"&&queueAvailable&&needsDelayConfirmation(r))||
       (filter==="overdue"&&queueAvailable&&r.overdue)||r.status===filter;
     const scopeMatches=scope==="all"||scope===r.mode||scope===r.table||scope===r.source;
     return statusMatches&&scopeMatches&&validNumber&&(!exactNumber||exactNumber===String(r.id));
   });
   if(filter==="overdue")filtered.sort((a,b)=>b.overdue.overByMs-a.overdue.overByMs||a.id-b.id);
   if(filter==="booked")filtered.sort((a,b)=>a.pickupSlot-b.pickupSlot||a.id-b.id);
+  if(filter==="pickup-delay")filtered.sort((a,b)=>a.pickupDelay.readyAt-b.pickupDelay.readyAt||
+    a.pickupDelay.recordedAt-b.pickupDelay.recordedAt||a.id-b.id);
   if(filter==="arrived")filtered.sort((a,b)=>Number(b.status==="ready")-Number(a.status==="ready")||
     a.pickupArrivedAt-b.pickupArrivedAt||a.id-b.id);
   let content;
   if(focus?.number===""){
     content=<p role="alert">{paymentReview?"餐單日期或餐號無效。":handoffOnly?"取餐 QR 碼的號碼無效。":"預約餐單的取餐號碼無效。"}</p>;
   }else if(denied){
-    content=<div className="sheet"><h2>店員登入</h2><p>託管網站請使用獲授權的店主帳號。</p><a className="primary" href={"/signin-with-chatgpt?return_to="+encodeURIComponent(focus?.signInTarget??"/kitchen")} target="_top">使用 ChatGPT 登入</a>
+    content=<div className="sheet"><h2>店員登入</h2><p>託管網站請使用獲授權的店主帳號。</p><a className="primary" href={"/signin-with-chatgpt?return_to="+encodeURIComponent(focus?.signInTarget??(delayLink?"/kitchen?view=pickup-delay":"/kitchen"))} target="_top">使用 ChatGPT 登入</a>
       <details><summary>使用自架店員金鑰</summary><form onSubmit={e=>{e.preventDefault();sessionStorage.setItem("he-ri-staff",entry);setEntry("");setRevision(v=>v+1);}}><label>店員金鑰<input type="password" value={entry} onChange={e=>setEntry(e.target.value)} required/></label><button className="outline">登入</button></form></details></div>;
   }else if(rows===null){
     content=!error&&<p>正在讀取{paymentReview?"已交餐單":focused?"自取餐單":"接單台"}…</p>;
@@ -319,7 +341,8 @@ export default function Kitchen(){
     <ReturnReceipt key={key} staffKey={key}/>
     <PaymentSnapshot key={"payments-"+key} staffKey={key}/>
     <nav className="tabs" aria-label="餐單狀態">{[["active","處理中"],["pending","待接單"],["ready","待交餐"],["arrived","已到店"],["booked","預約自取"],
-      ["overdue",overdueCount?"逾時 ("+overdueCount+")":"逾時"],["all","含近期結單"]].map(([v,n])=><button aria-pressed={v===filter} key={v} onClick={()=>setFilter(v)}>{n}</button>)}</nav>
+      ["pickup-delay",delayCount?"待確認延誤 ("+delayCount+")":"待確認延誤"],
+      ["overdue",overdueCount?"逾時 ("+overdueCount+")":"逾時"],["all","含近期結單"]].map(([v,n])=><button aria-pressed={v===filter} key={v} onClick={()=>chooseFilter(v)}>{n}</button>)}</nav>
     <div className="kitchenFilters">
       <label>管道或桌號<select value={scope} onChange={e=>setScope(e.target.value)}>
         <option value="all">全部管道</option><option value="pickup">全部自取</option><option value="staff">店員代建自取</option><option value="table">全部內用</option>
@@ -330,7 +353,9 @@ export default function Kitchen(){
       <button className="outline" disabled={scope==="all"&&!search} onClick={()=>{setScope("all");setSearch("");}}>清除搜尋條件</button>
     </div>
     <p id="kitchen-filter-count" className="muted" aria-live="polite">{filter==="overdue"&&!queueAvailable?"暫時無法更新逾時狀態。":
-      !validNumber?"請輸入完整的取餐號碼。":filtered.length?"符合條件 "+filtered.length+" 張餐單":"目前沒有符合條件的訂單。"}</p>
+      filter==="pickup-delay"&&!queueAvailable?"暫時無法更新延誤確認狀態。":
+      !validNumber?"請輸入完整的取餐號碼。":filtered.length?"符合條件 "+filtered.length+" 張餐單":
+      filter==="pickup-delay"&&scope==="all"&&!exactNumber?"目前沒有待確認的延誤通知。":"目前沒有符合條件的訂單。"}</p>
     {actionMessage&&<p role="status">{actionMessage}</p>}
     {showTableHandoff&&["all","table"].includes(scope)&&<div className="actions">
       {tables.map(table=>[table,readyAt(table).length]).filter(([,count])=>count>=2).map(([table,count])=>
@@ -339,6 +364,7 @@ export default function Kitchen(){
     {showTableHandoff&&tables.includes(scope)&&<TableHandoff key={scope} table={scope} orders={readyAt(scope)} busy={busy} update={update}/>}
     <div className="kGrid">{filtered.map(order=><KitchenTicket key={order.id} order={order} busy={busy} update={update} today={today}
       movePickup={movePickup} recordCash={recordCash} refresh={refresh} staffKey={key} showOverdue={queueAvailable}
+      showDelayEstimate={filter==="pickup-delay"}
       paymentCheck={paymentCheck?.id===order.id?paymentCheck:null}/>)}</div>
     <section className="sheet stock"><h2>餐點供應</h2>{dishes.map(d=><div key={d.id}><span>{d.name}</span><button className="outline" disabled={busy} onClick={()=>update("availability",{id:d.id,available:sold.includes(d.id)})}>{sold.includes(d.id)?"已售完 · 恢復供應":"供應中 · 標記售完"}</button></div>)}</section>
     <Timing staffKey={key}/>

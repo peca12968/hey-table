@@ -90,8 +90,9 @@ function kitchenOrder(row,capturedAt){
   const overdue=kitchenOverdue(row,order,capturedAt);
   const booked=order.status==="pending"&&order.pickupSlot!=null;
   const changes=booked?pickupChanges(row):[];
+  const delay=row.pickup_delay&&order.status==="preparing"&&canPrepare(order)?JSON.parse(row.pickup_delay):null;
   return {...order,...(row.station_progress?{stationProgress:true}:{}),
-    ...(row.pickup_delay&&order.status==="preparing"&&canPrepare(order)?{pickupDelay:JSON.parse(row.pickup_delay)}:{}),
+    ...(delay?{pickupDelay:{...delay,passed:delay.readyAt!==null&&delay.readyAt<=capturedAt}}:{}),
     ...(overdue?{overdue}:{}),
     ...(booked?{pickupRevision:changes.length,...(changes.length?{latestPickupChange:changes.at(-1)}:{}),
       ...(canReschedulePickup(row,capturedAt)?{pickupUpcoming:true}:{})}:{}),

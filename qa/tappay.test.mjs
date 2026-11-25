@@ -3034,7 +3034,7 @@ test("staff pickup delay changes are versioned, retain their estimate on replay 
   const booking=await (await call("/kitchen/pickup-booking?id="+id,{headers:staff})).json();
   const board=await (await call("/kitchen",{headers:staff})).json();
   assert.deepEqual(booking,board.find(row=>row.id===id));
-  assert.deepEqual(booking.pickupDelay,{revision:1,readyAt:saved.readyAt,recordedAt:saved.recordedAt,acknowledgedAt:null});
+  assert.deepEqual(booking.pickupDelay,{revision:1,readyAt:saved.readyAt,recordedAt:saved.recordedAt,acknowledgedAt:null,passed:false});
   assert.equal((await acknowledge(1,crypto.randomUUID())).status,404);
   assert.equal((await acknowledge(1,customer,{Origin:"https://other.example"})).status,403);
   assert.equal((await acknowledge(1,unpaid)).status,409);
@@ -3054,11 +3054,16 @@ test("staff pickup delay changes are versioned, retain their estimate on replay 
   assert.deepEqual(await (await update(request)).json(),saved);
   assert.equal((await update({...request,minutes:request.minutes+1})).status,409);
   assert.equal((await (await ticket()).json()).pickupDelay.passed,true);
+  const dueBoard=await (await call("/kitchen",{headers:staff})).json();
+  assert.equal(dueBoard.find(row=>row.id===id).pickupDelay.passed,true);
   assert.deepEqual(await (await acknowledge(1)).json(),acknowledged);
   const clear=make(null,1);
   const cleared=await (await update(clear)).json();
   assert.equal(cleared.readyAt,null);
   assert.equal(Object.hasOwn(await (await ticket()).json(),"pickupDelay"),false);
+  const clearedBoard=await (await call("/kitchen",{headers:staff})).json();
+  assert.deepEqual(clearedBoard.find(row=>row.id===id).pickupDelay,
+    {revision:2,readyAt:null,recordedAt:cleared.recordedAt,acknowledgedAt:null,passed:false});
   assert.equal((await acknowledge(1)).status,409);
   assert.equal((await acknowledge(2)).status,409);
   assert.deepEqual(await (await update(clear)).json(),cleared);
