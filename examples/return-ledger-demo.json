@@ -1,0 +1,107 @@
+{
+  "format": "hey-table.return-ledger-demo.v1",
+  "before": {
+    "format": "hey-table.return-ledger-report.v1",
+    "date": "2026-11-25",
+    "timeZone": "Asia/Taipei",
+    "capturedAt": 1795572060000,
+    "totals": {
+      "recordedCount": 1,
+      "recordedAmount": 45,
+      "voidedCount": 0,
+      "restoredAmount": 0,
+      "netAmount": 45
+    },
+    "events": [
+      {
+        "orderId": 895,
+        "revision": 1,
+        "recordedAt": 1795572000000,
+        "kind": "recorded",
+        "amount": 45
+      }
+    ],
+    "fingerprint": "7d3cbe9cc7d4aceb5ea4256fcfe5bddf52611a725d76e31761424fb1f22d91d0",
+    "reviews": [
+      {
+        "fingerprint": "7d3cbe9cc7d4aceb5ea4256fcfe5bddf52611a725d76e31761424fb1f22d91d0",
+        "eventCount": 1,
+        "netAmount": 45,
+        "reviewedAt": 1795572120000,
+        "note": "早班已核對飲品退餐試算。"
+      }
+    ]
+  },
+  "after": {
+    "format": "hey-table.return-ledger-report.v1",
+    "date": "2026-11-25",
+    "timeZone": "Asia/Taipei",
+    "capturedAt": 1795586760000,
+    "totals": {
+      "recordedCount": 1,
+      "recordedAmount": 45,
+      "voidedCount": 1,
+      "restoredAmount": 85,
+      "netAmount": -40
+    },
+    "events": [
+      {
+        "orderId": 881,
+        "revision": 2,
+        "recordedAt": 1795586700000,
+        "kind": "voided",
+        "amount": 85,
+        "targetRevision": 1,
+        "reason": "撤銷昨晚誤登的煎餃試算"
+      },
+      {
+        "orderId": 895,
+        "revision": 1,
+        "recordedAt": 1795572000000,
+        "kind": "recorded",
+        "amount": 45
+      }
+    ],
+    "fingerprint": "1894e7a30c3a3cb6e1c9365a84a40a81661055fda14e497705908a741ca0431f",
+    "reviews": [
+      {
+        "fingerprint": "7d3cbe9cc7d4aceb5ea4256fcfe5bddf52611a725d76e31761424fb1f22d91d0",
+        "eventCount": 1,
+        "netAmount": 45,
+        "reviewedAt": 1795572120000,
+        "note": "早班已核對飲品退餐試算。"
+      }
+    ]
+  },
+  "archived": {
+    "format": "hey-table.return-ledger-report.v1",
+    "date": "2026-11-25",
+    "timeZone": "Asia/Taipei",
+    "capturedAt": 1795572060000,
+    "totals": {
+      "recordedCount": 1,
+      "recordedAmount": 45,
+      "voidedCount": 0,
+      "restoredAmount": 0,
+      "netAmount": 45
+    },
+    "events": [
+      {
+        "orderId": 895,
+        "revision": 1,
+        "recordedAt": 1795572000000,
+        "kind": "recorded",
+        "amount": 45
+      }
+    ],
+    "fingerprint": "7d3cbe9cc7d4aceb5ea4256fcfe5bddf52611a725d76e31761424fb1f22d91d0",
+    "review": {
+      "fingerprint": "7d3cbe9cc7d4aceb5ea4256fcfe5bddf52611a725d76e31761424fb1f22d91d0",
+      "eventCount": 1,
+      "netAmount": 45,
+      "reviewedAt": 1795572120000,
+      "note": "早班已核對飲品退餐試算。"
+    },
+    "captureSource": "saved"
+  }
+}

@@ -60,6 +60,8 @@ Stockroom 支援在一筆交易內保留多個 SKU。若其中一項缺貨，該
 
 確認紀錄可開啟當時核對的逐筆報表，列印或下載該版 JSON。後續新增或撤銷的試算會留在當日交班，歷史頁面保留確認當時的項目。新確認在同一筆 D1 交易保存擷取時間、備註和逐筆快照。舊確認會比對原本的指紋，只有能完整核對的版本才提供報表。[同一時間異動、確認回滾與舊版測試](qa/tappay.test.mjs)
 
+可在 Demo 總站切換早班確認、撤銷後的當日交班與封存報表。此範例使用合成餐單，由 `node scripts/return-ledger-demo.mjs` 執行實際報表、撤銷與封存邏輯重建。[退餐交班試玩（私人預覽）](https://peca-github-demo.peca12968.chatgpt.site/?demo=returnLedger#demos) · [測試資料](examples/return-ledger-demo.json)
+
 在 Receipt Returns 專案內執行 `python returns.py local.db import 下載的收據.json`。例如 A03 桌用全支付模擬結帳 345 元，其中兩份煎餃合計 157 元。依試算工具的規則先登記單點的一份 85 元，再試算套餐內的另一份 72 元。原單付款狀態維持已付款；這項操作只登記本機試算。[Receipt Returns 操作說明](modules/receipt-returns/README.md) · [手機下載與 CLI 整合測試](qa/return-receipt.spec.mjs)
 
 ## 替個別餐點加備註

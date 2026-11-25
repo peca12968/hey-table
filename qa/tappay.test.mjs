@@ -11,6 +11,7 @@ import {settings,lookup} from "../server/tappay.mjs";
 import {paymentPrime,openPaymentUrl} from "../lib/tappay-client.mjs";
 import {sqliteD1} from "../scripts/sqlite-d1.mjs";
 import {applyDemoMigrations} from "../scripts/apply-demo-migrations.mjs";
+import {buildReturnLedgerDemo} from "../scripts/return-ledger-demo.mjs";
 import {bookablePickupSlots} from "../lib/pickup-slots.mjs";
 import {stationReview,stationReviewDigest} from "../lib/kitchen-timing.mjs";
 import {cartShareLink,readCartShare,readCartShareAddress} from "../lib/cart-share.mjs";
@@ -993,6 +994,16 @@ test("older return-ledger confirmations only reopen when the original event fing
   const unsafe=await archive(fingerprint);
   assert.equal(unsafe.status,409);
   assert.match((await unsafe.json()).error,/無法完整核對/);
+});
+
+test("the return handoff demo reproduces the real report, cross-day void and archive from synthetic data",async()=>{
+  const checkedIn=JSON.parse(readFileSync(new URL("../examples/return-ledger-demo.json",import.meta.url),"utf8"));
+  const sample=await buildReturnLedgerDemo();
+  assert.deepEqual(sample,checkedIn);
+  assert.deepEqual([sample.before.totals.netAmount,sample.after.totals.netAmount,sample.archived.totals.netAmount],[45,-40,45]);
+  assert.equal(sample.after.events[0].kind,"voided");
+  assert.equal(sample.before.fingerprint,sample.archived.fingerprint);
+  assert.notEqual(sample.after.fingerprint,sample.archived.fingerprint);
 });
 
 test("staff can read orders beyond the recent board without exposing checkout references or changing state",async t=>{
