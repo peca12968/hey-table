@@ -1661,6 +1661,64 @@ for(const saved of [true,false])test(`mobile station batch recovers after reload
   expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBe(360);
 });
 
+test("mobile station history shares the selected date, station and order with a second staff browser",async({page,request,browser})=>{
+  const auth={Authorization:"Bearer local-test-kitchen"};
+  const queue="/api/kitchen/station-work",history="/kitchen/station-history";
+  const ids=[];
+  for(let index=0;index<2;index++){
+    const response=await request.post("/api/orders",{data:{mode:"pickup",token:randomUUID(),note:"僅廚房可見的批次備註",
+      items:[{id:"katsudon",qty:1},{id:"sencha",qty:1}]}});
+    expect(response.ok(),await response.text()).toBe(true);
+    const {id}=await response.json();
+    expect((await request.patch("/api/kitchen/status",{headers:auth,data:{id,from:"pending",to:"preparing"}})).ok()).toBe(true);
+    ids.push(id);
+  }
+  async function mark(station){
+    const snapshot=await (await request.get(queue+"?station="+station,{headers:auth})).json();
+    const response=await request.patch(queue+"/batch",{headers:auth,data:{station,
+      orders:ids.map(id=>({id,review:stationReview(snapshot.orders.find(row=>row.id===id))}))}});
+    expect(response.ok(),await response.text()).toBe(true);
+  }
+  await mark("hot");
+  await mark("bar");
+  expect((await request.get(queue+"/history")).status()).toBe(403);
+  const formatted=ids.map(id=>String(id).padStart(4,"0"));
+  await page.setViewportSize({width:360,height:780});
+  await page.addInitScript(()=>sessionStorage.setItem("he-ri-staff","local-test-kitchen"));
+  await page.goto("/kitchen/station-work");
+  await page.getByRole("button",{name:"飲品台",exact:true}).click();
+  await page.getByRole("link",{name:"分站批次紀錄"}).click();
+  await expect(page.getByRole("heading",{name:"分站批次紀錄",exact:true})).toBeVisible();
+  await expect(page.getByRole("combobox",{name:"工作站"})).toHaveValue("bar");
+  await page.getByLabel("餐號", {exact:true}).fill(formatted[0]);
+  await page.getByRole("button",{name:"查詢紀錄"}).click();
+  const report=page.getByRole("region",{name:new RegExp("飲品台 · #"+formatted[0])});
+  await expect(report.getByRole("listitem")).toHaveCount(1);
+  await expect(report.getByText("#"+formatted.join("、#"),{exact:true})).toBeVisible();
+  await expect(report.getByText("僅廚房可見的批次備註")).toHaveCount(0);
+  const shared=new URL(page.url());
+  expect(shared.pathname).toBe(history);
+  expect(shared.searchParams.get("date")).toBe(await page.getByLabel("回報日期").inputValue());
+  expect(shared.searchParams.get("station")).toBe("bar");
+  expect(shared.searchParams.get("id")).toBe(formatted[0]);
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBe(360);
+  const second=await browser.newContext({viewport:{width:360,height:780}});
+  try{
+    await second.addInitScript(()=>sessionStorage.setItem("he-ri-staff","local-test-kitchen"));
+    const other=await second.newPage();
+    await other.goto(shared.href);
+    await expect(other.getByText("#"+formatted.join("、#"),{exact:true})).toBeVisible();
+    await other.getByRole("combobox",{name:"工作站"}).selectOption("");
+    await other.getByRole("button",{name:"查詢紀錄"}).click();
+    const all=other.getByRole("region",{name:new RegExp("全部分站 · #"+formatted[0])});
+    await expect(all.getByRole("listitem")).toHaveCount(2);
+    await expect(all.getByText("熱台",{exact:true})).toBeVisible();
+    await expect(all.getByText("飲品台",{exact:true})).toBeVisible();
+  }finally{await second.close();}
+  await page.getByRole("link",{name:"返回分站看板"}).click();
+  await expect(page.getByRole("button",{name:"飲品台",exact:true})).toHaveAttribute("aria-pressed","true");
+});
+
 test("mobile prep can print and export the remaining items from one station snapshot",async({page,request})=>{
   await page.setViewportSize({width:360,height:780});
   await page.addInitScript(()=>sessionStorage.setItem("he-ri-staff","local-test-kitchen"));

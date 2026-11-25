@@ -6,7 +6,12 @@ import {numberOf} from "../../../lib/menu.mjs";
 import {stationBatchLimit,stationLabels,stationReview,stationReviewDigest} from "../../../lib/kitchen-timing.mjs";
 
 const batchEndpoint="/api/kitchen/station-work/batch",batchStorageKey="he-ri-station-batch";
-const ignoreStorageChanges=()=>()=>{},serverDraft=()=>null;
+const ignoreStorageChanges=()=>()=>{},serverDraft=()=>null,defaultStation=()=>"hot";
+
+function readStation(){
+  const value=new URLSearchParams(window.location.search).get("station");
+  return Object.hasOwn(stationLabels,value)?value:defaultStation();
+}
 
 function readDraft(){
   try{return sessionStorage.getItem(batchStorageKey);}catch{return null;}
@@ -41,7 +46,9 @@ function StationItems({order}){
 }
 
 export default function StationWork(){
-  const [station,setStation]=useState("hot"),[revision,setRevision]=useState(0);
+  const [selectedStation,setStation]=useState(null),[revision,setRevision]=useState(0);
+  const linkedStation=useSyncExternalStore(ignoreStorageChanges,readStation,defaultStation);
+  const station=selectedStation??linkedStation;
   const [rows,setRows]=useState(null),[busy,setBusy]=useState(false);
   const [error,setError]=useState(""),[message,setMessage]=useState("");
   const [selected,setSelected]=useState([]),[review,setReview]=useState(null);
@@ -151,7 +158,10 @@ export default function StationWork(){
   }
 
   return <><Header/><main className="shell section">
-    <a className="textLink" href="/kitchen">返回店家接單台</a>
+    <div className="actions">
+      <a className="textLink" href="/kitchen">返回店家接單台</a>
+      <a className="textLink" href={"/kitchen/station-history?"+new URLSearchParams({station})}>分站批次紀錄</a>
+    </div>
     <div className="menuTitle">
       <h1>分站看板</h1>
       <button className="outline" disabled={busy} onClick={()=>setRevision(value=>value+1)}>更新看板</button>

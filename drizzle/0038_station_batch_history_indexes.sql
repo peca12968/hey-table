@@ -1,0 +1,2 @@
+CREATE INDEX `station_batch_receipts_day` ON `station_batch_receipts` (`recorded_at`,`operation_id`);--> statement-breakpoint
+CREATE INDEX `station_batch_receipts_station_day` ON `station_batch_receipts` (`station`,`recorded_at`,`operation_id`);

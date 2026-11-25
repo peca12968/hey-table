@@ -725,6 +725,51 @@ test("station batch receipts survive same-key retries and roll back with order u
   assert.ok(!JSON.stringify(persisted).includes("private batch fixture"));
 });
 
+test("station batch history isolates Taipei days, station and order filters, and pages through tied times",async t=>{
+  const db=database();
+  t.after(()=>db.sqlite.close());
+  const start=Date.parse("2026-11-25T00:00:00+08:00"),end=Date.parse("2026-11-26T00:00:00+08:00");
+  t.mock.method(Date,"now",()=>start);
+  const runtime={DB:db,STAFF_KEY:"staff"};
+  const list=(query="",staff=true)=>api(new Request("https://order.example/api/kitchen/station-work/history"+query,{
+    headers:staff?{Authorization:"Bearer staff"}:{},
+  }),runtime);
+  const insert=db.sqlite.prepare(`INSERT INTO station_batch_receipts
+    (operation_id,write_id,station,fingerprint,order_ids,recorded_at) VALUES (?,'private write','hot','private digest',?,?)`);
+  const key=value=>"00000000-0000-4000-8000-"+String(value).padStart(12,"0");
+  for(let i=1;i<=27;i++)insert.run(key(i),JSON.stringify([i,101]),start);
+  insert.run(key(100),"[101,102]",start-1);
+  insert.run(key(101),"[101,102]",end);
+  db.sqlite.prepare(`INSERT INTO station_batch_receipts
+    (operation_id,write_id,station,fingerprint,order_ids,recorded_at) VALUES (?,'private write','bar','private digest','[101,102]',?)`)
+    .run(key(102),start+1);
+  assert.equal((await list("",false)).status,403);
+  for(const invalid of ["?date=2026-02-29","?id=-1","?station=bogus","?station=hot&station=bar","?before=1:"+key(1)])
+    assert.equal((await list(invalid)).status,400);
+  const first=await (await list("?station=hot&id=0101")).json();
+  assert.equal(first.date,"2026-11-25");
+  assert.equal(first.id,101);
+  assert.equal(first.station,"hot");
+  assert.deepEqual(first.batches.map(row=>row.operationId),Array.from({length:25},(_,index)=>key(27-index)));
+  assert.equal(first.nextBefore,start+":"+key(3));
+  assert.deepEqual(Object.keys(first.batches[0]).sort(),["completed","operationId","orderIds","recordedAt","station"]);
+  assert.deepEqual(first.batches[0].orderIds,[27,101]);
+  insert.run(key(103),"[101,102]",start+2);
+  const second=await (await list("?station=hot&id=101&before="+encodeURIComponent(first.nextBefore))).json();
+  assert.deepEqual(second.batches.map(row=>row.operationId),[key(2),key(1)]);
+  assert.equal(second.nextBefore,null);
+  const bar=await (await list("?station=bar&id=0101")).json();
+  assert.deepEqual(bar.batches.map(row=>row.operationId),[key(102)]);
+  const only=await (await list("?id=027")).json();
+  assert.deepEqual(only.batches.map(row=>row.operationId),[key(27)]);
+  const nextDay=await (await list("?date=2026-11-26&id=101")).json();
+  assert.deepEqual(nextDay.batches.map(row=>row.operationId),[key(101)]);
+  const plan=db.sqlite.prepare(`EXPLAIN QUERY PLAN SELECT operation_id FROM station_batch_receipts
+    WHERE station=? AND recorded_at>=? AND recorded_at<? ORDER BY recorded_at DESC,operation_id DESC LIMIT 26`)
+    .all("hot",start,end);
+  assert.ok(plan.some(row=>row.detail.includes("station_batch_receipts_station_day")));
+});
+
 test("prep station views use saved assignments and group old stations without exposing order notes",async t=>{
   const db=database();
   t.after(()=>db.sqlite.close());

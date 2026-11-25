@@ -72,8 +72,8 @@ export async function finishStation(db,id,station) {
   return current.results[0];
 }
 
-const batchReceiptSql=`SELECT operation_id AS operationId, station, order_ids AS orderIds,
-  recorded_at AS recordedAt, fingerprint FROM station_batch_receipts WHERE operation_id=?`;
+const batchReceiptColumns="operation_id AS operationId, station, order_ids AS orderIds, recorded_at AS recordedAt";
+const batchReceiptSql=`SELECT ${batchReceiptColumns}, fingerprint FROM station_batch_receipts WHERE operation_id=?`;
 
 function batchReceipt({operationId,station,orderIds,recordedAt}){
   const ids=JSON.parse(orderIds);
@@ -83,6 +83,23 @@ function batchReceipt({operationId,station,orderIds,recordedAt}){
 export async function readStationBatch(db,operationId) {
   const row=await db.prepare(batchReceiptSql).bind(operationId).first();
   return row?batchReceipt(row):null;
+}
+
+export async function stationBatchHistory(db,[start,end],{station,id,before}) {
+  const limit=25;
+  const clauses=["recorded_at>=?","recorded_at<?"],values=[start,end];
+  if(station){clauses.push("station=?");values.push(station);}
+  if(id){clauses.push("EXISTS (SELECT 1 FROM json_each(order_ids) WHERE value=?)");values.push(id);}
+  if(before){
+    clauses.push("(recorded_at,operation_id)<(?,?)");
+    values.push(before.at,before.key);
+  }
+  const {results}=await db.prepare(`SELECT ${batchReceiptColumns} FROM station_batch_receipts
+    WHERE ${clauses.join(" AND ")} ORDER BY recorded_at DESC,operation_id DESC LIMIT ?`).bind(...values,limit+1).all();
+  const batches=results.slice(0,limit).map(batchReceipt);
+  const last=batches.at(-1);
+  const nextBefore=results.length>limit?last.recordedAt+":"+last.operationId:null;
+  return {batches,nextBefore};
 }
 
 export async function finishStationBatch(db,station,orders,operationId) {

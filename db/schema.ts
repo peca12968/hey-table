@@ -213,4 +213,7 @@ export const stationBatchReceipts = sqliteTable("station_batch_receipts", {
   fingerprint: text("fingerprint").notNull(),
   orderIds: text("order_ids").notNull(),
   recordedAt: integer("recorded_at").notNull(),
-});
+}, t => [
+  index("station_batch_receipts_day").on(t.recordedAt,t.operationId),
+  index("station_batch_receipts_station_day").on(t.station,t.recordedAt,t.operationId),
+]);

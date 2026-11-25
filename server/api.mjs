@@ -35,7 +35,7 @@ import {settings} from "./tappay.mjs";
 import {canPrepare,methods} from "../lib/payments.mjs";
 import {estimate} from "@peca12968/pickup-window";
 import {activeKitchen,demoKitchen,importTiming,stationBatchLimit,stationLabels,timingChanges} from "../lib/kitchen-timing.mjs";
-import {finishStation,finishStationBatch,preparationByStation,readStationBatch,remainingStationItems,stationQueue} from "./station-work.mjs";
+import {finishStation,finishStationBatch,preparationByStation,readStationBatch,remainingStationItems,stationBatchHistory,stationQueue} from "./station-work.mjs";
 const timingRows = "SELECT revision,config FROM kitchen_timing ORDER BY revision DESC";
 const fromTimingRow = row => ({revision:row?.revision??0, kitchen:activeKitchen(row ? JSON.parse(row.config) : null)});
 const orderColumns = `SELECT orders.*, ${latestState} AS payment_state, ${cashReceiptColumn} AS cash_receipt`;
@@ -799,6 +799,24 @@ export async function api(request, env) {
     if(!operationId||!uuid.test(operationId))return fail("批次編號無效。");
     const result=await readStationBatch(db,operationId.toLowerCase());
     return result?json(result):fail("目前沒有這筆批次的備妥紀錄。",404);
+  }
+  if(path==="/api/kitchen/station-work/history"&&method==="GET"){
+    const query=url.searchParams;
+    if(["date","station","id","before"].some(key=>query.getAll(key).length>1))
+      return fail("查詢條件只能各填一次。");
+    const date=query.get("date")??businessDate(Date.now()),range=businessDayRange(date);
+    const station=query.get("station")||null;
+    const id=query.get("id")?collectionId(url):null;
+    if(!range||(station&&!Object.hasOwn(stationLabels,station))||(query.get("id")&&id===null))
+      return fail("請確認回報日期、分站或餐號。");
+    let before=null;
+    if(query.has("before")){
+      const [time,key,extra]=query.get("before").split(":"),at=Number(time);
+      if(!/^\d+$/.test(time)||!Number.isSafeInteger(at)||at<range[0]||at>=range[1]||!uuid.test(key)||extra!==undefined)
+        return fail("續頁條件無效，請重新查詢。");
+      before={at,key:key.toLowerCase()};
+    }
+    return json({date,station,id,...await stationBatchHistory(db,range,{station,id,before})});
   }
   if(path==="/api/kitchen/station-work/batch"&&method==="PATCH"){
     const {station,orders,operationId}=input;
