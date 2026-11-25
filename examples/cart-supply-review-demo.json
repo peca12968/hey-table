@@ -1,0 +1,80 @@
+{
+  "format": "hey-table.cart-supply-review-demo.v1",
+  "original": {
+    "table": "A05",
+    "paymentMethod": "line_pay",
+    "lines": [
+      {
+        "id": "gyoza",
+        "name": "海苔柴魚煎餃",
+        "price": 85,
+        "qty": 2
+      },
+      {
+        "id": "sencha",
+        "name": "日式熱煎茶",
+        "price": 45,
+        "qty": 1
+      }
+    ],
+    "total": 215
+  },
+  "before": {
+    "remaining": 1,
+    "options": [
+      {
+        "id": "karaage",
+        "name": "日式唐揚雞",
+        "price": 110,
+        "available": 2,
+        "total": 240
+      },
+      {
+        "id": "edamame",
+        "name": "鹽味毛豆",
+        "price": 55,
+        "available": 3,
+        "total": 185
+      }
+    ]
+  },
+  "after": {
+    "remaining": 1,
+    "options": [
+      {
+        "id": "edamame",
+        "name": "鹽味毛豆",
+        "price": 55,
+        "available": 3,
+        "total": 185
+      }
+    ]
+  },
+  "rejected": "portion_limit",
+  "receipt": {
+    "id": 1,
+    "table": "A05",
+    "paymentMethod": "line_pay",
+    "total": 185,
+    "lines": [
+      {
+        "id": "gyoza",
+        "name": "海苔柴魚煎餃",
+        "price": 85,
+        "qty": 1
+      },
+      {
+        "id": "edamame",
+        "name": "鹽味毛豆",
+        "price": 55,
+        "qty": 1
+      },
+      {
+        "id": "sencha",
+        "name": "日式熱煎茶",
+        "price": 45,
+        "qty": 1
+      }
+    ]
+  }
+}

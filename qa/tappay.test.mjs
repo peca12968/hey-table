@@ -17,6 +17,7 @@ import {applyDemoMigrations} from "../scripts/apply-demo-migrations.mjs";
 import {buildReturnLedgerDemo} from "../scripts/return-ledger-demo.mjs";
 import {buildPaymentAttentionDemo} from "../scripts/payment-attention-demo.mjs";
 import {buildCustomerPaymentRecoveryDemo} from "../scripts/customer-payment-recovery-demo.mjs";
+import {buildCartSupplyReviewDemo} from "../scripts/cart-supply-review-demo.mjs";
 import {bookablePickupSlots} from "../lib/pickup-slots.mjs";
 import {stationReview,stationReviewDigest} from "../lib/kitchen-timing.mjs";
 import {cartShareLink,readCartShare,readCartShareAddress} from "../lib/cart-share.mjs";
@@ -607,6 +608,18 @@ test("cart replacement preview counts existing portions and overlapping choices 
   assert.deepEqual(planSupplyReview(cart,rows,{gyoza:"edamame"}),{gyoza:1,karaage:0,edamame:3,sencha:1});
   assert.equal(planSupplyReview({...cart,edamame:3},rows,{gyoza:"edamame"}),null);
   assert.deepEqual(cart,{gyoza:2,karaage:1,edamame:2,sencha:1});
+});
+
+test("the cart supply fixture reproduces current alternatives, a stale rejection and the accepted receipt",async()=>{
+  const stored=JSON.parse(readFileSync(new URL("../examples/cart-supply-review-demo.json",import.meta.url),"utf8"));
+  const demo=await buildCartSupplyReviewDemo();
+  assert.deepEqual(stored,demo);
+  assert.deepEqual(demo.before.options.map(({id,total})=>[id,total]),[["karaage",240],["edamame",185]]);
+  assert.deepEqual(demo.after.options.map(({id})=>id),["edamame"]);
+  assert.equal(demo.rejected,"portion_limit");
+  assert.equal(demo.receipt.total,demo.after.options[0].total);
+  assert.equal(demo.receipt.paymentMethod,demo.original.paymentMethod);
+  assert.doesNotMatch(JSON.stringify(demo),/"(?:token|reference|note|merchant)"/);
 });
 
 test("the receipt recovery fixture is generated from actual order, check and payment APIs",async()=>{
