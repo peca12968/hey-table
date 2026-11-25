@@ -1,4 +1,5 @@
 import {randomUUID} from "node:crypto";
+import {readFile} from "node:fs/promises";
 import {test,expect} from "@playwright/test";
 import jsQR from "jsqr";
 import {PNG} from "pngjs";
@@ -135,4 +136,56 @@ test("a table QR keeps its table when a shared list is pasted and manually submi
   await expect(page.getByText("A06 桌內用",{exact:true})).toBeVisible();
   expect(payloads).toHaveLength(1);
   expect(payloads[0]).toMatchObject({mode:"table",table:"A06",items:[{id:"sencha",qty:2}]});
+});
+
+test("a shared cart QR and its downloaded image follow the current list across phones",async({page,browser})=>{
+  await page.setViewportSize({width:360,height:780});
+  await page.goto("/?table=A05");
+  await page.getByRole("button",{name:"加入日式熱煎茶"}).click();
+  await page.getByRole("button",{name:"加入滑蛋豬排丼",exact:true}).click();
+  await openCart(page);
+  await page.getByLabel(/訂單備註/).fill("分享時保留在原手機");
+  await cart(page).getByRole("button",{name:"分享點餐清單"}).click();
+  const image=cart(page).getByRole("img",{name:"點餐清單 QR 碼",exact:true});
+  await expect(image).toHaveCount(0);
+  await cart(page).getByRole("button",{name:"顯示清單 QR 碼"}).click();
+  await expect(image).toBeVisible();
+  const decode=async()=>{
+    const png=PNG.sync.read(await image.screenshot());
+    return jsQR(new Uint8ClampedArray(png.data),png.width,png.height)?.data;
+  };
+  const textbox=cart(page).getByRole("textbox",{name:"點餐清單連結",exact:true});
+  const original=await decode();
+  expect(original).toBe(await textbox.inputValue());
+  await cart(page).getByRole("button",{name:"增加日式熱煎茶"}).click();
+  await expect(textbox).not.toHaveValue(original);
+  const link=await decode();
+  expect(link).toBe(await textbox.inputValue());
+  expect(new URL(link).search).toBe("");
+  expect(readCartShare(new URLSearchParams(new URL(link).hash.slice(1)).get("cart"))).toEqual([
+    {id:"katsudon",qty:1},{id:"sencha",qty:2},
+  ]);
+  const [file]=await Promise.all([page.waitForEvent("download"),cart(page).getByRole("link",{name:"下載清單 QR 碼"}).click()]);
+  expect(file.suggestedFilename()).toBe("heri-order-list.gif");
+  const src=await image.getAttribute("src");
+  expect(await readFile(await file.path())).toEqual(Buffer.from(src.split(",")[1],"base64"));
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBe(360);
+  const receiver=await browser.newContext({viewport:{width:360,height:780}});
+  try{
+    const other=await receiver.newPage();
+    let submitted=false;
+    other.on("request",req=>{if(req.method()==="POST"&&new URL(req.url()).pathname==="/api/orders")submitted=true;});
+    await other.goto(link);
+    const check=preview(other);
+    await expect(check.getByText("線上自取",{exact:true})).toBeVisible();
+    await expect(check.getByText("清單 2 份 · 可加入 2 份")).toBeVisible();
+    await expect(cart(other).getByText("0 件")).toBeVisible();
+    await confirm(other).click();
+    await expect(cart(other).getByText("3 件")).toBeVisible();
+    await expect(other.getByLabel(/訂單備註/)).toBeEmpty();
+    expect(submitted).toBe(false);
+  }finally{await receiver.close();}
+  await cart(page).getByRole("button",{name:"收起 QR 碼"}).click();
+  await expect(image).toHaveCount(0);
+  await expect(textbox).toHaveValue(link);
 });

@@ -59,6 +59,9 @@
 .cartShare{margin:12px 0}
 .cartShare input{margin-bottom:8px}
 .cartShare [role=status]{margin-top:8px}
+.cartShareQr:not([hidden]){display:grid;justify-items:start;gap:8px;margin-top:12px}
+.cartShareQr img{display:block;max-width:100%;height:auto;background:white;image-rendering:pixelated}
+.cartShareQr .outline{min-height:40px}
 .sharedCartReview h3{margin:0 0 8px}
 .sharedCartReview li small{flex-basis:100%;color:var(--muted)}
 .sharedCartReview>.outline{margin:8px 0 0}

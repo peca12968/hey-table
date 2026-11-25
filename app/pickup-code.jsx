@@ -1,7 +1,7 @@
 "use client";
 
 import {useMemo,useSyncExternalStore} from "react";
-import qrcode from "qrcode-generator";
+import {qrImage} from "../lib/qr-image.mjs";
 
 const subscribe=()=>()=>{};
 const browserOrigin=()=>location.origin;
@@ -13,10 +13,7 @@ export default function PickupCode({number}){
     if(!origin)return "";
     const scanUrl=new URL("/kitchen",origin);
     scanUrl.searchParams.set("pickup",number);
-    const code=qrcode(0,"M");
-    code.addData(scanUrl.href);
-    code.make();
-    return code.createDataURL(6,24);
+    return qrImage(scanUrl.href);
   },[origin,number]);
   return <details className="pickupCode">
     <summary>出示取餐 QR 碼</summary>

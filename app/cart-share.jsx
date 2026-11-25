@@ -1,14 +1,20 @@
 "use client";
 
-import {useRef,useState} from "react";
+import {useMemo,useRef,useState} from "react";
 import {cartShareAddressLimit,cartShareLink,readCartShareAddress} from "../lib/cart-share.mjs";
+import {qrImage} from "../lib/qr-image.mjs";
 
 const focusHeading=node=>node?.focus();
 
 export function ShareCart({items,disabled}){
   const [origin,setOrigin]=useState(""),[notice,setNotice]=useState(null);
+  const [showQr,setShowQr]=useState(false);
   const input=useRef(null);
   const link=origin&&cartShareLink(origin,items);
+  const qr=useMemo(()=>{
+    if(!link||!showQr)return "";
+    try{return qrImage(link);}catch{return "";}
+  },[link,showQr]);
 
   async function copy(){
     try{await navigator.clipboard.writeText(link);setNotice({link,text:"已複製點餐清單連結。"});}
@@ -16,12 +22,26 @@ export function ShareCart({items,disabled}){
   }
 
   return <div className="cartShare">
-    <button className="outline" aria-expanded={!!link} disabled={disabled} onClick={()=>setOrigin(link?"":location.origin)}>分享點餐清單</button>
+    <button className="outline" aria-expanded={!!link} disabled={disabled} onClick={()=>{
+      if(link){setOrigin("");setShowQr(false);}
+      else setOrigin(location.origin);
+    }}>分享點餐清單</button>
     {link&&<section className="supplyReview" aria-label="分享點餐清單連結">
       <p>連結只含品項與份數。開啟可接續自取，掃描桌牌後也可貼到內用餐單。</p>
       <input ref={input} aria-label="點餐清單連結" value={link} readOnly onFocus={event=>event.currentTarget.select()}/>
-      <button className="outline" disabled={disabled} onClick={copy}>複製清單連結</button>
+      <div className="actions">
+        <button className="outline" disabled={disabled} onClick={copy}>複製清單連結</button>
+        <button className="outline" disabled={disabled} aria-expanded={showQr} aria-controls="cart-share-qr"
+          onClick={()=>setShowQr(value=>!value)}>{showQr?"收起 QR 碼":"顯示清單 QR 碼"}</button>
+      </div>
       {notice?.link===link&&<p role="status">{notice.text}</p>}
+      <div id="cart-share-qr" className="cartShareQr" hidden={!showQr}>
+        {qr?<>
+          {/* eslint-disable-next-line @next/next/no-img-element -- The generated GIF is already a local data URL. */}
+          <img src={qr} width="216" height="216" alt="點餐清單 QR 碼"/>
+          <a className="outline" href={qr} download="heri-order-list.gif">下載清單 QR 碼</a></>:
+          showQr&&<p role="status">這份清單暫時無法產生 QR 碼，可以複製清單連結。</p>}
+      </div>
     </section>}
   </div>;
 }
