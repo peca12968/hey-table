@@ -315,11 +315,17 @@ test("staff can view a Taiwan-date summary and download the displayed snapshot o
   const {id,created}=await response.json();
   for(const [from,to] of [["pending","preparing"],["preparing","ready"],["ready","completed"]])
     expect((await request.patch("/api/kitchen/status",{headers,data:{id,from,to}})).ok()).toBe(true);
+  const table=await request.post("/api/orders",{data:{token:randomUUID(),mode:"table",table:"A03",note:"",items:[{id:"sencha",qty:1}]}});
+  expect(table.ok(),await table.text()).toBe(true);
+  const tableOrder=await table.json();
+  for(const [from,to] of [["pending","preparing"],["preparing","ready"],["ready","completed"]])
+    expect((await request.patch("/api/kitchen/status",{headers,data:{id:tableOrder.id,from,to}})).ok()).toBe(true);
   await page.goto("/kitchen");
   await page.getByRole("link",{name:"每日訂單摘要"}).click();
   const date=page.getByLabel("餐單日期");
   const query=page.getByRole("button",{name:"查詢摘要"});
   const download=page.getByRole("button",{name:"下載摘要 JSON"});
+  const downloadCsv=page.getByRole("button",{name:"下載份數 CSV"});
   await expect(download).toBeVisible();
   await date.fill(businessDate(created));
   const read=page.waitForResponse(response=>new URL(response.url()).pathname==="/api/kitchen/daily");
@@ -327,7 +333,12 @@ test("staff can view a Taiwan-date summary and download the displayed snapshot o
   const report=await (await read).json();
   await expect(page.locator(".dailyCapture time")).toHaveAttribute("datetime",new Date(report.capturedAt).toISOString());
   await expect(page.getByRole("heading",{name:"每日訂單摘要"})).toBeVisible();
-  await expect(page.getByRole("row",{name:/日式熱煎茶/})).toBeVisible();
+  const tea=report.items.find(item=>item.id==="sencha");
+  expect(tea.pickupQty).toBeGreaterThanOrEqual(2);
+  expect(tea.tableQty).toBeGreaterThanOrEqual(1);
+  expect(tea.pickupQty+tea.tableQty).toBe(tea.qty);
+  const teaRow=page.getByRole("row",{name:/日式熱煎茶/});
+  await expect(teaRow.getByRole("cell")).toHaveText([tea.pickupQty,tea.tableQty,tea.qty].map(String));
   const timing=page.getByRole("region",{name:"製作與交餐耗時"});
   const pickup=timing.getByRole("article",{name:"自取耗時",exact:true});
   expect(report.timing.pickup.preparation.samples).toBeGreaterThan(0);
@@ -342,10 +353,19 @@ test("staff can view a Taiwan-date summary and download the displayed snapshot o
   expect(file.suggestedFilename()).toContain("hey-table-daily-"+report.date);
   expect(JSON.parse(await readFile(await file.path(),"utf8"))).toEqual(report);
   expect(JSON.stringify(report)).not.toContain("交班測試備註");
+  const pendingCsv=page.waitForEvent("download");
+  await downloadCsv.click();
+  const csvFile=await pendingCsv;
+  expect(csvFile.suggestedFilename()).toBe("hey-table-portions-"+report.date+"-"+new Date(report.capturedAt).toISOString().replaceAll(":","-")+".csv");
+  const csv=await readFile(await csvFile.path(),"utf8");
+  expect(csv.charCodeAt(0)).toBe(0xfeff);
+  expect(csv).toContain('"'+report.date+'","'+new Date(report.capturedAt).toISOString()+'","sencha","日式熱煎茶",'+[tea.pickupQty,tea.tableQty,tea.qty].join(",")+"\r\n");
+  expect(csv).not.toContain("交班測試備註");
   await date.fill("2001-03-05");
   await expect(download).toHaveCount(0);
   await query.click();
   await expect(page.getByText("這一天沒有已交餐品項。")).toBeVisible();
+  await expect(downloadCsv).toHaveCount(0);
   await expect(timing.getByText("目前無可用時間紀錄")).toHaveCount(4);
 });
 

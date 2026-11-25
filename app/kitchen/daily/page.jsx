@@ -2,6 +2,7 @@
 import {useEffect,useState} from "react";
 import {Header,Footer,request} from "../../shared";
 import {businessDate} from "../../../lib/business-day.mjs";
+import {downloadFile} from "../../../lib/download-file.mjs";
 import {downloadJson} from "../../../lib/download-json.mjs";
 import "./daily.css";
 
@@ -12,6 +13,19 @@ const statusFields = [
   ["orders","全部餐單"],["pending","待接單"],["preparing","製作中"],
   ["ready","待交餐"],["completed","已交餐"],["cancelled","已取消"],
 ];
+
+function downloadPortions(report) {
+  const capturedAt = new Date(report.capturedAt).toISOString();
+  const rows = [["餐單日期","擷取時間 (UTC)","品項編號","餐點","自取份數","內用份數","合計份數"],
+    ...report.items.map(({id,name,pickupQty,tableQty,qty})=>[report.date,capturedAt,id,name,pickupQty,tableQty,qty])];
+  const csv = rows.map(row=>row.map(value=>{
+    if(typeof value==="number")return String(value);
+    const text=String(value);
+    const escaped=/^\s*[=+@-]|^[\t\r\n]/.test(text)?"'"+text:text;
+    return '"'+escaped.replaceAll('"','""')+'"';
+  }).join(",")).join("\r\n")+"\r\n";
+  downloadFile(new Blob(["\uFEFF",csv],{type:"text/csv;charset=utf-8"}),"hey-table-portions-"+report.date+"-"+capturedAt.replaceAll(":","-")+".csv");
+}
 
 function ChannelSummary({name,summary}) {
   return <section className="sheet dailyChannel">
@@ -61,7 +75,7 @@ export default function DailyOperations() {
     if(!query)return;
     const controller=new AbortController();
     const key=sessionStorage.getItem("he-ri-staff");
-    request("/api/kitchen/daily?date="+encodeURIComponent(query.date)+"&timing=1",{
+    request("/api/kitchen/daily?date="+encodeURIComponent(query.date)+"&timing=1&itemChannels=1",{
       signal:controller.signal,headers:key?{Authorization:"Bearer "+key}:{},
     }).then(value=>{
       if(!controller.signal.aborted)setReport(value);
@@ -99,9 +113,15 @@ export default function DailyOperations() {
       </div>
       {report.timing&&<DurationSummary timing={report.timing}/>}
       <section className="sheet dailyDishes">
-        <h2>已交餐品項</h2>
-        {report.items.length?<table aria-label="已交餐份數"><thead><tr><th scope="col">餐點</th><th scope="col">份數</th></tr></thead>
-          <tbody>{report.items.map(({id,name,qty})=><tr key={id}><th scope="row">{name}</th><td>{qty}</td></tr>)}</tbody>
+        <div className="actions dailyDishesHeader">
+          <h2>已交餐品項</h2>
+          {report.items.length>0&&<button className="outline" onClick={()=>downloadPortions(report)}>下載份數 CSV</button>}
+        </div>
+        {report.items.length?<table aria-label="已交餐份數">
+          <thead><tr><th scope="col">餐點</th><th scope="col">自取</th><th scope="col">內用</th><th scope="col">合計</th></tr></thead>
+          <tbody>{report.items.map(({id,name,pickupQty,tableQty,qty})=><tr key={id}>
+            <th scope="row">{name}</th><td>{pickupQty}</td><td>{tableQty}</td><td>{qty}</td>
+          </tr>)}</tbody>
         </table>:<p>這一天沒有已交餐品項。</p>}
       </section>
     </>}

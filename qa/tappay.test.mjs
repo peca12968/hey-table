@@ -221,6 +221,11 @@ test("daily operations uses Taipei midnight and aggregates completed purchase sn
     pickup:{orders:3,pending:1,preparing:1,ready:0,completed:1,cancelled:0,completedTotal:80},
     table:{orders:3,pending:0,preparing:0,ready:1,completed:1,cancelled:1,completedTotal:220},
   },items:[{id:"old-tofu",name:"舊菜單豆腐",qty:4},{id:"sencha",name:"日式熱煎茶",qty:3}]});
+  const byChannel=await (await query("date=2026-11-25&itemChannels=1")).json();
+  assert.deepEqual(byChannel.items,[
+    {id:"old-tofu",name:"舊菜單豆腐",qty:4,pickupQty:0,tableQty:4},
+    {id:"sencha",name:"日式熱煎茶",qty:3,pickupQty:2,tableQty:1},
+  ]);
   const next=await (await query("date=2026-11-26")).json();
   assert.equal(next.channels.table.completedTotal,999);
   assert.equal(next.channels.pickup.orders,0);

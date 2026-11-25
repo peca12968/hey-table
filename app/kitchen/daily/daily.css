@@ -10,9 +10,13 @@
 .dailyChannel dl div{display:flex;justify-content:space-between;gap:8px;padding:6px 0;border-bottom:1px solid var(--line)}
 .dailyChannel dd{margin:0;font-weight:650}
 .dailyDishes{margin-top:16px}
+.dailyDishesHeader{justify-content:space-between;align-items:center;gap:8px;margin-bottom:8px}
+.dailyDishesHeader h2{margin:0}
+.dailyDishesHeader button{min-height:40px}
 .dailyDishes table{border-collapse:collapse;width:100%;text-align:left}
-.dailyDishes th,.dailyDishes td{border-bottom:1px solid var(--line);padding:7px 0}
-.dailyDishes td,.dailyDishes thead th:last-child{text-align:right}
+.dailyDishes th,.dailyDishes td{border-bottom:1px solid var(--line);padding:7px 4px}
+.dailyDishes td,.dailyDishes thead th:not(:first-child){text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums}
+.dailyDishes tbody th{overflow-wrap:anywhere}
 .dailyTiming{margin-top:16px}
 .dailyTiming h2,.dailyTiming h3{margin:0}
 .dailyTiming>p{color:var(--muted);margin:6px 0 14px}

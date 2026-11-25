@@ -557,6 +557,7 @@ export async function api(request, env) {
     const range = dates.length === 1 ? businessDayRange(date) : null;
     if (!range) return fail("請選擇有效的餐單日期");
     const includeTiming=url.searchParams.get("timing")==="1";
+    const includeItemChannels=url.searchParams.get("itemChannels")==="1";
     const [,counts,portions,timings] = await db.batch([
       expirePaymentHolds(db,Date.now()),
       db.prepare(`SELECT mode, COUNT(*) AS orders, SUM(status='pending') AS pending,
@@ -565,7 +566,9 @@ export async function api(request, env) {
         SUM(CASE WHEN status='completed' THEN total ELSE 0 END) AS completedTotal
         FROM orders WHERE created>=? AND created<? GROUP BY mode`).bind(...range),
       db.prepare(`SELECT json_extract(line.value,'$.id') AS id,
-        MIN(json_extract(line.value,'$.name')) AS name, SUM(json_extract(line.value,'$.qty')) AS qty
+        MIN(json_extract(line.value,'$.name')) AS name, SUM(json_extract(line.value,'$.qty')) AS qty,
+        SUM(CASE WHEN mode='pickup' THEN json_extract(line.value,'$.qty') ELSE 0 END) AS pickupQty,
+        SUM(CASE WHEN mode='table' THEN json_extract(line.value,'$.qty') ELSE 0 END) AS tableQty
         FROM orders JOIN json_each(orders.items) AS line
         WHERE created>=? AND created<? AND status='completed'
         GROUP BY json_extract(line.value,'$.id') ORDER BY qty DESC, id`).bind(...range),
@@ -577,7 +580,9 @@ export async function api(request, env) {
       if(Object.hasOwn(channels,mode)) channels[mode]=count;
     }
     const names=new Map(dishes.map(({id,name})=>[id,name]));
-    const items=portions.results.map(({id,name,qty})=>({id,name:names.get(id)??name??id,qty}));
+    const items=portions.results.map(({id,name,qty,pickupQty,tableQty})=>({
+      id,name:names.get(id)??name??id,qty,...(includeItemChannels?{pickupQty,tableQty}:{}),
+    }));
     const capturedAt=Date.now();
     return json({format:"hey-table.daily-operations.v1",date,timeZone:"Asia/Taipei",capturedAt,channels,items,
       ...(includeTiming?{timing:dailyTiming(timings.results,capturedAt)}:{})});
