@@ -1,0 +1,1 @@
+ALTER TABLE `pickup_limit_events` ADD `restored_from_id` integer;

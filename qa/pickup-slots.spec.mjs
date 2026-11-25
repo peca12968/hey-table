@@ -600,6 +600,26 @@ test("mobile staff preview a slot batch, recover a conflict and preserve existin
     await expect(batch).toBeVisible();
     await expect(history.getByText("17:00～17:15 · 預設 12 份 → 0 份",{exact:true})).toBeVisible();
     await expect(history.getByText("17:15～17:30 · 7 份 → 0 份",{exact:true})).toBeVisible();
+    const source=history.locator("ol > li").filter({has:page.getByRole("heading",{name:"批次調整 · 2 個時段",exact:true})});
+    const previewRestore=source.getByRole("button",{name:"預覽還原變更前設定"});
+    await previewRestore.click();
+    const restoreReview=history.getByRole("region",{name:"核對還原設定"});
+    const restore=restoreReview.getByRole("button",{name:"確認還原"});
+    await expect(restoreReview.getByText("17:00～17:15 · 0 份 → 預設 12 份 · 已占用 1 份",{exact:true})).toBeVisible();
+    expect((await change(second,3,after.get(second).revision)).ok()).toBe(true);
+    await restore.click();
+    await expect(page.getByRole("alert")).toHaveText("預約狀態已更新、截止或已是目標設定，請重新核對後再還原。");
+    expect((await settings()).get(first)).toMatchObject({capacity:0,revision:after.get(first).revision,used:1});
+    await previewRestore.click();
+    await expect(restoreReview.getByText("17:15～17:30 · 3 份 → 7 份 · 已占用 0 份",{exact:true})).toBeVisible();
+    await restore.click();
+    await expect(page.getByText("已還原 2 個時段的上限。",{exact:true})).toBeVisible();
+    await expect(history.getByRole("heading",{name:"還原 · 批次調整 · 2 個時段",exact:true})).toBeVisible();
+    await expect(history.getByText(/依第 \d+ 筆還原/)).toBeVisible();
+    const restored=await settings();
+    expect(restored.get(first)).toMatchObject({capacity:null,used:1,remaining:11});
+    expect(restored.get(second)).toMatchObject({capacity:7,used:0,remaining:7});
+    expect(await (await request.get("/api/ticket",{headers:{"X-Ticket":order.token}})).json()).toMatchObject({pickupSlot:first,status:"pending"});
     expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBe(360);
   }finally{
     if(booked)await request.post("/api/ticket/cancel",{headers:{"X-Ticket":order.token},data:{}});

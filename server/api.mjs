@@ -11,7 +11,7 @@ import {dailyTiming,dailyTimingRows} from "./daily-timing.mjs";
 import {kitchenOverdue} from "./kitchen-overdue.mjs";
 import {bookedPickupDate,pickupBookingDays,pickupCalendarStatus,pickupPrepLead,pickupSlotCapacity,pickupSlotsForDay} from "../lib/pickup-slots.mjs";
 import {canReschedulePickup,capacityAtPickupSlot,editablePickupSlots,orderPortions,pickupChanges,pickupSlotLimits,
-  pickupDayPaused,pickupDaySettings,pickupLimitHistory,pickupSlotOptions,pickupSlotUsage,pickupSlots,savePickupDay,
+  pickupDayPaused,pickupDaySettings,pickupLimitEvent,pickupLimitHistory,pickupSlotOptions,pickupSlotUsage,pickupSlots,savePickupDay,
   savePickupSlotLimits,suggestCartPickupSlot,
   suggestPickupSlot,usedAtPickupSlot} from "./pickup-slots.mjs";
 import {pickupCalendar} from "./pickup-calendar.mjs";
@@ -347,6 +347,29 @@ export async function api(request, env) {
       return fail("請確認取餐日期與紀錄查詢範圍。");
     return json(await pickupLimitHistory(db,date,before));
   }
+  if(path==="/api/kitchen/pickup-slots/restore"&&method==="PATCH"){
+    const {date,fromId,revision,slots}=input;
+    if(!businessDayRange(date)||!Number.isSafeInteger(fromId)||fromId<1)return fail("請確認取餐日期與還原來源。");
+    const source=await pickupLimitEvent(db,date,fromId);
+    if(!source)return fail("找不到這一天的調整紀錄。",404);
+    const now=Date.now(),editable=new Set(editablePickupSlots(date,now));
+    const validVersion=value=>Number.isSafeInteger(value)&&value>=0&&value<Number.MAX_SAFE_INTEGER;
+    const conflict="預約狀態已更新、截止或已是目標設定，請重新核對後再還原。";
+    if(source.kind==="day"){
+      if(!validVersion(revision)||slots!==undefined)return fail("請確認整日預約版本。");
+      const accepting=source.changes[0].previousAccepting;
+      if(!editable.size||!await savePickupDay(db,date,accepting,revision,now,fromId))return fail(conflict,409);
+      return json({date,accepting,revision:revision+1,restoredFromId:fromId});
+    }
+    if(revision!==undefined||!Array.isArray(slots)||slots.length!==source.changes.length||
+      slots.some(slot=>!slot||!validVersion(slot.revision)))return fail("請核對所有時段與版本。");
+    const versions=new Map(slots.map(slot=>[slot.start,slot.revision]));
+    if(source.changes.some(change=>!versions.has(change.start)))return fail("請核對所有時段與版本。");
+    if(source.changes.some(change=>!editable.has(change.start)))return fail(conflict,409);
+    const plan=source.changes.map(({start,previousCapacity})=>({start,capacity:previousCapacity,revision:versions.get(start)}));
+    const saved=await savePickupSlotLimits(db,date,plan,source.kind,now,fromId);
+    return saved.length?json({date,slots:saved,restoredFromId:fromId}):fail(conflict,409);
+  }
   if(path==="/api/kitchen/pickup-day"&&method==="PATCH"){
     const {date,accepting,revision}=input;
     if(!businessDayRange(date)||typeof accepting!=="boolean"||!Number.isSafeInteger(revision)||revision<0||revision>=Number.MAX_SAFE_INTEGER)
@@ -368,7 +391,7 @@ export async function api(request, env) {
     const now=Date.now(),editable=new Set(editablePickupSlots(date,now));
     const conflict="部分時段已截止或上限已變更，整批未儲存。請重新核對。";
     if(slots.some(slot=>!editable.has(slot.start)))return fail(batch?conflict:"此時段已停止預約，無法調整上限。",409);
-    const saved=await savePickupSlotLimits(db,date,capacity,slots,batch?"batch":"slot",now);
+    const saved=await savePickupSlotLimits(db,date,slots.map(slot=>({start:slot.start,revision:slot.revision,capacity})),batch?"batch":"slot",now);
     if(!saved.length)return fail(batch?conflict:"上限已由其他店員更新，請重新載入。",409);
     return batch?json({date,slots:saved}):json({date,...saved[0]});
   }

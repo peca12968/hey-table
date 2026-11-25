@@ -22,3 +22,7 @@
 .limitHistory ol{padding:0;list-style:none}.limitHistory ol>li{padding-block:8px;border-top:1px solid var(--line)}
 .limitHistory h3{margin:0;font-size:1rem}.limitHistory time{font-size:.85rem;color:var(--muted)}
 .limitHistory ul{margin:4px 0 0;padding-left:16px}
+.historyEventDate{margin:2px 0 6px;font-size:.85rem;color:var(--muted)}
+.historyRestoreButton{margin-top:8px;min-height:42px}
+.pickupRestore{margin-top:10px;padding:10px;border:1px solid var(--line);border-radius:8px}
+.pickupRestore h4,.pickupRestore p{margin:0 0 6px}.pickupRestore ul{margin-bottom:6px}.pickupRestore .actions{gap:8px}

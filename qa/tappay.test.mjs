@@ -1396,6 +1396,63 @@ test("pickup limit history preserves preexisting settings and records only commi
   assert.equal((await read("pickup-slots/history?date=2026-11-26")).events.length,1);
 });
 
+test("restore pickup history uses original values and rejects stale, expired and partial writes",async t=>{
+  const date="2026-11-25",first=Date.parse(date+"T12:00:00+08:00"),second=first+900_000;
+  let now=first-75*60_000;
+  t.mock.method(Date,"now",()=>now);
+  const db=database((tag,sqlite)=>{
+    if(tag!=="0029_pickup_limit_restore_sources")return;
+    const insert=sqlite.prepare("INSERT INTO pickup_slot_limits VALUES (?,0,2)");
+    insert.run(first);insert.run(second);
+    sqlite.prepare("INSERT INTO pickup_limit_events(operation_id,date,changed_at,kind,changes) VALUES (?,?,?,'batch',?)")
+      .run("earlier-event",date,now-1000,JSON.stringify([
+        {start:first,previousCapacity:null,capacity:0,revision:2},
+        {start:second,previousCapacity:5,capacity:0,revision:2},
+      ]));
+  });
+  t.after(()=>db.sqlite.close());
+  const runtime={DB:db,STAFF_KEY:"fixture-staff"},staff={Authorization:"Bearer fixture-staff"};
+  const call=(path,options)=>api(new Request("https://order.example/api/kitchen/"+path,options),runtime);
+  const patch=(path,input,headers=staff)=>call(path,{
+    method:"PATCH",headers:{...headers,"Content-Type":"application/json"},body:JSON.stringify({date,...input}),
+  });
+  const restore=(input,headers=staff)=>patch("pickup-slots/restore",{fromId:1,...input},headers);
+  const history=async()=>(await (await call("pickup-slots/history?date="+date,{headers:staff})).json()).events;
+  const selections=[{start:second,revision:2},{start:first,revision:2}];
+  assert.equal((await restore({slots:selections},{})).status,403);
+  assert.equal((await restore({date:"2026-11-26",slots:selections})).status,404);
+  assert.equal((await restore({slots:[selections[0]]})).status,400);
+  assert.equal((await restore({slots:[selections[0],selections[0]]})).status,400);
+  assert.equal((await restore({slots:[selections[0],{start:first,revision:1}]})).status,409);
+  now=first-29*60_000;
+  assert.equal((await restore({slots:selections})).status,409);
+  now=first-50*60_000;
+  assert.equal((await history()).length,1);
+  const stored=()=>db.sqlite.prepare("SELECT start,capacity,revision FROM pickup_slot_limits ORDER BY start").all().map(row=>({...row}));
+  const original=stored();
+  db.sqlite.exec("CREATE TRIGGER fail_restore BEFORE INSERT ON pickup_slot_limits WHEN NEW.start="+second+
+    " BEGIN SELECT RAISE(ABORT,'restore rejected'); END");
+  await assert.rejects(restore({slots:selections}),/restore rejected/);
+  assert.deepEqual(stored(),original);
+  assert.equal((await history()).length,1);
+  db.sqlite.exec("DROP TRIGGER fail_restore");
+  const [a,b]=await Promise.all([restore({slots:selections}),restore({slots:selections})]);
+  assert.deepEqual([a.status,b.status].sort(),[200,409]);
+  const rows=[{start:first,capacity:null,revision:3},{start:second,capacity:5,revision:3}];
+  assert.deepEqual(await (a.ok?a:b).json(),{date,slots:rows,restoredFromId:1});
+  assert.deepEqual(stored(),rows);
+  assert.equal((await restore({slots:rows})).status,409);
+  const events=await history();
+  assert.equal(events.length,2);
+  assert.deepEqual(events[0],{id:2,kind:"batch",changedAt:now,restoredFromId:1,changes:rows.map(row=>({...row,previousCapacity:0}))});
+  assert.equal(Object.hasOwn(events[1],"restoredFromId"),false);
+  assert.equal((await patch("pickup-day",{accepting:false,revision:0})).status,200);
+  assert.equal((await restore({fromId:3,revision:0})).status,409);
+  assert.deepEqual(await (await restore({fromId:3,revision:1})).json(),{date,accepting:true,revision:2,restoredFromId:3});
+  assert.deepEqual((await history())[0],{id:4,kind:"day",changedAt:now,restoredFromId:3,
+    changes:[{previousAccepting:false,accepting:true,revision:2}]});
+});
+
 test("authorized staff can close, raise and reset an individual slot without displacing bookings",async t=>{
   const db=database();
   t.after(()=>db.sqlite.close());
