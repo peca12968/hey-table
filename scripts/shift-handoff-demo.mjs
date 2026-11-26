@@ -5,6 +5,7 @@ import {fileURLToPath} from "node:url";
 import {businessDayRange} from "../lib/business-day.mjs";
 import {collectCash} from "../server/cash-receipts.mjs";
 import {paymentApi} from "../server/payment-api.mjs";
+import {readPaymentAttentionNotes,recordPaymentAttentionNote} from "../server/payment-attention-notes.mjs";
 import {shiftHandoff} from "../server/shift-handoff.mjs";
 import {applyDemoMigrations} from "./apply-demo-migrations.mjs";
 import {sqliteD1} from "./sqlite-d1.mjs";
@@ -27,8 +28,20 @@ export async function buildShiftHandoffDemo(){
     insert.run(84,token,"pending",started-1000,null,null,null,"line_pay","demo");
     sqlite.prepare("INSERT INTO payment_attempts(order_id,reference,merchant,state,created) VALUES (?,?,'demo','pending',?)")
       .run(84,reference,started);
+    const note=async(followUpAt,at,note)=>{
+      const {target}=await readPaymentAttentionNotes(db,84);
+      return recordPaymentAttentionNote(db,{id:84,attemptId:target.attemptId,state:target.state,
+        operationId:crypto.randomUUID(),note,followUpAt,followUpVersion:target.followUpVersion??null},at);
+    };
+    assert.equal((await note(opening,opening-minute,"上班時再次核對付款")).followUpAt,opening);
     const before=await shiftHandoff(db,date,range,opening);
     assert.deepEqual([before.pickup.unreported.total,before.pickup.arrived.total,before.payments.total,before.cash.total],[1,1,1,1]);
+    assert.equal(before.payments.followUpsDue,1);
+    const next=opening+15*minute;
+    assert.equal((await note(next,opening+1000,"仍待付款確認，改為下一個追蹤時間")).followUpAt,next);
+    const rescheduled=await shiftHandoff(db,date,range,opening+1000);
+    assert.equal(rescheduled.payments.total,1);
+    assert.equal(rescheduled.payments.followUpsDue,0);
 
     sqlite.prepare("UPDATE orders SET pickup_arrived_at=? WHERE id=81").run(opening+minute);
     sqlite.prepare("UPDATE orders SET status='completed' WHERE id=82").run();
@@ -42,7 +55,9 @@ export async function buildShiftHandoffDemo(){
     assert.equal((await response.json()).attempt.state,"paid");
     const after=await shiftHandoff(db,date,range,closing);
     assert.deepEqual([after.pickup.unreported.total,after.pickup.arrived.total,after.payments.total,after.cash.total],[0,0,0,0]);
-    return {format:"hey-table.shift-handoff-demo.v1",scenes:[{stage:"open",snapshot:before},{stage:"resolved",snapshot:after}]};
+    return {format:"hey-table.shift-handoff-demo.v1",scenes:[
+      {stage:"open",snapshot:before},{stage:"rescheduled",snapshot:rescheduled},{stage:"resolved",snapshot:after},
+    ]};
   }finally{
     sqlite.close();
   }

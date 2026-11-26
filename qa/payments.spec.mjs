@@ -44,6 +44,54 @@ test("mobile shift handoff opens cash review and removes the order after collect
   await expect(cash.getByRole("link",{name:"餐單 #"+number})).toHaveCount(0);
 });
 
+test("mobile shift handoff opens the due payment attempt and preserves the date after rescheduling",async({page,request})=>{
+  const token=randomUUID(),customer={"X-Ticket":token},notesApi="/api/kitchen/payment-attention-notes";
+  const created=await request.post("/api/orders",{data:{token,mode:"pickup",note:"",
+    items:[{id:"sencha",qty:1}],paymentMethod:"line_pay",paymentEnv:"demo"}});
+  expect(created.ok()).toBe(true);
+  const {id}=await created.json(),number=String(id).padStart(4,"0");
+  const payment=await request.post("/api/payments/start",{headers:customer,data:{}});
+  expect(payment.ok()).toBe(true);
+  const {attempt}=await payment.json();
+  const getNotes=async()=>(await (await request.get(notesApi+"?id="+id,{headers:staff})).json());
+  const {target}=await getNotes();
+  const earlier=Date.now()-7*24*3_600_000;
+  const note=await request.post(notesApi,{headers:staff,data:{id,attemptId:target.attemptId,state:target.state,
+    operationId:randomUUID(),note:"交班時核對這筆付款",followUpAt:earlier,followUpVersion:null}});
+  expect(note.status()).toBe(200);
+  const board="/kitchen/shift-handoff?date=2025-02-08";
+  const first=await (await request.get("/api"+board,{headers:staff})).json();
+  expect(first.payments.followUpsDue).toBeGreaterThan(0);
+  await page.setViewportSize({width:360,height:780});
+  await page.addInitScript(()=>sessionStorage.setItem("he-ri-staff","local-test-kitchen"));
+  await page.goto(board);
+  const group=page.getByRole("region",{name:/線上付款待核對/}),linkName="餐單 #"+number;
+  const row=group.getByRole("listitem").filter({has:page.getByRole("link",{name:linkName,exact:true})});
+  await expect(row).toContainText("已到追蹤時間");
+  await expect(group.getByRole("link",{name:"開啟已到期追蹤"})).toHaveAttribute("href","/kitchen/payment-attention?followUp=due");
+  await expect(group.getByText("交班時核對這筆付款")).toHaveCount(0);
+  await row.getByRole("link",{name:linkName}).click();
+  expect(new URL(page.url()).searchParams.get("attempt")).toBe(String(target.attemptId));
+  const notes=page.locator("#payment-attention-notes");
+  await expect(notes.getByText("交班時核對這筆付款",{exact:true})).toBeVisible();
+  await notes.getByRole("textbox",{name:"交班備註"}).fill("先確認金流，下一班再追蹤");
+  await notes.getByLabel("追蹤時間處理").selectOption("set");
+  const next=new Date(Date.now()+8*3_600_000+7*24*3_600_000).toISOString().slice(0,16);
+  await notes.getByLabel("追蹤時間（台灣）").fill(next);
+  await notes.getByRole("button",{name:"儲存交班備註"}).click();
+  await expect(notes.getByText("已儲存交班備註。")).toBeVisible();
+  expect((await getNotes()).target.followUpAt).toBe(Date.parse(next+":00+08:00"));
+
+  await page.getByRole("link",{name:"返回交班待辦"}).click();
+  await expect(page).toHaveURL(board);
+  await expect(group).toContainText("已到追蹤時間 "+(first.payments.followUpsDue-1)+" 筆");
+  const again=await (await request.get("/api"+board,{headers:staff})).json();
+  expect(again.payments.total).toBe(first.payments.total);
+  expect(again.payments.followUpsDue).toBe(first.payments.followUpsDue-1);
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBe(360);
+  expect((await request.post("/api/payments/demo",{headers:customer,data:{ref:attempt.ref,outcome:"paid"}})).ok()).toBe(true);
+});
+
 test("mobile receipt switches the original unpaid order to cash and recovers a lost switch response",async({page,request})=>{
   await page.setViewportSize({width:360,height:780});
   const token=randomUUID(),guest={"X-Ticket":token};

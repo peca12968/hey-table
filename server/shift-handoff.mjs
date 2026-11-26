@@ -1,5 +1,6 @@
 import {cashRecorded,completedOnDay} from "./daily-payment-summary.mjs";
 import {openPaymentAttention,paymentAttentionTable} from "./payment-attention.mjs";
+import {paymentFollowUpDue,paymentFollowUpJoin} from "./payment-attention-notes.mjs";
 import {latestState} from "./payment-api.mjs";
 import {pickupFollowUp} from "./pickup-roster.mjs";
 
@@ -14,10 +15,14 @@ export async function shiftHandoff(db,date,range,capturedAt){
     db.prepare(`SELECT id,status,payment_method,COALESCE(${latestState},'unpaid') AS payment_state,
         pickup_slot,pickup_arrived_at,created,status_history
       FROM orders WHERE mode='pickup' AND status='ready' AND pickup_slot>=? AND pickup_slot<?`).bind(...range),
-    db.prepare(`SELECT orders.id,orders.payment_method AS method,orders.payment_env AS environment,
-        attempt.state,attempt.created AS startedAt,COUNT(*) OVER () AS total
-      ${paymentAttentionTable} WHERE ${openPaymentAttention}
-      ORDER BY attempt.created,orders.id LIMIT ?`).bind(capturedAt,previewLimit),
+    db.prepare(`WITH openPayments AS (
+        SELECT orders.id,orders.payment_method AS method,orders.payment_env AS environment,
+          attempt.id AS attemptId,attempt.state,attempt.created AS startedAt,
+          NULLIF(followUp.follow_up_at,0) AS followUpAt,
+          CASE WHEN ${paymentFollowUpDue} THEN followUp.follow_up_at END AS dueAt
+        ${paymentAttentionTable} ${paymentFollowUpJoin} WHERE ${openPaymentAttention}
+      ) SELECT *,COUNT(*) OVER () AS total,COUNT(dueAt) OVER () AS followUpsDue FROM openPayments
+      ORDER BY dueAt IS NULL,dueAt,startedAt,id LIMIT ?`).bind(capturedAt,capturedAt,previewLimit),
     db.prepare(`SELECT orders.id,orders.created AS createdAt,COUNT(*) OVER () AS total
       FROM orders WHERE ${completedOnDay} AND orders.payment_method='cash' AND NOT ${cashRecorded}
       ORDER BY orders.created,orders.id LIMIT ?`).bind(...range,previewLimit),
@@ -34,6 +39,13 @@ export async function shiftHandoff(db,date,range,capturedAt){
     group.orders.sort((a,b)=>a.dueAt-b.dueAt||a.id-b.id);
     group.orders=group.orders.slice(0,previewLimit);
   }
+  const paymentPreview={
+    total:payments.results[0]?.total??0,
+    followUpsDue:payments.results[0]?.followUpsDue??0,
+    orders:payments.results.map(({total,followUpsDue,dueAt,followUpAt,...order})=>({
+      ...order,...(followUpAt===null?{}:{followUpAt}),
+    })),
+  };
   return {format:"hey-table.shift-handoff.v1",date,capturedAt,pickup,
-    payments:preview(payments.results),cash:preview(cash.results)};
+    payments:paymentPreview,cash:preview(cash.results)};
 }

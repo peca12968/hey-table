@@ -31,13 +31,70 @@
         },
         "payments": {
           "total": 1,
+          "followUpsDue": 1,
           "orders": [
             {
               "id": 84,
               "method": "line_pay",
               "environment": "demo",
+              "attemptId": 1,
               "state": "pending",
-              "startedAt": 1795621500000
+              "startedAt": 1795621500000,
+              "followUpAt": 1795664700000
+            }
+          ]
+        },
+        "cash": {
+          "total": 1,
+          "orders": [
+            {
+              "id": 83,
+              "createdAt": 1795662000000
+            }
+          ]
+        }
+      }
+    },
+    {
+      "stage": "rescheduled",
+      "snapshot": {
+        "format": "hey-table.shift-handoff.v1",
+        "date": "2026-11-26",
+        "capturedAt": 1795664701000,
+        "pickup": {
+          "unreported": {
+            "total": 1,
+            "orders": [
+              {
+                "id": 81,
+                "pickupSlot": 1795663800000,
+                "dueAt": 1795664700000
+              }
+            ]
+          },
+          "arrived": {
+            "total": 1,
+            "orders": [
+              {
+                "id": 82,
+                "pickupSlot": 1795663800000,
+                "dueAt": 1795664640000
+              }
+            ]
+          }
+        },
+        "payments": {
+          "total": 1,
+          "followUpsDue": 0,
+          "orders": [
+            {
+              "id": 84,
+              "method": "line_pay",
+              "environment": "demo",
+              "attemptId": 1,
+              "state": "pending",
+              "startedAt": 1795621500000,
+              "followUpAt": 1795665600000
             }
           ]
         },
@@ -70,6 +127,7 @@
         },
         "payments": {
           "total": 0,
+          "followUpsDue": 0,
           "orders": []
         },
         "cash": {

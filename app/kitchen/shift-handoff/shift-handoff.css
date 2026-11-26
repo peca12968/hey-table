@@ -10,3 +10,4 @@
 .shiftHandoffOrders li{border-top:1px solid var(--line);padding:8px 0}
 .shiftHandoffOrders a{margin-top:0}
 .shiftHandoffOrders small{display:block}
+.shiftHandoffOrders .shiftHandoffDue{color:var(--rust);font-weight:700}

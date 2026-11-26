@@ -14,24 +14,51 @@ const timeFormat=new Intl.DateTimeFormat("zh-TW",{timeZone:"Asia/Taipei",dateSty
 const datePath=date=>pagePath+"?"+new URLSearchParams({date});
 const time=at=><time dateTime={new Date(at).toISOString()}>{timeFormat.format(at)}</time>;
 
-function Group({id,title,count,caption,group,href,action,children}){
+function Group({id,title,caption,group,href,action,secondary,children}){
+  const {total:count}=group;
   return <section className="sheet shiftHandoffGroup" aria-labelledby={id}>
     <h2 id={id}>{title}<span>{count} 筆</span></h2>
     <p>{caption}</p>
     {group.orders.length?<ul className="shiftHandoffOrders">{children}</ul>:<p>目前沒有待辦</p>}
     {count>group.orders.length&&<p>顯示前 {group.orders.length} 筆</p>}
-    <a className="textLink" href={href}>{action}</a>
+    <div className="actions">
+      <a className="textLink" href={href}>{action}</a>
+      {secondary}
+    </div>
   </section>;
 }
 
 function PickupGroup({review,group,date}){
-  return <Group id={"handoff-pickup-"+review} title={pickupRosterReviews[review]} count={group.total}
+  return <Group id={"handoff-pickup-"+review} title={pickupRosterReviews[review]}
     caption="依預約取餐日期" group={group} href={pickupRosterPath(date,null,review)} action={review==="unreported"?"開啟未回報清單":"開啟已到店清單"}>
     {group.orders.map(({id,pickupSlot,dueAt})=><li key={id}>
       <a className="textLink" href={"/kitchen?"+new URLSearchParams({booking:numberOf(id),date,slot:String(pickupSlot),review})}>
         取餐 #{numberOf(id)}</a>
       <small>{pickupWindow(pickupSlot)} · {time(dueAt)} 起需追蹤</small>
     </li>)}
+  </Group>;
+}
+
+function PaymentGroup({group,date,capturedAt}){
+  const due=group.followUpsDue??0;
+  return <Group id="handoff-payments" title="線上付款待核對"
+    caption={"跨日 · 依每張餐單最新付款嘗試 · 已到追蹤時間 "+due+" 筆"} group={group}
+    href="/kitchen/payment-attention" action="開啟付款核對"
+    secondary={due>0&&<a className="textLink" href="/kitchen/payment-attention?followUp=due">開啟已到期追蹤</a>}>
+    {group.orders.map(({id,method,environment,state,startedAt,attemptId,followUpAt})=>{
+      const overdue=followUpAt!==undefined&&followUpAt<=capturedAt;
+      const query={id:numberOf(id),from:datePath(date),
+        ...(followUpAt&&attemptId?{attempt:String(attemptId),notes:"1"}:{})};
+      return <li key={id}>
+        <a className="textLink" href={"/kitchen/order-detail?"+new URLSearchParams(query)+(query.notes?"#payment-attention-notes":"")}>
+          餐單 #{numberOf(id)}</a>
+        <small>{methods[method]??"付款方式未記錄"} · {paymentStates[state]}{environmentLabel(environment)?" · "+environmentLabel(environment):""}</small>
+        <small>{startedAt>0?time(startedAt):"付款開始時間未記錄"}</small>
+        {followUpAt!==undefined&&<small className={overdue?"shiftHandoffDue":undefined}>
+          {overdue?"已到追蹤時間":"下次追蹤"} {time(followUpAt)}
+        </small>}
+      </li>;
+    })}
   </Group>;
 }
 
@@ -80,17 +107,8 @@ export default function ShiftHandoff(){
       <div className="shiftHandoffGrid">
         <PickupGroup review="unreported" date={date} group={snapshot.pickup.unreported}/>
         <PickupGroup review="arrived" date={date} group={snapshot.pickup.arrived}/>
-        <Group id="handoff-payments" title="線上付款待核對" count={snapshot.payments.total}
-          caption="跨日 · 依每張餐單最新付款嘗試" group={snapshot.payments}
-          href="/kitchen/payment-attention" action="開啟付款核對">
-          {snapshot.payments.orders.map(({id,method,environment,state,startedAt})=><li key={id}>
-            <a className="textLink" href={"/kitchen/order-detail?"+new URLSearchParams({id:numberOf(id),from:"/kitchen/payment-attention"})}>
-              餐單 #{numberOf(id)}</a>
-            <small>{methods[method]??"付款方式未記錄"} · {paymentStates[state]}{environmentLabel(environment)?" · "+environmentLabel(environment):""}</small>
-            <small>{startedAt>0?time(startedAt):"付款開始時間未記錄"}</small>
-          </li>)}
-        </Group>
-        <Group id="handoff-cash" title="已交餐、現金缺登" count={snapshot.cash.total}
+        <PaymentGroup group={snapshot.payments} date={date} capturedAt={snapshot.capturedAt}/>
+        <Group id="handoff-cash" title="已交餐、現金缺登"
           caption="依餐單成立日期" group={snapshot.cash} href={"/kitchen/daily?"+new URLSearchParams({date})} action="開啟日結核對">
           {snapshot.cash.orders.map(({id,createdAt})=><li key={id}>
             <a className="textLink" href={"/kitchen?"+new URLSearchParams({paymentReview:numberOf(id),date})}>餐單 #{numberOf(id)}</a>

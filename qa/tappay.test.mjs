@@ -3000,6 +3000,18 @@ test("shift handoff scopes cash and pickup by Taipei date and keeps the full cou
   }
   attempt.run(21,crypto.randomUUID(),"paid",midnight+1);
   attempt.run(22,crypto.randomUUID(),"pending",now+1);
+  const savedNote=db.sqlite.prepare(`INSERT INTO payment_attention_notes(attempt_id,operation_id,state,note,recorded_at,follow_up_at)
+    SELECT id,?,state,'private note',?,? FROM payment_attempts WHERE order_id=? ORDER BY id LIMIT 1`);
+  const note=(id,deadline)=>savedNote.run(crypto.randomUUID(),now-minute,deadline,id);
+  note(20,now-minute);
+  note(20,0);
+  note(21,now-minute);
+  note(22,now-minute);
+  note(23,now+minute);
+  note(23,null);
+  note(30,now-minute);
+  note(31,now);
+  note(32,now-2*minute);
   assert.equal((await call("shift-handoff",{})).status,403);
   for(const invalid of ["?date=2026-02-30","?date=","?date="+date+"&date="+date])
     assert.equal((await call("shift-handoff"+invalid)).status,400);
@@ -3015,14 +3027,26 @@ test("shift handoff scopes cash and pickup by Taipei date and keeps the full cou
   });
   assert.deepEqual(snapshot.cash,{total:1,orders:[{id:2,createdAt:midnight}]});
   assert.equal(snapshot.payments.total,11);
-  assert.deepEqual(snapshot.payments.orders.map(row=>row.id),[20,23,24,25,26,27,28,29,30,31]);
+  assert.equal(snapshot.payments.followUpsDue,3);
+  assert.deepEqual(snapshot.payments.orders.map(row=>row.id),[32,30,31,20,23,24,25,26,27,28]);
+  assert.deepEqual(snapshot.payments.orders.slice(0,5).map(row=>row.followUpAt),
+    [now-2*minute,now-minute,now,undefined,now+minute]);
+  assert.equal(snapshot.payments.orders[0].attemptId,
+    db.sqlite.prepare("SELECT id FROM payment_attempts WHERE order_id=32").get().id);
   assert.ok(!/private|token|merchant|status_history|reference/.test(JSON.stringify(snapshot)));
   const queue=await (await call("payment-attention?summary=1")).json();
   assert.equal(queue.summary.totals.orders,snapshot.payments.total);
+  const due=await (await call("payment-attention?summary=1&followUp=due")).json();
+  assert.equal(due.summary.totals.orders,snapshot.payments.followUpsDue);
+  assert.deepEqual(due.orders.map(row=>row.id),[30,31,32]);
   const older=await (await call("shift-handoff?date="+oldDate)).json();
   assert.deepEqual(older.payments,snapshot.payments);
   assert.deepEqual(older.cash.orders.map(row=>row.id),[1]);
   assert.equal(older.pickup.unreported.total+older.pickup.arrived.total,0);
+  for(const id of [20,23,24,25,26,27,28,29])note(id,now-minute);
+  const capped=await (await call("shift-handoff")).json();
+  assert.equal(capped.payments.followUpsDue,11);
+  assert.equal(capped.payments.orders.length,10);
 });
 
 test("shift handoff demo recomputes opening and resolved snapshots",async()=>{

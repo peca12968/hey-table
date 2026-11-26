@@ -6,6 +6,7 @@ const columns="note.id,note.state,note.note,note.recorded_at AS recordedAt,attem
 export const latestFollowUpId=`SELECT follow.id FROM payment_attention_notes AS follow
   WHERE follow.attempt_id=attempt.id AND follow.follow_up_at IS NOT NULL ORDER BY follow.id DESC LIMIT 1`;
 export const paymentFollowUpJoin=`LEFT JOIN payment_attention_notes AS followUp ON followUp.id=(${latestFollowUpId})`;
+export const paymentFollowUpDue="followUp.follow_up_at BETWEEN 1 AND ?";
 
 function formatNote({followUpAt,...entry}){
   return followUpAt===null?entry:{...entry,followUpAt:followUpAt||null};

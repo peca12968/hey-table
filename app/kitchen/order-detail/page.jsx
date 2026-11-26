@@ -98,7 +98,9 @@ export default function KitchenOrderDetail(){
   const delayReturn=from==="/kitchen?view=pickup-delay"?from:null;
   const delayReportDate=from?.match(/^\/kitchen\/daily\?date=(\d{4}-\d{2}-\d{2})#pickup-delay-report$/)?.[1];
   const delayReportReturn=businessDayRange(delayReportDate)?from:null;
-  const returnPath=historyReturn||paymentReturn||delayReturn||delayReportReturn;
+  const shiftDate=from?.match(/^\/kitchen\/shift-handoff\?date=(\d{4}-\d{2}-\d{2})$/)?.[1];
+  const shiftReturn=businessDayRange(shiftDate)?from:null;
+  const returnPath=historyReturn||paymentReturn||delayReturn||delayReportReturn||shiftReturn;
   const current=view?.number===number&&view.revision===revision?view:null;
   useEffect(()=>{
     if(!number)return;
@@ -122,6 +124,7 @@ export default function KitchenOrderDetail(){
       {paymentReturn&&<a className="textLink" href={paymentReturn}>返回待核對付款</a>}
       {delayReturn&&<a className="textLink" href={delayReturn}>返回待確認延誤</a>}
       {delayReportReturn&&<a className="textLink" href={delayReportReturn}>返回延誤通知交班</a>}
+      {shiftReturn&&<a className="textLink" href={shiftReturn}>返回交班待辦</a>}
     </div>
     <h1>查詢餐單紀錄</h1>
     <form className="actions dailyDate" action={pagePath} key={number}>

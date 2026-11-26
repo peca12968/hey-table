@@ -154,9 +154,11 @@ Stockroom 服務提供隔離品複驗工作台，可在手機瀏覽器查批號�
 
 ## 交班待辦
 
-接單台的「交班待辦」把逾時未回報到店、已到店等候過久、線上付款待核對及已交餐現金缺登整理成同一張快照。自取依預約日期，現金依餐單成立日期，付款則跨日追蹤最新一次待確認或待請款的嘗試。每組顯示完整筆數及最早的十筆，餐號可直接開啟原本的餐單，另有連結進入完整處理清單。
+接單台的「交班待辦」把逾時未回報到店、已到店等候過久、線上付款待核對及已交餐現金缺登整理成同一張快照。自取依預約日期，現金依餐單成立日期，付款則跨日追蹤最新一次待確認或待請款的嘗試。每組顯示完整筆數及最多十筆，另有連結進入完整處理清單。
 
-使用 `node scripts/shift-handoff-demo.mjs` 可用合成餐單重建處理前後兩份快照。[交班試玩（私人預覽）](https://peca-github-demo.peca12968.chatgpt.site/?demo=shiftHandoff#demos) · [日期、權限與分組測試](qa/tappay.test.mjs) · [手機補登收款測試](qa/payments.spec.mjs)
+付款先列已到追蹤時間的餐單，再依付款開始時間補上其餘待核對餐單。到期筆數涵蓋完整清單。點餐號可開啟該次付款的備註與追蹤，修改後回到原交班日期。若客人重試付款，之前嘗試的追蹤只保留在餐單歷程。[截止時間與最新嘗試測試](qa/tappay.test.mjs) · [手機調整追蹤測試](qa/payments.spec.mjs)
+
+使用 `node scripts/shift-handoff-demo.mjs` 可用合成餐單重建交班、調整付款追蹤時間及處理完成後的快照。[交班試玩（私人預覽）](https://peca-github-demo.peca12968.chatgpt.site/?demo=shiftHandoff#demos) · [日期、權限與分組測試](qa/tappay.test.mjs) · [手機補登收款測試](qa/payments.spec.mjs)
 
 ## 每日訂單摘要
 

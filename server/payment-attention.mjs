@@ -1,5 +1,5 @@
 import {methods,onlinePaymentEnvironments,paymentAttentionStates} from "../lib/payments.mjs";
-import {latestPaymentAttentionNote,paymentFollowUpJoin} from "./payment-attention-notes.mjs";
+import {latestPaymentAttentionNote,paymentFollowUpDue,paymentFollowUpJoin} from "./payment-attention-notes.mjs";
 
 const pageSize=25;
 const amountBase=1_000_000;
@@ -66,7 +66,7 @@ export async function paymentAttention(env,{state,environment,method,followUp,af
     if(value){conditions.push(column+"=?");args.push(value);}
   }
   if(followUp==="due"){
-    conditions.push("followUp.follow_up_at BETWEEN 1 AND ?");
+    conditions.push(paymentFollowUpDue);
     args.push(capturedAt);
   }
   const where=" WHERE "+conditions.join(" AND ");
