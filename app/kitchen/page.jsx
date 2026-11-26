@@ -233,7 +233,7 @@ export default function Kitchen(){
   const [entry,setEntry]=useState(""),[denied,setDenied]=useState(false),[rows,setRows]=useState(null);
   const [sold,setSold]=useState([]),[boardFilter,setBoardFilter]=useState("active"),[error,setError]=useState(""),[revision,setRevision]=useState(0),[busy,setBusy]=useState(false);
   const [exporting,setExporting]=useState(false),[exportMessage,setExportMessage]=useState("");
-  const [scope,setScope]=useState("all"),[search,setSearch]=useState("");
+  const [scope,setScope]=useState("all"),[searchInput,setSearch]=useState(null);
   const [queueAvailable,setQueueAvailable]=useState(false);
   const [actionMessage,setActionMessage]=useState("");
   const [handoffPending,setHandoffPending]=useState(null),[handoffReceipt,setHandoffReceipt]=useState(null);
@@ -248,7 +248,12 @@ export default function Kitchen(){
   const focused=Boolean(focus),delegated=focus?.kind==="delegate",handoffOnly=delegated||focus?.kind==="pickup";
   const passStorageKey=delegated?"he-ri-delegate:"+focus.number:null;
   const passScope=delegated?focus.number+":"+pickupPass:null;
-  const delayLink=new URLSearchParams(locationSearch).get("view")==="pickup-delay";
+  const query=new URLSearchParams(locationSearch);
+  const delayLink=query.get("view")==="pickup-delay";
+  const linkedOrder=delayLink?query.get("order"):null;
+  const delayOrder=linkedOrder&&/^\d{1,16}$/.test(linkedOrder)&&query.getAll("order").length===1&&
+    Number.isSafeInteger(Number(linkedOrder))&&Number(linkedOrder)>0?numberOf(Number(linkedOrder)):"";
+  const search=searchInput??delayOrder;
   const filter=delayLink?"pickup-delay":boardFilter;
   const paymentReview=focus?.kind==="payment-review";
   const title=paymentReview?"交班付款核對":delegated?"親友代取交餐":handoffOnly?"自取交餐":focused?"自取預約餐單":"店家接單台";
@@ -402,7 +407,10 @@ export default function Kitchen(){
     if((next==="pickup-delay")===delayLink)return;
     const url=new URL(window.location.href);
     if(next==="pickup-delay")url.searchParams.set("view","pickup-delay");
-    else url.searchParams.delete("view");
+    else {
+      url.searchParams.delete("view");
+      url.searchParams.delete("order");
+    }
     window.history.replaceState(window.history.state,"",url);
     window.dispatchEvent(new PopStateEvent("popstate",{state:window.history.state}));
   }
@@ -443,7 +451,8 @@ export default function Kitchen(){
   }else if(focus?.number===""){
     content=<p role="alert">{paymentReview?"餐單日期或餐號無效。":handoffOnly?"取餐 QR 碼的號碼無效。":"預約餐單的取餐號碼無效。"}</p>;
   }else if(denied){
-    content=<div className="sheet"><h2>店員登入</h2><p>託管網站請使用獲授權的店主帳號。</p><a className="primary" href={"/signin-with-chatgpt?return_to="+encodeURIComponent(focus?.signInTarget??(delayLink?"/kitchen?view=pickup-delay":"/kitchen"))} target="_top"
+    const signInTarget=focus?.signInTarget??(delayLink?"/kitchen?view=pickup-delay"+(delayOrder?"&order="+delayOrder:""):"/kitchen");
+    content=<div className="sheet"><h2>店員登入</h2><p>託管網站請使用獲授權的店主帳號。</p><a className="primary" href={"/signin-with-chatgpt?return_to="+encodeURIComponent(signInTarget)} target="_top"
       onClick={()=>{if(passStorageKey&&pickupPass)sessionStorage.setItem(passStorageKey,pickupPass);}}>使用 ChatGPT 登入</a>
       <details><summary>使用自架店員金鑰</summary><form onSubmit={e=>{e.preventDefault();sessionStorage.setItem("he-ri-staff",entry);setEntry("");setRevision(v=>v+1);}}><label>店員金鑰<input type="password" value={entry} onChange={e=>setEntry(e.target.value)} required/></label><button className="outline">登入</button></form></details></div>;
   }else if(rows===null||(delegated&&reviewedPass!==passScope)){

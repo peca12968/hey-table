@@ -917,6 +917,52 @@ test("staff can page through pickup delay history from the queue and reopen it a
   }
 });
 
+test("mobile shift handoff locates a cross-day pickup delay and refreshes the exported snapshot after confirmation",async({page,request})=>{
+  const headers={Authorization:"Bearer local-test-kitchen"},token=randomUUID();
+  const placed=await request.post("/api/orders",{data:{token,mode:"pickup",note:"",items:[{id:"sencha",qty:1}]}});
+  expect(placed.ok()).toBe(true);
+  const {id}=await placed.json(),number=String(id).padStart(4,"0");
+  const date=businessDate(Date.now()-86_400_000),path="/kitchen/shift-handoff?date="+date;
+  const advance=(from,to)=>request.patch("/api/kitchen/status",{headers,data:{id,from,to}});
+  expect((await advance("pending","preparing")).ok()).toBe(true);
+  try{
+    expect((await request.patch("/api/kitchen/pickup-delay",{headers,
+      data:{id,revision:0,operationId:randomUUID(),minutes:12}})).ok()).toBe(true);
+    await page.setViewportSize({width:360,height:780});
+    await page.addInitScript(()=>sessionStorage.setItem("he-ri-staff","local-test-kitchen"));
+    const capture=page.waitForResponse(response=>response.url().endsWith("/api"+path)&&response.ok());
+    await page.goto(path);
+    const expected=await (await capture).json();
+    const group=page.getByRole("region",{name:/自取延誤待確認/});
+    const ticket=group.getByRole("link",{name:"餐單 #"+number,exact:true});
+    await expect(ticket).toBeVisible();
+    await expect(group.getByText("預計備妥 ",{exact:false}).locator("time")).toBeVisible();
+    const downloading=page.waitForEvent("download");
+    await page.getByRole("button",{name:"下載待辦 JSON"}).click();
+    const download=await downloading;
+    expect(download.suggestedFilename()).toContain("hey-table-shift-handoff-"+date+"-");
+    expect(JSON.parse(await readFile(await download.path(),"utf8"))).toEqual(expected);
+    expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBe(360);
+    await ticket.click();
+    await expect(page.locator("#pickup-delay-history")).toBeVisible();
+    await page.getByRole("link",{name:"返回交班待辦",exact:true}).click();
+    await expect(page).toHaveURL(new RegExp(path.replace("?","\\?")+"$"));
+    await group.getByRole("link",{name:"前往接單台處理餐單 #"+number}).click();
+    await expect(page.locator(".kGrid .kitchenTicket").getByRole("heading")).toHaveText(["#"+number]);
+    await expect(page.locator(".kitchenFilters").getByLabel("取餐號碼")).toHaveValue(number);
+    await page.goBack();
+    await expect(ticket).toBeVisible();
+    expect((await request.post("/api/ticket/pickup-delay/acknowledge",{
+      headers:{"X-Ticket":token},data:{revision:1},
+    })).ok()).toBe(true);
+    await page.getByRole("button",{name:"重新擷取"}).click();
+    await expect(group).toContainText("目前沒有待辦");
+  }finally{
+    await advance("preparing","ready");
+    await advance("ready","completed");
+  }
+});
+
 test("the pickup delay queue prioritizes the earliest estimates and follows confirmations and withdrawals",async({page,browser,request})=>{
   const headers={Authorization:"Bearer local-test-kitchen"},orders=[];
   const advance=(id,from,to)=>request.patch("/api/kitchen/status",{headers,data:{id,from,to}});

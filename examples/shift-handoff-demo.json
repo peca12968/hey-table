@@ -52,6 +52,24 @@
               "createdAt": 1795662000000
             }
           ]
+        },
+        "delays": {
+          "total": 2,
+          "overdue": 1,
+          "orders": [
+            {
+              "id": 85,
+              "revision": 1,
+              "readyAt": 1795622400000,
+              "recordedAt": 1795621500000
+            },
+            {
+              "id": 86,
+              "revision": 1,
+              "readyAt": 1795665240000,
+              "recordedAt": 1795664640000
+            }
+          ]
         }
       }
     },
@@ -106,6 +124,24 @@
               "createdAt": 1795662000000
             }
           ]
+        },
+        "delays": {
+          "total": 2,
+          "overdue": 1,
+          "orders": [
+            {
+              "id": 85,
+              "revision": 1,
+              "readyAt": 1795622400000,
+              "recordedAt": 1795621500000
+            },
+            {
+              "id": 86,
+              "revision": 1,
+              "readyAt": 1795665240000,
+              "recordedAt": 1795664640000
+            }
+          ]
         }
       }
     },
@@ -132,6 +168,11 @@
         },
         "cash": {
           "total": 0,
+          "orders": []
+        },
+        "delays": {
+          "total": 0,
+          "overdue": 0,
           "orders": []
         }
       }

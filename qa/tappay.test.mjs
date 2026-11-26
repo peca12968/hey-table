@@ -3185,6 +3185,52 @@ test("shift handoff scopes cash and pickup by Taipei date and keeps the full cou
   assert.equal(capped.payments.orders.length,10);
 });
 
+test("shift handoff previews cross-day current pickup delays and counts every due notice",async t=>{
+  const db=database();
+  t.after(()=>db.sqlite.close());
+  const now=Date.parse("2026-11-26T00:15:00+08:00"),minute=60_000;
+  t.mock.method(Date,"now",()=>now);
+  const order=db.sqlite.prepare(`INSERT INTO orders(id,token,mode,status,items,note,total,created,payment_method,payment_env)
+    VALUES (?,?,'pickup',?,'[]','private order note',45,?,?,?)`);
+  const notice=db.sqlite.prepare(`INSERT INTO pickup_delay_updates(order_id,revision,operation_id,ready_at,recorded_at)
+    VALUES (?,?,?,?,?)`);
+  const ack=db.sqlite.prepare(`INSERT INTO pickup_delay_acknowledgements(order_id,revision,acknowledged_at) VALUES (?,?,?)`);
+  const add=(id,status="preparing",method="cash",readyAt=now-minute,recordedAt=now-30*minute)=>{
+    order.run(id,crypto.randomUUID(),status,now-60*minute,method,method==="cash"?"cash":"demo");
+    notice.run(id,1,crypto.randomUUID(),readyAt,recordedAt);
+  };
+  add(1,"preparing","cash",now);
+  for(let id=2;id<=11;id++)add(id);
+  add(12,"preparing","cash",now+minute);
+  add(13); ack.run(13,1,now-minute);
+  add(14); notice.run(14,2,crypto.randomUUID(),null,now-minute);
+  add(15,"ready");
+  add(16,"cancelled");
+  add(17,"preparing","line_pay");
+  add(18,"preparing","cash",now+2*minute,now+minute);
+  add(19,"preparing","line_pay",now+minute);
+  db.sqlite.prepare(`INSERT INTO payment_attempts(order_id,reference,merchant,state,created)
+    VALUES (19,?,'demo','paid',?)`).run(crypto.randomUUID(),now-25*minute);
+  add(20); ack.run(20,1,now-2*minute);
+  notice.run(20,2,crypto.randomUUID(),now-2*minute,now-3*minute);
+  const call=async date=>{
+    const result=await api(new Request("https://order.example/api/kitchen/shift-handoff?date="+date,
+      {headers:{Authorization:"Bearer fixture-staff"}}),{DB:db,STAFF_KEY:"fixture-staff"});
+    assert.equal(result.status,200);
+    return (await result.json()).delays;
+  };
+  const group=await call("2026-11-26");
+  assert.deepEqual(group,await call("2026-11-25"));
+  assert.equal(group.total,14);
+  assert.equal(group.overdue,12);
+  assert.deepEqual(group.orders.map(({id})=>id),[20,2,3,4,5,6,7,8,9,10]);
+  assert.deepEqual(group.orders[0],{id:20,revision:2,readyAt:now-2*minute,recordedAt:now-3*minute});
+  for(let id=2;id<=11;id++)ack.run(id,1,now);
+  const after=await call("2026-11-26");
+  assert.equal(after.overdue,2);
+  assert.deepEqual(after.orders.map(({id})=>id),[20,1,12,19]);
+});
+
 test("shift handoff demo recomputes opening and resolved snapshots",async()=>{
   const saved=JSON.parse(readFileSync(new URL("../examples/shift-handoff-demo.json",import.meta.url),"utf8"));
   assert.deepEqual(await buildShiftHandoffDemo(),saved);

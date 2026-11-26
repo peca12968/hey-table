@@ -4,6 +4,7 @@ import {useEffect,useState} from "react";
 import {Footer,Header,request} from "../../shared";
 import {useBusinessToday} from "../../use-business-today.mjs";
 import {businessDayRange} from "../../../lib/business-day.mjs";
+import {downloadJson} from "../../../lib/download-json.mjs";
 import {numberOf} from "../../../lib/menu.mjs";
 import {environmentLabel,methods,paymentStates} from "../../../lib/payments.mjs";
 import {pickupRosterPath,pickupRosterReviews,pickupWindow} from "../../../lib/pickup-slots.mjs";
@@ -62,6 +63,25 @@ function PaymentGroup({group,date,capturedAt}){
   </Group>;
 }
 
+function DelayGroup({group,date,capturedAt}){
+  const queue="/kitchen?view=pickup-delay";
+  return <Group id="handoff-delays" title="自取延誤待確認"
+    caption={"跨日 · 目前通知未確認 · 已到預計備妥時間 "+group.overdue+" 筆"} group={group}
+    href={queue} action="開啟待確認延誤">
+    {group.orders.map(({id,readyAt})=>{
+      const number=numberOf(id),overdue=readyAt<=capturedAt;
+      return <li key={id}>
+        <a className="textLink" href={"/kitchen/order-detail?"+new URLSearchParams({id:number,delays:"1",from:datePath(date)})+"#pickup-delay-history"}>
+          餐單 #{number}</a>
+        <small className={overdue?"shiftHandoffDue":undefined}>
+          {overdue?"已到預計備妥時間":"預計備妥"} {time(readyAt)}
+        </small>
+        <a className="textLink" href={queue+"&order="+number} aria-label={"前往接單台處理餐單 #"+number}>前往接單台</a>
+      </li>;
+    })}
+  </Group>;
+}
+
 export default function ShiftHandoff(){
   const today=useBusinessToday();
   const [selection,setSelection]=useState(null);
@@ -96,6 +116,8 @@ export default function ShiftHandoff(){
       <button type="submit" className="outline">套用日期</button>
       <button type="button" className="outline" disabled={!valid||!current}
         onClick={()=>setRevision(value=>value+1)}>重新擷取</button>
+      {snapshot&&<button type="button" className="outline" onClick={()=>downloadJson(
+        "hey-table-shift-handoff-"+snapshot.date+"-",snapshot.capturedAt,snapshot)}>下載待辦 JSON</button>}
     </form>}
     {selection&&today&&!valid&&<p className="error" role="alert">請選擇有效的交班日期。</p>}
     {valid&&!current&&<p role="status">正在擷取交班待辦…</p>}
@@ -107,6 +129,7 @@ export default function ShiftHandoff(){
       <div className="shiftHandoffGrid">
         <PickupGroup review="unreported" date={date} group={snapshot.pickup.unreported}/>
         <PickupGroup review="arrived" date={date} group={snapshot.pickup.arrived}/>
+        {snapshot.delays&&<DelayGroup group={snapshot.delays} date={date} capturedAt={snapshot.capturedAt}/>}
         <PaymentGroup group={snapshot.payments} date={date} capturedAt={snapshot.capturedAt}/>
         <Group id="handoff-cash" title="已交餐、現金缺登"
           caption="依餐單成立日期" group={snapshot.cash} href={"/kitchen/daily?"+new URLSearchParams({date})} action="開啟日結核對">

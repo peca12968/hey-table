@@ -6,6 +6,7 @@ import {businessDayRange} from "../lib/business-day.mjs";
 import {collectCash} from "../server/cash-receipts.mjs";
 import {paymentApi} from "../server/payment-api.mjs";
 import {readPaymentAttentionNotes,recordPaymentAttentionNote} from "../server/payment-attention-notes.mjs";
+import {acknowledgePickupDelay,updatePickupDelay} from "../server/pickup-delay.mjs";
 import {shiftHandoff} from "../server/shift-handoff.mjs";
 import {applyDemoMigrations} from "./apply-demo-migrations.mjs";
 import {sqliteD1} from "./sqlite-d1.mjs";
@@ -33,10 +34,17 @@ export async function buildShiftHandoffDemo(){
       return recordPaymentAttentionNote(db,{id:84,attemptId:target.attemptId,state:target.state,
         operationId:crypto.randomUUID(),note,followUpAt,followUpVersion:target.followUpVersion??null},at);
     };
+    const delayToken=crypto.randomUUID();
+    insert.run(85,delayToken,"preparing",started-minute,null,null,null,"cash","cash");
+    insert.run(86,crypto.randomUUID(),"preparing",opening-5*minute,null,null,null,"cash","cash");
+    const delay=(id,revision,minutes,at)=>updatePickupDelay(db,{id,revision,minutes,operationId:crypto.randomUUID()},at);
+    assert.equal((await delay(85,0,15,started)).revision,1);
+    assert.equal((await delay(86,0,10,opening-minute)).revision,1);
     assert.equal((await note(opening,opening-minute,"上班時再次核對付款")).followUpAt,opening);
     const before=await shiftHandoff(db,date,range,opening);
     assert.deepEqual([before.pickup.unreported.total,before.pickup.arrived.total,before.payments.total,before.cash.total],[1,1,1,1]);
     assert.equal(before.payments.followUpsDue,1);
+    assert.deepEqual([before.delays.total,before.delays.overdue],[2,1]);
     const next=opening+15*minute;
     assert.equal((await note(next,opening+1000,"仍待付款確認，改為下一個追蹤時間")).followUpAt,next);
     const rescheduled=await shiftHandoff(db,date,range,opening+1000);
@@ -53,8 +61,11 @@ export async function buildShiftHandoffDemo(){
       {DB:db,TAPPAY_MODE:"demo"},{ref:reference,outcome:"paid"});
     assert.equal(response.status,200);
     assert.equal((await response.json()).attempt.state,"paid");
+    assert.equal((await acknowledgePickupDelay(db,delayToken,1,closing)).revision,1);
+    assert.equal((await delay(86,1,null,closing)).readyAt,null);
     const after=await shiftHandoff(db,date,range,closing);
     assert.deepEqual([after.pickup.unreported.total,after.pickup.arrived.total,after.payments.total,after.cash.total],[0,0,0,0]);
+    assert.deepEqual(after.delays,{total:0,overdue:0,orders:[]});
     return {format:"hey-table.shift-handoff-demo.v1",scenes:[
       {stage:"open",snapshot:before},{stage:"rescheduled",snapshot:rescheduled},{stage:"resolved",snapshot:after},
     ]};

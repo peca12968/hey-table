@@ -42,6 +42,16 @@ export async function readPickupDelayHistory(db,id,before){
   return {id,updates,nextBefore:page.results.length>size?updates.at(-1).revision:null};
 }
 
+export function pickupDelayHandoffRows(db,capturedAt,limit){
+  return db.prepare(`SELECT orders.id,delay.revision,delay.ready_at AS readyAt,delay.recorded_at AS recordedAt,
+      COUNT(*) OVER () AS total,COUNT(CASE WHEN delay.ready_at<=? THEN 1 END) OVER () AS overdue
+    FROM orders JOIN pickup_delay_updates AS delay ON delay.order_id=orders.id
+    WHERE orders.mode='pickup' AND orders.status='preparing' AND ${payableForKitchen}
+      AND delay.ready_at IS NOT NULL AND delay.recorded_at<=? AND ${acknowledgement} IS NULL
+      AND delay.revision=(SELECT revision ${byRevision})
+    ORDER BY delay.ready_at,delay.recorded_at,orders.id LIMIT ?`).bind(capturedAt,capturedAt,limit);
+}
+
 export function pickupDelayReportRows(db,range,capturedAt){
   const scope="delay.recorded_at>=? AND delay.recorded_at<? AND delay.recorded_at<=? AND orders.mode='pickup'";
   const acknowledgementJoin=`LEFT JOIN pickup_delay_acknowledgements AS ack ON ack.order_id=delay.order_id

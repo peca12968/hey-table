@@ -2,6 +2,7 @@ import {cashRecorded,completedOnDay} from "./daily-payment-summary.mjs";
 import {openPaymentAttention,paymentAttentionTable} from "./payment-attention.mjs";
 import {paymentFollowUpDue,paymentFollowUpJoin} from "./payment-attention-notes.mjs";
 import {latestState} from "./payment-api.mjs";
+import {pickupDelayHandoffRows} from "./pickup-delay.mjs";
 import {pickupFollowUp} from "./pickup-roster.mjs";
 
 const previewLimit=10;
@@ -11,7 +12,7 @@ function preview(rows){
 }
 
 export async function shiftHandoff(db,date,range,capturedAt){
-  const [bookings,payments,cash]=await db.batch([
+  const [bookings,payments,cash,delays]=await db.batch([
     db.prepare(`SELECT id,status,payment_method,COALESCE(${latestState},'unpaid') AS payment_state,
         pickup_slot,pickup_arrived_at,created,status_history
       FROM orders WHERE mode='pickup' AND status='ready' AND pickup_slot>=? AND pickup_slot<?`).bind(...range),
@@ -26,6 +27,7 @@ export async function shiftHandoff(db,date,range,capturedAt){
     db.prepare(`SELECT orders.id,orders.created AS createdAt,COUNT(*) OVER () AS total
       FROM orders WHERE ${completedOnDay} AND orders.payment_method='cash' AND NOT ${cashRecorded}
       ORDER BY orders.created,orders.id LIMIT ?`).bind(...range,previewLimit),
+    pickupDelayHandoffRows(db,capturedAt,previewLimit),
   ]);
   const pickup={unreported:{total:0,orders:[]},arrived:{total:0,orders:[]}};
   for(const row of bookings.results){
@@ -47,5 +49,8 @@ export async function shiftHandoff(db,date,range,capturedAt){
     })),
   };
   return {format:"hey-table.shift-handoff.v1",date,capturedAt,pickup,
-    payments:paymentPreview,cash:preview(cash.results)};
+    payments:paymentPreview,cash:preview(cash.results),delays:{
+      total:delays.results[0]?.total??0,overdue:delays.results[0]?.overdue??0,
+      orders:delays.results.map(({total,overdue,...order})=>order),
+    }};
 }
