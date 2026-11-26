@@ -268,81 +268,6 @@ test("new guest and staff pickup drafts keep their contents when adopting the ne
   }
 });
 
-test("mobile checkout compares same-day and later windows and rechecks a stale choice",async({page,request})=>{
-  const now=Date.now(),date=businessDate(now+4*86_400_000),next=businessDate(now+5*86_400_000);
-  const start=Date.parse(date+"T11:00:00+08:00"),nearest=start+900_000,alternative=start+1_800_000;
-  const staff={Authorization:"Bearer local-test-kitchen"},endpoint="/api/kitchen/pickup-slots";
-  const read=async at=>(await (await request.get(endpoint+"?date="+date,{headers:staff})).json()).slots.find(row=>row.start===at);
-  const remember=await Promise.all([read(start),read(nearest)]);
-  const cap=async(at,capacity)=>request.patch(endpoint,{headers:staff,data:{date,start:at,capacity,revision:(await read(at)).revision}});
-  const operator=await page.context().newPage();
-  let ticket;
-  try{
-    for(const browser of [page,operator])await browser.setViewportSize({width:360,height:780});
-    await page.goto("/");
-    await page.getByLabel("取餐日期",{exact:true}).selectOption(date);
-    const add=page.getByRole("button",{name:"加入日式熱煎茶",exact:true});
-    await add.click();await add.click();
-    await page.getByRole("button",{name:/我的餐單/}).click();
-    await page.getByPlaceholder("例如：餐具數量").fill("同一天取餐");
-    await page.getByLabel("付款方式").selectOption("line_pay");
-    await page.getByLabel("自取時段").selectOption(String(start));
-
-    await operator.addInitScript(()=>sessionStorage.setItem("he-ri-staff","local-test-kitchen"));
-    await operator.goto("/kitchen/create-pickup");
-    await operator.getByLabel("取餐日期",{exact:true}).selectOption(date);
-    await operator.getByRole("spinbutton",{name:/日式熱煎茶/}).fill("2");
-    await operator.getByLabel("訂單備註").fill("保留原電話備註");
-    await operator.getByLabel("自取時段").selectOption(String(start));
-    const customerSubmit=page.getByRole("button",{name:"確認送出訂單"});
-    const staffSubmit=operator.getByRole("button",{name:"確認建立自取單"});
-    await expect(customerSubmit).toBeEnabled();
-    await expect(staffSubmit).toBeEnabled();
-    expect((await cap(start,1)).ok()).toBe(true);
-    await page.evaluate(()=>window.dispatchEvent(new Event("online")));
-    await operator.getByRole("button",{name:"更新供應"}).click();
-    const compare=browser=>browser.getByRole("button",{name:"比較可用取餐時段"});
-    const choices=browser=>browser.getByRole("list",{name:"可用取餐時段",exact:true});
-    const closest="選擇 "+date+" · 11:15～11:30",second="選擇 "+date+" · 11:30～11:45";
-    for(const [browser,submit] of [[page,customerSubmit],[operator,staffSubmit]]){
-      await expect(submit).toBeDisabled();
-      await compare(browser).click();
-      await expect(choices(browser).getByRole("listitem")).toHaveCount(6);
-      await expect(choices(browser).getByRole("button").first()).toHaveAccessibleName(closest);
-      await expect(choices(browser).getByRole("button",{name:"選擇 "+next+" · 11:00～11:15",exact:true})).toBeVisible();
-    }
-
-    expect((await cap(nearest,1)).ok()).toBe(true);
-    await choices(page).getByRole("button",{name:closest,exact:true}).click();
-    await expect(page.getByLabel("自取時段")).toHaveValue(String(nearest));
-    await expect(page.getByText("請重新選擇可容納這張餐單的時段。",{exact:true})).toBeVisible();
-    await expect(customerSubmit).toBeDisabled();
-    await compare(page).click();
-    await expect(choices(page).getByRole("button",{name:closest,exact:true})).toHaveCount(0);
-    for(const [browser,submit] of [[page,customerSubmit],[operator,staffSubmit]]){
-      await choices(browser).getByRole("button",{name:second,exact:true}).click();
-      await expect(browser.getByLabel("取餐日期",{exact:true})).toHaveValue(date);
-      await expect(browser.getByLabel("自取時段")).toHaveValue(String(alternative));
-      await expect(submit).toBeEnabled();
-      expect(await browser.evaluate(()=>document.documentElement.scrollWidth)).toBe(360);
-    }
-    await expect(page.getByPlaceholder("例如：餐具數量")).toHaveValue("同一天取餐");
-    await expect(page.getByLabel("付款方式")).toHaveValue("line_pay");
-    await expect(operator.getByLabel("訂單備註")).toHaveValue("保留原電話備註");
-    await expect(operator.getByRole("spinbutton",{name:/日式熱煎茶/})).toHaveValue("2");
-    await customerSubmit.click();
-    await page.waitForURL("**/ticket#*");
-    ticket={"X-Ticket":new URL(page.url()).hash.slice(1)};
-    const receipt=await (await request.get("/api/ticket",{headers:ticket})).json();
-    expect([receipt.pickupSlot,receipt.paymentMethod,receipt.note,receipt.items[0].qty])
-      .toEqual([alternative,"line_pay","同一天取餐",2]);
-  }finally{
-    if(ticket)await request.post("/api/ticket/cancel",{headers:ticket,data:{}});
-    for(const row of remember)await cap(row.start,row.capacity);
-    await operator.close();
-  }
-});
-
 test("receipt and kitchen recheck a selected reschedule against shared capacity",async({page,request})=>{
   const staff={Authorization:"Bearer local-test-kitchen"};
   const date=businessDate(Date.now()+86_400_000);
@@ -1115,4 +1040,79 @@ test("a mobile pickup receipt downloads the current calendar file and its cancel
   expect(next).toContain("STATUS:CANCELLED");
   expect(next).toContain("SEQUENCE:1");
   expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBe(360);
+});
+
+test("mobile checkout compares same-day and later windows and rechecks a stale choice",async({page,request})=>{
+  const now=Date.now(),date=businessDate(now+4*86_400_000),next=businessDate(now+5*86_400_000);
+  const start=Date.parse(date+"T11:00:00+08:00"),nearest=start+900_000,alternative=start+1_800_000;
+  const staff={Authorization:"Bearer local-test-kitchen"},endpoint="/api/kitchen/pickup-slots";
+  const read=async at=>(await (await request.get(endpoint+"?date="+date,{headers:staff})).json()).slots.find(row=>row.start===at);
+  const remember=await Promise.all([read(start),read(nearest)]);
+  const cap=async(at,capacity)=>request.patch(endpoint,{headers:staff,data:{date,start:at,capacity,revision:(await read(at)).revision}});
+  const operator=await page.context().newPage();
+  let ticket;
+  try{
+    for(const browser of [page,operator])await browser.setViewportSize({width:360,height:780});
+    await page.goto("/");
+    await page.getByLabel("取餐日期",{exact:true}).selectOption(date);
+    const add=page.getByRole("button",{name:"加入日式熱煎茶",exact:true});
+    await add.click();await add.click();
+    await page.getByRole("button",{name:/我的餐單/}).click();
+    await page.getByPlaceholder("例如：餐具數量").fill("同一天取餐");
+    await page.getByLabel("付款方式").selectOption("line_pay");
+    await page.getByLabel("自取時段").selectOption(String(start));
+
+    await operator.addInitScript(()=>sessionStorage.setItem("he-ri-staff","local-test-kitchen"));
+    await operator.goto("/kitchen/create-pickup");
+    await operator.getByLabel("取餐日期",{exact:true}).selectOption(date);
+    await operator.getByRole("spinbutton",{name:/日式熱煎茶/}).fill("2");
+    await operator.getByLabel("訂單備註").fill("保留原電話備註");
+    await operator.getByLabel("自取時段").selectOption(String(start));
+    const customerSubmit=page.getByRole("button",{name:"確認送出訂單"});
+    const staffSubmit=operator.getByRole("button",{name:"確認建立自取單"});
+    await expect(customerSubmit).toBeEnabled();
+    await expect(staffSubmit).toBeEnabled();
+    expect((await cap(start,1)).ok()).toBe(true);
+    await page.evaluate(()=>window.dispatchEvent(new Event("online")));
+    await operator.getByRole("button",{name:"更新供應"}).click();
+    const compare=browser=>browser.getByRole("button",{name:"比較可用取餐時段"});
+    const choices=browser=>browser.getByRole("list",{name:"可用取餐時段",exact:true});
+    const closest="選擇 "+date+" · 11:15～11:30",second="選擇 "+date+" · 11:30～11:45";
+    for(const [browser,submit] of [[page,customerSubmit],[operator,staffSubmit]]){
+      await expect(submit).toBeDisabled();
+      await compare(browser).click();
+      await expect(choices(browser).getByRole("listitem")).toHaveCount(6);
+      await expect(choices(browser).getByRole("button").first()).toHaveAccessibleName(closest);
+      await expect(choices(browser).getByRole("button",{name:"選擇 "+next+" · 11:00～11:15",exact:true})).toBeVisible();
+    }
+
+    expect((await cap(nearest,1)).ok()).toBe(true);
+    await choices(page).getByRole("button",{name:closest,exact:true}).click();
+    await expect(page.getByLabel("自取時段")).toHaveValue(String(nearest));
+    await expect(page.getByText("請重新選擇可容納這張餐單的時段。",{exact:true})).toBeVisible();
+    await expect(customerSubmit).toBeDisabled();
+    await compare(page).click();
+    await expect(choices(page).getByRole("button",{name:closest,exact:true})).toHaveCount(0);
+    for(const [browser,submit] of [[page,customerSubmit],[operator,staffSubmit]]){
+      await choices(browser).getByRole("button",{name:second,exact:true}).click();
+      await expect(browser.getByLabel("取餐日期",{exact:true})).toHaveValue(date);
+      await expect(browser.getByLabel("自取時段")).toHaveValue(String(alternative));
+      await expect(submit).toBeEnabled();
+      expect(await browser.evaluate(()=>document.documentElement.scrollWidth)).toBe(360);
+    }
+    await expect(page.getByPlaceholder("例如：餐具數量")).toHaveValue("同一天取餐");
+    await expect(page.getByLabel("付款方式")).toHaveValue("line_pay");
+    await expect(operator.getByLabel("訂單備註")).toHaveValue("保留原電話備註");
+    await expect(operator.getByRole("spinbutton",{name:/日式熱煎茶/})).toHaveValue("2");
+    await customerSubmit.click();
+    await page.waitForURL("**/ticket#*");
+    ticket={"X-Ticket":new URL(page.url()).hash.slice(1)};
+    const receipt=await (await request.get("/api/ticket",{headers:ticket})).json();
+    expect([receipt.pickupSlot,receipt.paymentMethod,receipt.note,receipt.items[0].qty])
+      .toEqual([alternative,"line_pay","同一天取餐",2]);
+  }finally{
+    if(ticket)await request.post("/api/ticket/cancel",{headers:ticket,data:{}});
+    for(const row of remember)await cap(row.start,row.capacity);
+    await operator.close();
+  }
 });
