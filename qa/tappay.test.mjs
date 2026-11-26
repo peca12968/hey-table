@@ -3259,7 +3259,9 @@ test("delegated kitchen scan rechecks the issued pass at handoff and records exa
   assert.equal((await scan(firstPass,{method:"PATCH"})).status,409);
   now=second.expiresAt;
   assert.equal((await scan(secondPass,{method:"PATCH",revision:2})).status,409);
-  assert.equal((await issue(firstPass,2)).status,200);
+  const issuedAgain=await issue(firstPass,2);
+  assert.equal(issuedAgain.status,200);
+  const third=await issuedAgain.json();
   assert.equal((await scan(firstPass,{method:"PATCH"})).status,409);
   const complete=()=>scan(firstPass,{method:"PATCH",revision:3});
   const [left,right]=await Promise.all([complete(),complete()]);
@@ -3272,10 +3274,27 @@ test("delegated kitchen scan rechecks the issued pass at handoff and records exa
   assert.deepEqual(await (await complete()).json(),proof);
   assert.equal((await (await scan(firstPass,{revision:3})).json()).status,"completed");
   assert.equal((await call("/pickup-pass",{headers:{"X-Pickup-Pass":firstPass}})).status,404);
+  const recipient=(pass)=>call("/pickup-pass?handoff=1",{headers:pass?{"X-Pickup-Pass":pass}:{}});
+  const shown=await recipient(firstPass);
+  assert.equal(shown.status,200);
+  assert.equal(shown.headers.get("Cache-Control"),"no-store");
+  assert.deepEqual(await shown.json(),{...proof,expiresAt:third.expiresAt});
+  assert.equal((await recipient(secondPass)).status,404);
+  assert.equal((await recipient()).status,404);
+  assert.equal((await call("/pickup-pass/arrival",{method:"POST",
+    headers:{"X-Pickup-Pass":firstPass,"Content-Type":"application/json"},body:"{}"})).status,404);
   const history=(await (await call("/kitchen/order-detail?id=1",{headers:staff})).json()).statusHistory;
   assert.deepEqual(history.filter(row=>row.status==="completed"),[{status:"completed",at:proof.completedAt,handoff:"pickup-pass"}]);
   assert.equal((await (await scan(firstPass,{id:2,revision:3})).json()).status,undefined);
   assert.equal(db.sqlite.prepare("SELECT status FROM orders WHERE id=2").get().status,"ready");
+  const otherPass=crypto.randomUUID();
+  assert.equal((await issue(otherPass,0,other)).status,200);
+  const direct=await call("/kitchen/status",{method:"PATCH",headers:{...staff,"Content-Type":"application/json"},
+    body:JSON.stringify({id:2,from:"ready",to:"completed"})});
+  assert.equal(direct.status,200);
+  assert.equal((await recipient(otherPass)).status,404);
+  now=third.expiresAt;
+  assert.equal((await recipient(firstPass)).status,404);
 });
 
 test("delegated handoff demo matches the protected API workflow",async()=>{

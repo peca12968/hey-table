@@ -52,13 +52,19 @@ export async function buildPickupPassHandoffDemo(){
     const handoff=receipt.statusHistory.filter(step=>step.status==="completed");
     assert.deepEqual(handoff,[{status:"completed",at:original.completedAt,handoff:"pickup-pass"}]);
     assert.equal((await call("/pickup-pass","GET",{"X-Pickup-Pass":replacement})).status,404);
+    const recipient=await call("/pickup-pass?handoff=1","GET",{"X-Pickup-Pass":replacement});
+    const completion=await recipient.json();
+    assert.equal(recipient.status,200);
+    assert.deepEqual(completion,{...original,expiresAt:completion.expiresAt});
+    assert.equal((await call("/pickup-pass?handoff=1","GET",{"X-Pickup-Pass":first})).status,404);
     return {format:"hey-table.pickup-pass-handoff-demo.v1",orderId:id,scenes:[
       {stage:"guest",status:guest.status},
       {stage:"verified",status:checked.status,orderStatus:firstOrder.status},
       {stage:"reissued",status:rejected.status,orderStatus:afterRejection.status},
       {stage:"completed",status:confirmed.status,orderStatus:original.status},
       {stage:"recovered",status:recovered.status,orderStatus:replay.status,receiptEvents:handoff.length,
-        handoff:handoff[0].handoff,sameCompletion:replay.completedAt===original.completedAt},
+        handoff:handoff[0].handoff,sameCompletion:replay.completedAt===original.completedAt,
+        recipient:{status:recipient.status,orderStatus:completion.status,matchesStaffTime:completion.completedAt===original.completedAt}},
     ]};
   }finally{
     sqlite.close();

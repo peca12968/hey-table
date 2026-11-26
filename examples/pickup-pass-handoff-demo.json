@@ -27,7 +27,12 @@
       "orderStatus": "completed",
       "receiptEvents": 1,
       "handoff": "pickup-pass",
-      "sameCompletion": true
+      "sameCompletion": true,
+      "recipient": {
+        "status": 200,
+        "orderStatus": "completed",
+        "matchesStaffTime": true
+      }
     }
   ]
 }

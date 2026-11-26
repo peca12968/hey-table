@@ -1081,9 +1081,18 @@ test("mobile delegate QR requires staff sign-in, rejects a reissued pass, and re
     await expect(kitchen.getByText("這張餐單已憑代取 QR 碼完成交餐。")).toBeVisible();
     await expect(submit).toHaveCount(0);
     expect(await kitchen.evaluate(()=>document.documentElement.scrollWidth)).toBe(360);
+    const confirmation=page.getByRole("status").filter({hasText:"取餐已完成"});
+    const completedAt=new Date(result.completedAt).toISOString();
+    await expect(confirmation.locator("time")).toHaveAttribute("datetime",completedAt,{timeout:12_000});
+    await expect(page.getByText("出示取餐 QR 碼",{exact:true})).toHaveCount(0);
+    await expect(page.getByRole("img",{name:"取餐 "+number+" QR 碼"})).toHaveCount(0);
+    await expect(page.getByRole("button",{name:"我已到店"})).toHaveCount(0);
+    await expect(page.getByText("本餐單備註")).toHaveCount(0);
+    await page.reload();
+    await expect(confirmation.locator("time")).toHaveAttribute("datetime",completedAt);
     await page.goto("/ticket#"+token);
     const progress=page.getByRole("listitem").filter({hasText:"親友代取已交餐"});
-    await expect(progress.locator("time")).toHaveAttribute("datetime",new Date(result.completedAt).toISOString());
+    await expect(progress.locator("time")).toHaveAttribute("datetime",completedAt);
   }finally{
     await staff.close();
     await request.patch("/api/kitchen/status",{headers:staffHeaders,data:{id,from:"ready",to:"completed"}});
