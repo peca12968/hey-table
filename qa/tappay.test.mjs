@@ -23,6 +23,8 @@ import {buildReturnLedgerDemo} from "../scripts/return-ledger-demo.mjs";
 import {buildPaymentAttentionDemo} from "../scripts/payment-attention-demo.mjs";
 import {buildPickupPassHandoffDemo} from "../scripts/pickup-pass-handoff-demo.mjs";
 import {buildPickupRosterFollowUpDemo} from "../scripts/pickup-roster-followup-demo.mjs";
+import {buildCashCloseComparisonDemo} from "../scripts/cash-close-comparison-demo.mjs";
+import {compareCashCloses} from "../server/cash-close-compare.mjs";
 import {buildCustomerPaymentRecoveryDemo} from "../scripts/customer-payment-recovery-demo.mjs";
 import {buildCartSupplyReviewDemo} from "../scripts/cart-supply-review-demo.mjs";
 import {bookablePickupSlots} from "../lib/pickup-slots.mjs";
@@ -2654,6 +2656,17 @@ test("D1 saves immutable cash close versions, rejects stale receipts and replays
   assert.deepEqual(await (await call(endpoint+query+"&revision=1")).json(),saved);
   const history=await (await call(endpoint+query)).json();
   assert.deepEqual(history.versions.map(version=>[version.revision,version.receipts]),[[2,2],[1,1]]);
+  const comparison="/api/kitchen/cash-close-compare"+query;
+  assert.equal((await call(comparison+"&from=1&to=2",{})).status,403);
+  for(const scope of ["&from=2&to=1","&from=1&to=1","&from=1&from=2&to=3","&from=1"])
+    assert.equal((await call(comparison+scope)).status,400);
+  assert.equal((await call(comparison+"&from=1&to=3")).status,404);
+  const delta=await call(comparison+"&from=1&to=2");
+  assert.equal(delta.headers.get("Cache-Control"),"no-store");
+  const changes=await delta.json();
+  assert.deepEqual(changes.totals.net,{before:"45",after:"90",delta:"45"});
+  assert.deepEqual(changes.receipts.map(row=>[row.orderId,row.kind,row.delta.net]),
+    [[correction.report.receipts.at(-1).orderId,"added","45"]]);
 });
 
 test("cash corrections preserve net and old close versions and reject concurrently edited receipts",async t=>{
@@ -2707,6 +2720,33 @@ test("cash corrections preserve net and old close versions and reject concurrent
   assert.equal((await write(versions,close(latest,1))).status,200);
   assert.deepEqual(await (await call(versions+query+"&revision=1")).json(),frozen);
   assert.equal(frozen.report.totals.tendered,"100");
+  const comparison=await (await call("/api/kitchen/cash-close-compare"+query+"&from=1&to=2")).json();
+  assert.deepEqual(comparison.totals.net,{before:"45",after:"45",delta:"0"});
+  assert.deepEqual(comparison.receipts.map(row=>[row.orderId,row.kind,row.delta,row.after.correctionRevision]),
+    [[id,"corrected",{tendered:"50",change:"50",net:"0"},2]]);
+});
+
+test("cash close comparison preserves exact integer totals and recognizes correction-only revisions",async()=>{
+  const amount=Number.MAX_SAFE_INTEGER,number=String(amount),date="2026-11-26",at=Date.parse(date+"T19:00:00+08:00");
+  const row={orderId:1,tendered:amount,amount,change:0,recordedAt:at};
+  const previous={date,revision:1,savedAt:at,report:{capturedAt:at,receipts:[row],totals:{receipts:1,net:number,tendered:number,change:"0"},
+    reconciliation:{opening:"0",adjustments:"0",counted:number,expected:number,difference:"0"}}};
+  const total=String(BigInt(amount)*2n),counted=String(BigInt(total)+1n);
+  const next={date,revision:2,savedAt:at+1,report:{capturedAt:at+1,
+    receipts:[{...row,correctionRevision:2,correctedAt:at+1},{...row,orderId:2}],
+    totals:{receipts:2,net:total,tendered:total,change:"0"},
+    reconciliation:{opening:"0",adjustments:"0",counted,expected:total,difference:"1"}}};
+  const compared=compareCashCloses(previous,next);
+  assert.deepEqual(compared.totals.tendered,{before:number,after:total,delta:number});
+  assert.deepEqual(compared.reconciliation.difference,{before:"0",after:"1",delta:"1"});
+  assert.deepEqual(compared.receipts.map(row=>[row.kind,row.delta.net]),[["corrected","0"],["added",number]]);
+  assert.throws(()=>compareCashCloses(previous,{...next,report:{...next.report,totals:{...next.report.totals,net:"3"}}}),
+    /totals differ/);
+});
+
+test("cash close comparison demo comes from immutable cash snapshots",async()=>{
+  const saved=JSON.parse(readFileSync(new URL("../examples/cash-close-comparison-demo.json",import.meta.url),"utf8"));
+  assert.deepEqual(await buildCashCloseComparisonDemo(),saved);
 });
 
 test("staff pickup roster groups one Taipei day and excludes private receipt and payment fields",async t=>{

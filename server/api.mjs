@@ -23,7 +23,7 @@ import {acknowledgePickupDelay,pickupDelayColumn,pickupDelayReportRows,readPicku
 import {pickupRoster} from "./pickup-roster.mjs";
 import {pickupWeek} from "./pickup-week.mjs";
 import {cashCorrectionHistory,cashReceiptColumn,collectCash,correctCashReceipt,dailyCashReceipts} from "./cash-receipts.mjs";
-import {cashCloseVersion,cashCloseVersions,saveCashClose} from "./cash-close-versions.mjs";
+import {cashCloseComparison,cashCloseVersion,cashCloseVersions,saveCashClose} from "./cash-close-versions.mjs";
 import {cashAmount} from "../lib/cash-reconciliation.mjs";
 import {confirmReturnLedger,readReturnLedgerReview,readReturnReceipt,recordReturnQuote,returnLedgerReport,returnLedgerReviewHistory,
   voidReturnQuote} from "./return-ledger.mjs";
@@ -268,6 +268,19 @@ export async function api(request, env) {
     if(!receipt)return fail("找不到現金收款紀錄。",404);
     if(tendered<receipt.amount)return fail("實收金額少於應收金額。");
     return fail("現金紀錄已更新或金額相同，請重新核對。",409);
+  }
+  if(path==="/api/kitchen/cash-close-compare"&&method==="GET"){
+    const dates=url.searchParams.getAll("date"),[date]=dates;
+    if(dates.length!==1||!businessDayRange(date))return fail("請選擇有效的收款登記日期。");
+    const from=positiveQueryId(url,"from"),to=positiveQueryId(url,"to");
+    if(!from||!to||from>=to)return fail("請先選擇較早的盤點版本，再選較新的版本。");
+    let report;
+    try{
+      report=await cashCloseComparison(db,date,from,to);
+    }catch{
+      return fail("無法核對已保存的盤點資料。",409);
+    }
+    return report?json(report):fail("找不到同一天的兩份盤點版本。",404);
   }
   if(path==="/api/kitchen/cash-close-versions"&&method==="GET"){
     const dates=url.searchParams.getAll("date"),[date]=dates;

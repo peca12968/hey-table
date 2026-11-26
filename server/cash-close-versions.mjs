@@ -1,5 +1,6 @@
 import {cashCorrectionsInRange,dailyCashReceipts} from "./cash-receipts.mjs";
 import {reconcileCash} from "../lib/cash-reconciliation.mjs";
+import {compareCashCloses} from "./cash-close-compare.mjs";
 
 const versionFromRow=row=>({date:row.date,revision:row.revision,savedAt:row.saved_at,report:JSON.parse(row.snapshot)});
 
@@ -16,6 +17,12 @@ export async function cashCloseVersion(db,date,revision){
   const row=await db.prepare("SELECT date,revision,saved_at,snapshot FROM cash_close_versions WHERE date=? AND revision=?")
     .bind(date,revision).first();
   return row?versionFromRow(row):null;
+}
+
+export async function cashCloseComparison(db,date,from,to){
+  const {results}=await db.prepare(`SELECT date,revision,saved_at,snapshot FROM cash_close_versions
+    WHERE date=? AND revision IN (?,?) ORDER BY revision`).bind(date,from,to).all();
+  return results.length===2?compareCashCloses(...results.map(versionFromRow)):null;
 }
 
 export async function saveCashClose(db,input,range,now,amounts){

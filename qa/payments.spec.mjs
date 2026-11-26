@@ -628,6 +628,8 @@ test("mobile cash close reconciles a count and downloads the displayed snapshot 
   const history=page.getByRole("region",{name:"已保存的盤點版本"});
   await expect(history.getByRole("button",{name:"下載第 1 版"})).toBeVisible();
   const third=await collect(60);
+  expect((await request.post("/api/kitchen/cash-corrections",{headers:staff,data:{id:first,revision:0,
+    operationId:randomUUID(),tendered:80,reason:"重點現金後更正"}})).status()).toBe(200);
   await store.click();
   await expect(page.getByRole("alert")).toHaveText("收款資料或盤點版本已更新，請重新擷取後再核對。");
   await expect(row(third)).toBeVisible();
@@ -643,6 +645,26 @@ test("mobile cash close reconciles a count and downloads the displayed snapshot 
   expect(frozen.report.receipts.some(record=>record.orderId===second)).toBe(true);
   expect(frozen.report.receipts.some(record=>record.orderId===third)).toBe(false);
   expect(frozen.report.reconciliation.difference).toBe("-48");
+  const compare=page.getByRole("region",{name:"比較盤點版本"});
+  const comparisonEndpoint="/api/kitchen/cash-close-compare";
+  const loaded=page.waitForResponse(response=>new URL(response.url()).pathname===comparisonEndpoint&&response.ok());
+  await compare.getByRole("button",{name:"比較版本"}).click();
+  const report=await (await loaded).json();
+  const diff=compare.getByRole("table",{name:"錢櫃盤點變化"});
+  await expect(diff.getByRole("row",{name:/盤點差額/})).toContainText("+48 元");
+  const changes=compare.getByRole("list",{name:"有異動的收款"});
+  await expect(changes.getByRole("listitem")).toHaveCount(2);
+  const firstChange=changes.getByRole("listitem").filter({hasText:"#"+String(first).padStart(4,"0")});
+  await expect(firstChange).toContainText("更正收款");
+  await expect(firstChange).toContainText("100 元 → 80 元");
+  await expect(firstChange).toContainText("45 元 → 45 元");
+  await expect(changes.getByRole("listitem").filter({hasText:"#"+String(third).padStart(4,"0")})).toContainText("新增收款");
+  const [comparisonFile]=await Promise.all([page.waitForEvent("download"),compare.getByRole("button",{name:"下載版本比較 JSON"}).click()]);
+  expect(JSON.parse(await readFile(await comparisonFile.path(),"utf8"))).toEqual(report);
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBe(360);
+  await compare.getByLabel("舊版").selectOption("2");
+  await expect(compare.getByRole("button",{name:"比較版本"})).toBeDisabled();
+  await expect(changes).toHaveCount(0);
   await page.reload();
   await expect(history.getByRole("button",{name:"下載第 1 版"})).toBeVisible();
   await page.getByLabel("收款登記日期").fill("2001-01-01");

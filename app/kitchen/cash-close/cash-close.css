@@ -29,3 +29,16 @@
 .cashCloseCorrections ul{margin:0;padding:0;list-style:none}
 .cashCloseCorrections li{display:flex;flex-wrap:wrap;justify-content:space-between;gap:3px 12px;border-top:1px solid var(--line);padding:9px 0}
 .cashCloseCorrections li p{margin:3px 0}
+.cashCloseCompare{margin:14px 0}
+.cashCloseCompare h2{margin-top:0}
+.cashCloseCompareControls{gap:8px 12px;align-items:end}
+.cashCloseCompareControls label{display:grid;gap:4px;font-weight:650}
+.cashCloseCompareControls select,.cashCloseCompare button{min-height:42px}
+.cashCloseCompare table{table-layout:fixed;width:100%;border-collapse:collapse;font-size:.875rem;font-variant-numeric:tabular-nums}
+.cashCloseCompare th,.cashCloseCompare td{padding:6px 4px;border-bottom:1px solid var(--line);text-align:right;overflow-wrap:anywhere}
+.cashCloseCompare th:first-child{text-align:left}
+.cashCloseChanged{list-style:none;padding:0}
+.cashCloseChanged li{padding:10px 0;border-top:1px solid var(--line)}
+.cashCloseChanged li p{margin:4px 0}
+.cashCloseChanged dl{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px;margin:6px 0;overflow-wrap:anywhere}
+.cashCloseChanged dd{margin:3px 0 0}

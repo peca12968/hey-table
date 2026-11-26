@@ -1,0 +1,109 @@
+{
+  "format": "hey-table.cash-close-comparison.v1",
+  "date": "2026-11-26",
+  "timeZone": "Asia/Taipei",
+  "from": {
+    "revision": 1,
+    "savedAt": 1795690861000,
+    "capturedAt": 1795690860000
+  },
+  "to": {
+    "revision": 2,
+    "savedAt": 1795691041000,
+    "capturedAt": 1795691040000
+  },
+  "totals": {
+    "tendered": {
+      "before": "100",
+      "after": "130",
+      "delta": "30"
+    },
+    "change": {
+      "before": "55",
+      "after": "40",
+      "delta": "-15"
+    },
+    "net": {
+      "before": "45",
+      "after": "90",
+      "delta": "45"
+    },
+    "receipts": {
+      "before": 1,
+      "after": 2,
+      "delta": 1
+    }
+  },
+  "reconciliation": {
+    "opening": {
+      "before": "200",
+      "after": "200",
+      "delta": "0"
+    },
+    "adjustments": {
+      "before": "-20",
+      "after": "-20",
+      "delta": "0"
+    },
+    "counted": {
+      "before": "222",
+      "after": "272",
+      "delta": "50"
+    },
+    "expected": {
+      "before": "225",
+      "after": "270",
+      "delta": "45"
+    },
+    "difference": {
+      "before": "-3",
+      "after": "2",
+      "delta": "5"
+    }
+  },
+  "receipts": [
+    {
+      "orderId": 71,
+      "kind": "corrected",
+      "before": {
+        "tendered": "100",
+        "change": "55",
+        "amount": "45",
+        "recordedAt": 1795690800000,
+        "correctionRevision": 0,
+        "correctedAt": null
+      },
+      "after": {
+        "tendered": "80",
+        "change": "35",
+        "amount": "45",
+        "recordedAt": 1795690800000,
+        "correctionRevision": 1,
+        "correctedAt": 1795690920000
+      },
+      "delta": {
+        "tendered": "-20",
+        "change": "-20",
+        "net": "0"
+      }
+    },
+    {
+      "orderId": 72,
+      "kind": "added",
+      "before": null,
+      "after": {
+        "tendered": "50",
+        "change": "5",
+        "amount": "45",
+        "recordedAt": 1795690980000,
+        "correctionRevision": 0,
+        "correctedAt": null
+      },
+      "delta": {
+        "tendered": "50",
+        "change": "5",
+        "net": "45"
+      }
+    }
+  ]
+}

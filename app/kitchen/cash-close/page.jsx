@@ -7,6 +7,7 @@ import {downloadJson} from "../../../lib/download-json.mjs";
 import {numberOf} from "../../../lib/menu.mjs";
 import {cashAmount,reconcileCash} from "../../../lib/cash-reconciliation.mjs";
 import {businessDayRange} from "../../../lib/business-day.mjs";
+import CashCloseCompare from "./compare";
 import "./cash-close.css";
 
 const dayTime=new Intl.DateTimeFormat("zh-TW",{timeZone:"Asia/Taipei",dateStyle:"short",timeStyle:"medium"});
@@ -191,6 +192,7 @@ export default function CashClose(){
       <CashCount count={count} setCount={value=>setSavedCount({date,value})} report={report}
         canSave={date<=today} saving={saving} pending={operation} onSave={save}/>
       {current.versions.length>0&&<CashCloseHistory key={date} date={date} versions={current.versions}/>}
+      {current.versions.length>=2&&<CashCloseCompare key={date} date={date} versions={current.versions}/>}
       <section className="sheet cashCloseReceipts">
         <h2>收款明細</h2>
         {report.receipts.length===0?<p>這天沒有已登記的現金收款。</p>:<table aria-label="現金收款明細">
