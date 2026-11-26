@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>到期訂單重新保留｜Stockroom</title>
+  <link rel="stylesheet" href="/workbench/assets/workbench.css">
+  <script type="module" src="/workbench/assets/replacement.mjs"></script>
+</head>
+<body>
+  <header>
+    <div class="shell">
+      <span>Stockroom</span>
+      <h1>到期訂單重新保留</h1>
+    </div>
+  </header>
+  <main class="shell">
+    <section class="panel" aria-labelledby="batch-heading">
+      <h2 id="batch-heading">查詢原保留批次</h2>
+      <form class="actions" id="batch-form">
+        <label>原批號<input id="batch" required maxlength="80" pattern="[A-Za-z0-9_\-]+" autocomplete="off"></label>
+        <button id="lookup">查詢批次</button>
+      </form>
+    </section>
+    <p id="status" role="status" hidden></p>
+    <p id="error" role="alert" hidden></p>
+    <section class="panel" id="preview" aria-labelledby="preview-heading" hidden>
+      <h2 id="preview-heading">庫存與到期餘量</h2>
+      <p class="meta" id="captured"></p>
+      <p id="preview-status"></p>
+      <ul id="preview-items"></ul>
+    </section>
+    <section class="panel" id="confirmation" aria-labelledby="confirm-heading" hidden>
+      <h2 id="confirm-heading">確認重新保留</h2>
+      <p id="confirm-text"></p>
+      <button id="submit" type="button">整批重新保留</button>
+    </section>
+    <section class="panel" id="receipt" aria-labelledby="receipt-heading" hidden>
+      <h2 id="receipt-heading">重新保留收據</h2>
+      <p class="meta" id="receipt-batch"></p>
+      <p id="receipt-deadline"></p>
+      <ul id="receipt-items"></ul>
+      <button id="download" type="button" class="outline">下載收據 JSON</button>
+    </section>
+  </main>
+</body>
+</html>

@@ -229,6 +229,16 @@ def capture_batch_replacement(db):
         api.delete("/reservations/hold-packaging").raise_for_status()
         ready = preview()
         before_commit = api.get("/inventory").raise_for_status().json()
+        now = 504
+        api.post("/reservations", headers={"Idempotency-Key": "next-checkout"},
+                 json={"sku": "WRAP-01", "quantity": 2}).raise_for_status()
+        before_race = api.get("/inventory").raise_for_status().json()
+        stale = api.post(path + "/replacement", headers=headers)
+        refreshed = preview()
+        after_race = api.get("/inventory").raise_for_status().json()
+        missing_after_race = api.get(path + "/replacement")
+        api.delete("/reservations/next-checkout").raise_for_status()
+        now = 505
         accepted = api.post(path + "/replacement", headers=headers)
         receipt = accepted.raise_for_status().json()
         replay = api.post(path + "/replacement", headers=headers)
@@ -255,6 +265,9 @@ def capture_batch_replacement(db):
             "same_receipt": replay.json() == receipt == recovered, "created_at_ms": receipt["created_at_ms"],
             "expires_at_ms": receipt["expires_at_ms"], "items": items,
             "preview": {"blocked": blocked, "ready": ready},
+            "workbench": "/workbench/replacement",
+            "race": {"rejected_status": stale.status_code, "receipt_status": missing_after_race.status_code,
+                     "inventory_unchanged": before_race == after_race, "refreshed": refreshed},
         }
 
 

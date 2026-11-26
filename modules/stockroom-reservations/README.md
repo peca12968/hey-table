@@ -182,7 +182,7 @@ python -m pip install -r requirements.txt
 python -m uvicorn stockroom.api:app --host 127.0.0.1 --port 8000
 ```
 
-填寫各箱的回庫、報廢件數與原因，先按「核對複驗內容」，確認後再登記。其他人先改了餘額時，畫面會重新讀取各箱並請店員核對。若連線斷在送出後，原複驗單會暫存在同一分頁，重新整理後仍可用原單號重試。可憑驗收批號和複驗單號查原收據、下載 JSON。工作台使用同一個 Stockroom 服務與既有 API。[手機端對端測試](../../qa/stockroom-quarantine.spec.mjs) · [私人試玩](https://peca-github-demo.peca12968.chatgpt.site/?demo=quarantineDisposition#demos)
+填寫各箱的回庫、報廢件數與原因，先按「核對複驗內容」，確認後再登記。其他人先改了餘額時，畫面會重新讀取各箱並請店員核對。若連線斷在送出後，原複驗單會暫存在同一分頁，重新整理後仍可用原單號重試。可憑驗收批號和複驗單號查原收據、下載 JSON。工作台使用同一個 Stockroom 服務與既有 API。[手機端對端測試](../../qa/stockroom-workbench.spec.mjs) · [私人試玩](https://peca-github-demo.peca12968.chatgpt.site/?demo=quarantineDisposition#demos)
 
 ## 兩次盤點都是 20 件，期間進出了多少貨？
 
@@ -236,6 +236,12 @@ SQLite 適合本機或單節點展示。此版本的使用情境是可信任的�
 首次成功回 201，按原批號查詢或同鍵重送會取得含各品項關聯的原收據。兩台服務同時用單品與整批入口時，只有其中一方可接續同一品項。測試也注入最後一筆收據寫入失敗，驗證全部品項與可用量一起回滾。[舊庫與並行重跑](tests/test_batch_replacements.py)
 
 送出前可用 `GET /reservation-batches/recover-set/replacement-preview` 查看擷取時間、整批狀態及各品項的到期餘量、目前可用量與缺口。如果已完成接續，回應會帶新批號。預覽會結算到期保留；正式提交時會在寫入交易重新核對最新庫存，再決定是否建立新批次。測試使用另一台服務在預覽後占用庫存，並核對同時缺貨的多個品項。[缺口與預覽後競爭測試](tests/test_batch_replacements.py)
+
+#### 用瀏覽器重新保留
+
+啟動 Stockroom 後，從 `/workbench/replacement` 輸入原批號。工作台列出每個品項的到期餘量、可用量及缺口。庫存足夠時可整批送出。如果另一張訂單先占用庫存，工作台會重新查詢，顯示受影響品項。
+
+遇到連線中斷，可在同一分頁重新整理並以原請求編號重試；服務會以原收據應答或再次核對庫存。已完成的批次可用原批號查回新批號、品項對應及初始期限，並下載 JSON。[手機流程測試](../../qa/stockroom-workbench.spec.mjs) · [批次現況試玩（私人預覽）](https://peca-github-demo.peca12968.chatgpt.site/?demo=reservationStatus#demos)
 
 升級時會保留既有資料。舊版沒有記錄建立時間，因此既有保留維持原有手動釋放規則，回傳的期限為 `null`。查庫存目前也要取得寫入鎖，這是用讀取吞吐量換取單節點交易一致性的取捨。
 

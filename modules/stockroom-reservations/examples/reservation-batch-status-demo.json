@@ -340,8 +340,8 @@
     "accepted_status": 201,
     "replay_status": 200,
     "same_receipt": true,
-    "created_at_ms": 503000,
-    "expires_at_ms": 506000,
+    "created_at_ms": 505000,
+    "expires_at_ms": 508000,
     "items": [
       {
         "sku": "KIT-01",
@@ -408,6 +408,32 @@
             "available": 2,
             "shortfall": 0,
             "status": "ready"
+          }
+        ]
+      }
+    },
+    "workbench": "/workbench/replacement",
+    "race": {
+      "rejected_status": 409,
+      "receipt_status": 404,
+      "inventory_unchanged": true,
+      "refreshed": {
+        "status": "shortage",
+        "captured_at_ms": 504000,
+        "items": [
+          {
+            "sku": "KIT-01",
+            "expired_quantity": 2,
+            "available": 17,
+            "shortfall": 0,
+            "status": "ready"
+          },
+          {
+            "sku": "WRAP-01",
+            "expired_quantity": 2,
+            "available": 0,
+            "shortfall": 2,
+            "status": "shortage"
           }
         ]
       }

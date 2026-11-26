@@ -627,15 +627,24 @@ def create_app(path: Path, *, ttl_seconds=900, clock=time.time):
     workbench = Path(__file__).resolve().parent / "workbench"
 
     @app.get("/workbench/assets/{name}", include_in_schema=False)
-    def quarantine_asset(name: str):
-        media_type = {"quarantine.mjs": "text/javascript", "quarantine.css": "text/css"}.get(name)
+    def workbench_asset(name: str):
+        media_type = {
+            "quarantine.mjs": "text/javascript",
+            "replacement.mjs": "text/javascript",
+            "quarantine.css": "text/css",
+            "workbench.css": "text/css",
+        }.get(name)
         if media_type is None:
             raise HTTPException(status_code=404)
-        return FileResponse(workbench / "assets" / name, media_type=media_type, headers={"X-Content-Type-Options": "nosniff"})
+        filename = "workbench.css" if name == "quarantine.css" else name
+        return FileResponse(workbench / "assets" / filename, media_type=media_type,
+                            headers={"X-Content-Type-Options": "nosniff"})
 
-    @app.get("/workbench/quarantine", include_in_schema=False)
-    def quarantine_workbench():
-        return FileResponse(workbench / "quarantine.html", media_type="text/html", headers={
+    @app.get("/workbench/{tool_name}", include_in_schema=False)
+    def workbench_page(tool_name: str):
+        if tool_name not in ("quarantine", "replacement"):
+            raise HTTPException(status_code=404)
+        return FileResponse(workbench / (tool_name + ".html"), media_type="text/html", headers={
             "Cache-Control": "no-store",
             "Content-Security-Policy": "default-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'",
             "Referrer-Policy": "no-referrer",
