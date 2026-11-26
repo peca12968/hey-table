@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>退貨驗收歷程｜Stockroom</title>
+  <link rel="stylesheet" href="/workbench/assets/workbench.css">
+  <script type="module" src="/workbench/assets/return-history.mjs"></script>
+</head>
+<body>
+  <header><div class="shell"><span>Stockroom</span><h1>退貨驗收歷程</h1></div></header>
+  <main class="shell">
+    <section class="panel" aria-labelledby="lookup-heading">
+      <h2 id="lookup-heading">查詢驗收批</h2>
+      <form id="lookup" class="actions">
+        <label>驗收批號<input id="batch" required maxlength="80" pattern="[A-Za-z0-9_\-]+" autocomplete="off"></label>
+        <button>查詢驗收歷程</button>
+      </form>
+    </section>
+    <p id="error" role="alert" hidden></p>
+    <section id="inspection" class="panel" aria-labelledby="inspection-heading" hidden>
+      <h2 id="inspection-heading">各箱驗收與目前餘額</h2>
+      <p class="meta" id="captured"></p>
+      <p id="summary"></p>
+      <ul id="balances" aria-label="各箱目前餘額"></ul>
+      <a id="quarantine" hidden>開啟這批的隔離品複驗</a>
+    </section>
+    <section id="history" class="panel" aria-labelledby="history-heading" hidden>
+      <h2 id="history-heading">複驗紀錄</h2>
+      <label>複驗箱件<select id="filter"></select></label>
+      <p id="updates" role="status"></p>
+      <ol id="dispositions" aria-label="複驗單"></ol>
+      <div class="actions">
+        <button id="first" class="outline" type="button" hidden>返回最新一頁</button>
+        <button id="more" class="outline" type="button" hidden>下一頁</button>
+        <button id="download" class="outline" type="button">下載本頁 JSON</button>
+      </div>
+    </section>
+  </main>
+</body>
+</html>

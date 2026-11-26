@@ -155,6 +155,7 @@ function showReceipt(result, batch, expected) {
   const quarantine = byId('quarantine');
   quarantine.href = '/workbench/quarantine?batch=' + encodeURIComponent(batch);
   quarantine.hidden = !result.boxes.some(box => box.quarantined > 0);
+  byId('return-history').href = '/workbench/return-history?batch=' + encodeURIComponent(batch);
   receiptPanel.hidden = false;
   byId('receipt-key').value = batch;
 }

@@ -118,6 +118,7 @@ async function loadBatch(batch) {
   const result = await request(root(batch) + '/quarantine');
   if (result.batch_id !== batch || !Array.isArray(result.boxes)) throw new Error('Unexpected batch');
   snapshot = result;
+  byId('return-history').href = '/workbench/return-history?batch=' + encodeURIComponent(batch);
   drawBalances();
 }
 

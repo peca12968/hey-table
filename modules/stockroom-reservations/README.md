@@ -47,6 +47,7 @@ python -m uvicorn stockroom.api:app
 | GET /quarantine-queue | 依驗收時間跨批查看待複驗件數，可用 SKU 篩選 |
 | POST /return-inspections/{batch_id}/dispositions | 用同一個複驗單號登記多箱回庫與報廢 |
 | GET /return-inspections/{batch_id}/dispositions/{disposition_id} | 查原複驗收據與處理原因 |
+| GET /return-inspections/{batch_id}/history | 同一份讀取快照列出原始驗收、目前餘額及可翻頁的複驗紀錄 |
 | GET /reservations/{key}/fulfillments/{box} | 查詢該箱實際寄出的 dispatched、已重新入庫的 restocked，以及尚可退回的 returnable |
 | GET /reservations/{key}/fulfillments | 一次查詢保留狀態、各箱出貨與退貨明細，以及全單已重新入庫和仍可退回的件數 |
 | POST /packing-snapshots | 一次查詢多張訂單，從同一時點取得各單的箱單和對應商品庫存 |
@@ -196,6 +197,12 @@ python -m uvicorn stockroom.api:app --host 127.0.0.1 --port 8000
 開啟 [待複驗清單](http://127.0.0.1:8000/workbench/quarantine-queue)，可從退貨驗收或隔離品複驗工作台進入。清單會統計尚待複驗的批、箱與件數，依原驗收時間由早到晚排列。沒有驗收時間的舊批次排在最前，並標示「驗收時間未記錄」。可依 SKU 縮小範圍、下載本頁 JSON，或點驗收批號查看整批的即時餘額。
 
 `GET /quarantine-queue?sku=KIT-01&limit=25` 在同一份 SQLite 讀取結果回傳全範圍統計與本頁批次。續頁保留原 SKU，並帶上 `next` 的 `after_received_at_ms`、`after_batch_id`。每頁會反映當下的複驗結果。即使上一頁的最後一批剛處理完，仍可用原游標接續查詢。相同驗收批號重送會沿用第一次驗收時間。[舊庫升級與續頁測試](tests/test_quarantine_dispositions.py) · [手機端對端測試](../../qa/stockroom-workbench.spec.mjs)
+
+#### 查詢退貨驗收歷程
+
+開啟 [退貨驗收歷程](http://127.0.0.1:8000/workbench/return-history) 後，輸入驗收批號，或從原驗收收據及複驗工作台點入。畫面分列初驗合格、隔離、複驗回庫、報廢及仍待複驗的件數。下方可按箱查看複驗單號、原因及當時剩餘量。切換箱件後，原驗收與目前餘額仍可核對整批。頁面可下載本次查詢的 JSON，包含全批餘額和本頁複驗明細。
+
+API 在同一筆 SQLite 讀取交易擷取原驗收、全批餘額及該頁複驗紀錄。紀錄按時間和複驗單號由新到舊。續頁用 `next.before_recorded_at_ms` 和 `next.before_disposition_id`，有篩選時沿用 `reservation_id` 和 `shipment_id`。每一頁反映當下的全批複驗餘額。[並行讀取與續頁測試](tests/test_quarantine_dispositions.py) · [手機對端測試](../../qa/stockroom-workbench.spec.mjs) · [私人 Demo](https://peca-github-demo.peca12968.chatgpt.site/?demo=quarantineDisposition#demos)
 
 ## 兩次盤點都是 20 件，期間進出了多少貨？
 

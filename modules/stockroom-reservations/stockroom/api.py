@@ -506,6 +506,48 @@ class QuarantineDispositionReceipt(BaseModel):
     boxes: list[QuarantineDispositionBox]
 
 
+class ReturnHistoryBoxFilter(BaseModel):
+    reservation_id: BoxKey
+    shipment_id: BoxKey
+
+
+class ReturnHistorySummary(BaseModel):
+    sellable: int
+    quarantined: int
+    restocked: int
+    discarded: int
+    remaining: int
+
+
+class ReturnHistoryBox(ReturnInspectedBox):
+    sku: str
+    restocked: int
+    discarded: int
+    remaining: int
+
+
+class ReturnHistoryDisposition(BaseModel):
+    disposition_id: str
+    recorded_at_ms: int
+    boxes: list[QuarantineDispositionBox]
+
+
+class ReturnHistoryCursor(BaseModel):
+    before_recorded_at_ms: int
+    before_disposition_id: str
+
+
+class ReturnInspectionHistory(BaseModel):
+    batch_id: str
+    captured_at_ms: int
+    received_at_ms: int | None
+    box_filter: ReturnHistoryBoxFilter | None
+    summary: ReturnHistorySummary
+    boxes: list[ReturnHistoryBox]
+    dispositions: list[ReturnHistoryDisposition]
+    next: ReturnHistoryCursor | None
+
+
 class PackingStatement(BaseModel):
     reservation: Progress
     boxes: list[ShipmentBalance]
@@ -668,6 +710,7 @@ def create_app(path: Path, *, ttl_seconds=900, clock=time.time):
             "quarantine-queue.mjs": "text/javascript",
             "replacement.mjs": "text/javascript",
             "returns.mjs": "text/javascript",
+            "return-history.mjs": "text/javascript",
             "quarantine.css": "text/css",
             "workbench.css": "text/css",
         }.get(name)
@@ -679,7 +722,7 @@ def create_app(path: Path, *, ttl_seconds=900, clock=time.time):
 
     @app.get("/workbench/{tool_name}", include_in_schema=False)
     def workbench_page(tool_name: str):
-        if tool_name not in ("dispatch", "quarantine", "quarantine-queue", "replacement", "returns"):
+        if tool_name not in ("dispatch", "quarantine", "quarantine-queue", "replacement", "returns", "return-history"):
             raise HTTPException(status_code=404)
         return FileResponse(workbench / (tool_name + ".html"), media_type="text/html", headers={
             "Cache-Control": "no-store",
@@ -934,6 +977,25 @@ def create_app(path: Path, *, ttl_seconds=900, clock=time.time):
     def quarantine_receipt(batch_id: BoxKey, disposition_id: BoxKey, response: Response):
         response.headers["Cache-Control"] = "no-store"
         return store.quarantine_receipt(batch_id, disposition_id)
+
+    @app.get("/return-inspections/{batch_id}/history", response_model=ReturnInspectionHistory)
+    def return_inspection_history(
+        batch_id: BoxKey,
+        response: Response,
+        limit: Annotated[int, Query(ge=1, le=100)] = 20,
+        reservation_id: Annotated[str | None, Query(pattern=r"^[A-Za-z0-9_-]{1,80}$")] = None,
+        shipment_id: Annotated[str | None, Query(pattern=r"^[A-Za-z0-9_-]{1,80}$")] = None,
+        before_recorded_at_ms: Annotated[int | None, Query(ge=0, le=2**63 - 1)] = None,
+        before_disposition_id: Annotated[str | None, Query(pattern=r"^[A-Za-z0-9_-]{1,80}$")] = None,
+    ):
+        if (reservation_id is None) != (shipment_id is None):
+            raise HTTPException(422, "Supply both the reservation and shipment to filter by box")
+        if (before_recorded_at_ms is None) != (before_disposition_id is None):
+            raise HTTPException(422, "Supply a complete disposition cursor")
+        box = None if reservation_id is None else (reservation_id, shipment_id)
+        before = None if before_disposition_id is None else (before_recorded_at_ms, before_disposition_id)
+        response.headers["Cache-Control"] = "no-store"
+        return store.return_inspection_history(batch_id, box, limit, before)
 
     @app.post("/reservation-batches", response_model=ReservationBatchReceipt, status_code=201,
               responses={200: {"model": ReservationBatchReceipt, "description": "Original reservation batch receipt"}})

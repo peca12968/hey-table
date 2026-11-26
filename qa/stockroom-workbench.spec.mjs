@@ -512,3 +512,64 @@ with sqlite3.connect(sys.argv[1]) as db:
   await page.getByRole("link",{name:"west-dock"}).click();
   await expect(page.getByText("west-dock · 尚待處理 3 件")).toBeVisible();
 });
+
+test("the mobile return history joins original inspection and disposition pages, with a shareable box filter",async({page,request})=>{
+  execFileSync(python,["-c",`import sqlite3, sys
+with sqlite3.connect(sys.argv[1]) as db:
+    db.execute("INSERT INTO products VALUES ('HISTORY-01', 5, 5)")
+`,join(directory,"stockroom.sqlite")],{windowsHide:true});
+  const post=(path,key,data)=>request.post(origin+path,{headers:{"Idempotency-Key":key},data});
+  const batch="history-dock",root="/return-inspections/"+batch;
+  const orders=["history-east","history-west"];
+  for(const order of orders){
+    expect((await post("/reservations",order,{sku:"HISTORY-01",quantity:2})).status()).toBe(201);
+    expect((await post("/reservations/"+order+"/fulfillments","box",{quantity:2})).status()).toBe(201);
+  }
+  expect((await post("/return-inspections",batch,{boxes:orders.map(order=>({
+    reservation_id:order,shipment_id:"box",sellable:0,quarantined:2,
+  }))})).status()).toBe(201);
+  const decision=(order,restock,discard,expected_remaining,reason)=>({
+    reservation_id:order,shipment_id:"box",restock,discard,expected_remaining,reason,
+  });
+  expect((await post(root+"/dispositions","first-review",{boxes:[
+    decision(orders[0],0,1,2,"外箱受損"),decision(orders[1],0,1,2,"商品破損"),
+  ]})).status()).toBe(201);
+  expect((await post(root+"/dispositions","second-review",{boxes:[
+    decision(orders[0],1,0,1,"重新封裝"),
+  ]})).status()).toBe(201);
+  await page.route(url=>url.pathname===root+"/history",async route=>{
+    const url=new URL(route.request().url());
+    url.searchParams.set("limit","1");
+    await route.fulfill({response:await route.fetch({url:url.href})});
+  });
+  await page.setViewportSize({width:360,height:780});
+  await page.goto(origin+"/workbench/returns");
+  await page.getByRole("textbox",{name:"收據批號"}).fill(batch);
+  await page.getByRole("button",{name:"取回驗收收據"}).click();
+  await page.getByRole("link",{name:"查看這批的驗收歷程"}).click();
+  await expect(page.getByRole("heading",{name:"退貨驗收歷程"})).toBeVisible();
+  await expect(page.getByText(/全批合計 · .*複驗回庫 1 件，報廢 2 件，仍待複驗 1 件/)).toBeVisible();
+  const events=page.getByRole("list",{name:"複驗單"});
+  await expect(events).toContainText("second-review");
+  await expect(events).toContainText("重新封裝");
+  await page.getByRole("button",{name:"下一頁"}).click();
+  await expect(events).toContainText("first-review");
+  await expect(events).toContainText("外箱受損");
+  await expect(events).toContainText("商品破損");
+  const filter=page.getByRole("combobox",{name:"複驗箱件"});
+  await filter.selectOption("history-west/box");
+  await expect(events).not.toContainText("外箱受損");
+  await expect(events).toContainText("商品破損");
+  await page.reload();
+  await expect(filter).toHaveValue("history-west/box");
+  const downloadPromise=page.waitForEvent("download");
+  await page.getByRole("button",{name:"下載本頁 JSON"}).click();
+  const download=await downloadPromise;
+  const snapshot=JSON.parse(await readFile(await download.path(),"utf8"));
+  expect(snapshot.box_filter).toEqual({reservation_id:"history-west",shipment_id:"box"});
+  expect(snapshot.boxes).toHaveLength(2);
+  expect(snapshot.dispositions[0].boxes.map(box=>box.reason)).toEqual(["商品破損"]);
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBe(360);
+  await page.getByRole("link",{name:"開啟這批的隔離品複驗"}).click();
+  await expect(page.getByText(batch+" · 尚待處理 1 件")).toBeVisible();
+});

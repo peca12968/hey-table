@@ -7,6 +7,7 @@ from fastapi.testclient import TestClient
 
 from stockroom.api import create_app
 from stockroom.reconcile import reconcile
+from stockroom.store import Store
 
 
 def post(api, path, key, body):
@@ -91,6 +92,69 @@ def test_queue_reads_open_balances_by_sku_and_pages_past_a_resolved_old_batch(tm
         assert past_end["batches"] == [] and past_end["summary"] == {"batches": 2, "boxes": 3, "units": 5}
         assert api.get("/quarantine-queue?after_batch_id=legacy-dock").status_code == 422
         assert api.get("/quarantine-queue?limit=101").status_code == 422
+
+
+def test_inspection_history_preserves_original_receipt_filters_box_and_pages_by_tied_timestamp(tmp_path):
+    database = tmp_path / "stockroom.db"
+    clock = [100.0]
+    with TestClient(create_app(database, clock=lambda: clock[0])) as api:
+        original = []
+        for order, sellable, quarantined in (("east", 1, 3), ("west", 0, 2), ("dry", 2, 0)):
+            quantity = sellable + quarantined
+            assert post(api, "/reservations", order, {"sku": "KIT-01", "quantity": quantity}).status_code == 201
+            assert post(api, f"/reservations/{order}/fulfillments", "box", {"quantity": quantity}).status_code == 201
+            original.append({"reservation_id": order, "shipment_id": "box", "sellable": sellable, "quarantined": quarantined})
+        receipt = post(api, "/return-inspections", "inspection", {"boxes": original}).json()
+        path = "/return-inspections/inspection/history"
+        baseline = api.get(path)
+        assert (baseline.status_code, baseline.headers["Cache-Control"]) == (200, "no-store")
+        assert baseline.json()["summary"] == {"sellable": 3, "quarantined": 5, "restocked": 0, "discarded": 0, "remaining": 5}
+        assert baseline.json()["received_at_ms"] == 100000 and not baseline.json()["dispositions"]
+        clock[0] = 101.0
+        first = confirm(api, "z-pass", [decision("east", 1, 0, 3), decision("west", 0, 1, 2)]).json()
+        second = confirm(api, "a-pass", [decision("east", 0, 1, 2), decision("west", 1, 0, 1)]).json()
+        recent = api.get(path, params={"limit": 1}).json()
+        assert recent["dispositions"] == [{"disposition_id": "z-pass", "recorded_at_ms": 101000, "boxes": first["boxes"]}]
+        assert recent["summary"] == {"sellable": 3, "quarantined": 5, "restocked": 2, "discarded": 2, "remaining": 1}
+        assert recent["next"] == {"before_recorded_at_ms": 101000, "before_disposition_id": "z-pass"}
+        clock[0] = 102.0
+        assert confirm(api, "closing", [decision("east", 1, 0, 1)]).status_code == 201
+        older = api.get(path, params={"limit": 1, **recent["next"]}).json()
+        assert older["dispositions"] == [{"disposition_id": "a-pass", "recorded_at_ms": 101000, "boxes": second["boxes"]}]
+        assert older["next"] is None and older["summary"]["remaining"] == 0 and older["captured_at_ms"] == 102000
+        east = api.get(path, params={"reservation_id": "east", "shipment_id": "box"}).json()
+        assert east["box_filter"] == {"reservation_id": "east", "shipment_id": "box"}
+        assert [entry["disposition_id"] for entry in east["dispositions"]] == ["closing", "z-pass", "a-pass"]
+        assert all([box["reservation_id"] for box in entry["boxes"]] == ["east"] for entry in east["dispositions"])
+        assert east["boxes"] == older["boxes"] and east["summary"] == older["summary"]
+        assert not api.get(path, params={"reservation_id": "dry", "shipment_id": "box"}).json()["dispositions"]
+        assert api.get(path, params={"reservation_id": "dry"}).status_code == 422
+        assert api.get(path, params={"before_disposition_id": "a-pass"}).status_code == 422
+        assert api.get(path, params={"reservation_id": "dry", "shipment_id": "unknown"}).status_code == 404
+        assert api.get("/return-inspections/not-found/history").status_code == 404
+        assert api.get("/return-inspections/inspection").json() == receipt
+        with closing(sqlite3.connect(database)) as conn, conn:
+            conn.execute("UPDATE return_inspection_boxes SET received_at_ms=NULL")
+        assert api.get(path).json()["received_at_ms"] is None
+
+
+def test_inspection_history_balances_and_operations_share_a_read_snapshot(tmp_path, monkeypatch):
+    database = tmp_path / "stockroom.db"
+    with TestClient(create_app(database)) as api:
+        inspect(api, [("east", 2), ("west", 1)])
+        reader = Store(database)
+        original = reader.quarantine_balances
+
+        def concurrent_write(conn, batch_id):
+            assert confirm(api, "new-review", [decision("east", 1, 0, 2)]).status_code == 201
+            return original(conn, batch_id)
+
+        with monkeypatch.context() as patch:
+            patch.setattr(reader, "quarantine_balances", concurrent_write)
+            before = reader.return_inspection_history("inspection", None, 20, None)
+        assert before["summary"]["remaining"] == 3 and before["dispositions"] == []
+        after = reader.return_inspection_history("inspection", None, 20, None)
+        assert after["summary"]["remaining"] == 2 and after["dispositions"][0]["disposition_id"] == "new-review"
 
 
 def test_partial_decisions_preserve_original_receipts_and_reconcile_saleable_inventory(tmp_path):

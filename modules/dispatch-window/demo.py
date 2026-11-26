@@ -129,6 +129,18 @@ def disposition_demo(client):
     stock_before = client.get("/inventory").json()[0]
     original = client.get(path).json()
     waiting = client.get(path + "/quarantine").json()
+    history_url = "/workbench/return-history"
+    history_page = client.get(history_url)
+    assert history_page.status_code == 200 and history_page.headers["Cache-Control"] == "no-store"
+
+    def history(**params):
+        reply = client.get(path + "/history", params=params)
+        assert reply.status_code == 200 and reply.headers["Cache-Control"] == "no-store"
+        return reply.json()
+
+    history_before = history()
+    assert history_before["summary"] == {"sellable": 1, "quarantined": 2, "restocked": 0, "discarded": 0, "remaining": 2}
+    assert not history_before["dispositions"]
     decisions = [
         {"reservation_id": "C", "shipment_id": "C1", "restock": 1, "discard": 0,
          "expected_remaining": 1, "reason": "外箱更換後複驗合格"},
@@ -158,11 +170,18 @@ def disposition_demo(client):
     after = queue()
     assert after["summary"] == {"batches": 1, "boxes": 1, "units": 1}
     assert after["batches"] == next_page["batches"]
+    history_after = history()
+    history_box = history(reservation_id="D", shipment_id="D1")
+    assert history_after["dispositions"][0]["boxes"] == replay.json()["boxes"]
+    assert history_after["summary"] == {"sellable": 1, "quarantined": 2, "restocked": 1, "discarded": 1, "remaining": 0}
+    assert history_box["dispositions"][0]["boxes"] == [replay.json()["boxes"][1]]
+    assert history_box["summary"] == history_after["summary"]
     return {"format": "dispatch-window.quarantine-disposition-demo.v1", "workbench": workbench_url,
             "waiting": waiting, "decisions": decisions,
             "stale_status": stale.status_code, "created_status": confirmed.status_code, "replay_status": replay.status_code,
             "receipt": replay.json(), "final": final, "inventory_before": stock_before, "inventory_after": stock_after,
-            "queue": {"workbench": queue_url, "first_page": first_page, "next_page": next_page, "after": after}}
+            "queue": {"workbench": queue_url, "first_page": first_page, "next_page": next_page, "after": after},
+            "history": {"workbench": history_url, "before": history_before, "after": history_after, "box": history_box}}
 
 
 def execution_demo(client, clock, report, manifest):

@@ -1371,6 +1371,62 @@ class Store:
                 raise Missing("Unknown quarantine disposition")
             return {"batch_id": batch_id, "disposition_id": disposition_id, "boxes": boxes}
 
+    def return_inspection_history(self, batch_id, box, limit, before):
+        with closing(self.connect()) as conn:
+            conn.execute("BEGIN")
+            inspected = conn.execute("""SELECT i.reservation_id,i.shipment_id,i.sellable,i.quarantined,
+                i.returnable_after,i.received_at_ms,r.sku
+                FROM return_inspection_boxes i JOIN reservations r ON r.id=i.reservation_id
+                WHERE i.batch_id=? ORDER BY i.reservation_id,i.shipment_id""", (batch_id,)).fetchall()
+            if not inspected:
+                raise Missing("Unknown return inspection")
+            if box is not None and all((row["reservation_id"], row["shipment_id"]) != box for row in inspected):
+                raise Missing("Box does not belong to this return inspection")
+            quarantine = {(row["reservation_id"], row["shipment_id"]): row
+                          for row in self.quarantine_balances(conn, batch_id)}
+            boxes = []
+            for row in inspected:
+                info = dict(row)
+                info.pop("received_at_ms")
+                balance = quarantine.get((row["reservation_id"], row["shipment_id"]), {})
+                boxes.append(info | {key: balance.get(key, 0) for key in ("restocked", "discarded", "remaining")})
+            dispositions, next_cursor = self.inspection_disposition_page(conn, batch_id, box, limit, before)
+            captured_at_ms = int(self.clock() * 1000)
+        return {"batch_id": batch_id, "captured_at_ms": captured_at_ms, "received_at_ms": inspected[0]["received_at_ms"],
+                "box_filter": None if box is None else dict(zip(("reservation_id", "shipment_id"), box)),
+                "summary": {key: sum(row[key] for row in boxes)
+                            for key in ("sellable", "quarantined", "restocked", "discarded", "remaining")},
+                "boxes": boxes, "dispositions": dispositions, "next": next_cursor}
+
+    @staticmethod
+    def inspection_disposition_page(conn, batch_id, box, limit, before):
+        box_filter = "" if box is None else "AND reservation_id=? AND shipment_id=?"
+        page_filter = "" if before is None else "WHERE (recorded_at_ms,disposition_id)<(?,?)"
+        parameters = (batch_id, *(box or ()), *(before or ()), limit + 1)
+        rows = conn.execute(f"""WITH visible AS (
+            SELECT disposition_id,reservation_id,shipment_id,restock,discard,reason,remaining_after,recorded_at_ms
+            FROM return_quarantine_dispositions WHERE batch_id=? {box_filter}
+        ), page AS (
+            SELECT recorded_at_ms,disposition_id FROM visible {page_filter}
+            GROUP BY recorded_at_ms,disposition_id
+            ORDER BY recorded_at_ms DESC,disposition_id DESC LIMIT ?
+        )
+        SELECT visible.* FROM page JOIN visible USING (recorded_at_ms,disposition_id)
+        ORDER BY recorded_at_ms DESC,disposition_id DESC,reservation_id,shipment_id""", parameters)
+        dispositions = {}
+        for row in rows:
+            item = dict(row)
+            key = item["recorded_at_ms"], item.pop("disposition_id")
+            if key not in dispositions:
+                dispositions[key] = {"recorded_at_ms": key[0], "disposition_id": key[1], "boxes": []}
+            dispositions[key]["boxes"].append(item)
+        page = list(dispositions.values())[:limit]
+        cursor = None
+        if len(dispositions) > limit:
+            tail = page[-1]
+            cursor = {"before_recorded_at_ms": tail["recorded_at_ms"], "before_disposition_id": tail["disposition_id"]}
+        return page, cursor
+
     @staticmethod
     def return_batch_rows(conn, batch_id):
         rows = conn.execute("""SELECT r.* FROM return_batch_boxes b JOIN shipment_returns r
