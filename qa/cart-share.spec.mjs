@@ -34,8 +34,9 @@ test("a shared cart merges only available portions on another phone and keeps th
   expect(await page.evaluate(()=>window.copiedShare)).toBe(link);
 
   const receiver=await browser.newContext({viewport:{width:360,height:780}});
+  let other;
   try{
-    const other=await receiver.newPage();
+    other=await receiver.newPage();
     let submits=0;
     other.on("request",req=>{if(req.method()==="POST"&&new URL(req.url()).pathname==="/api/orders")submits++;});
     await other.route("**/api/menu",async route=>{
@@ -67,7 +68,13 @@ test("a shared cart merges only available portions on another phone and keeps th
     await other.reload();
     await openCart(other);
     await expect(cart(other).getByText("2 件")).toBeVisible();
-  }finally{await receiver.close();}
+  }finally{
+    try{
+      await other?.unrouteAll({behavior:"wait"});
+    }finally{
+      await receiver.close();
+    }
+  }
 });
 
 test("another tab's edits and unresolved checkout take precedence over a shared cart preview",async({page,context,baseURL})=>{
