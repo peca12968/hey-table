@@ -33,6 +33,7 @@ function OperationalHistory({order}){
     changes.push({text:actor+"將取餐時段從 "+oldSlot+" 改到 "+newSlot,at:change.at});
   }
   if(order.pickupArrivedAt!=null)changes.push({text:"自取已回報到店",at:order.pickupArrivedAt});
+  if(order.pickupArrivalWithdrawal)changes.push({text:"顧客撤回到店回報",at:order.pickupArrivalWithdrawal.withdrawnAt});
   changes.sort((a,b)=>(a.at??0)-(b.at??0));
   return <>
     {order.stations.length>0&&<section className="receiptProgress" aria-labelledby="order-stations">

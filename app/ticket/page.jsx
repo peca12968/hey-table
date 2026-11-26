@@ -132,7 +132,7 @@ export default function Ticket(){
       <PickupCode key={"pickup-code-"+route.token} number={numberOf(order.id)}/>
       <PickupPassShare key={"pickup-pass-"+route.token} token={route.token}/>
     </>}
-    {order.mode==="pickup"&&<PickupArrival key={"pickup-arrival-"+route.token} arrivedAt={order.pickupArrivedAt}
+    {order.mode==="pickup"&&<PickupArrival key={"pickup-arrival-"+route.token} arrivedAt={order.pickupArrivedAt} arrivalRevision={order.pickupArrivalRevision}
       eligible={["preparing","ready"].includes(order.status)&&payable} token={route.token} onChange={refreshReceipt}/>}
     <OrderProgress history={order.statusHistory}/>
     <ul className="orderLines">{order.items.map(d=><li key={d.id}><div><b>{d.name} × {d.qty}</b><ItemNote note={d.note}/></div><span>NT$ {d.price*d.qty}</span></li>)}</ul>

@@ -3784,6 +3784,68 @@ test("a pickup delegate and receipt owner share the first arrival with staff",as
   assert.equal(db.sqlite.prepare("SELECT pickup_arrived_at FROM orders WHERE id=?").get(id).pickup_arrived_at,confirmation.pickupArrivedAt);
 });
 
+test("pickup arrival withdrawal preserves old data, rejects stale devices and retries without erasing a newer arrival",async t=>{
+  const token=crypto.randomUUID(),pass=crypto.randomUUID();
+  let now=Date.parse("2026-11-26T12:00:00+08:00"),id;
+  const db=database((tag,sqlite)=>{
+    if(tag!=="0052_table_handoff_history_indexes")return;
+    id=Number(sqlite.prepare(`INSERT INTO orders(token,mode,status,items,note,total,created,pickup_arrived_at)
+      VALUES (?,'pickup','ready','[]','',45,?,?)`).run(token,now-600_000,now).lastInsertRowid);
+  });
+  t.after(()=>db.sqlite.close());
+  t.mock.method(Date,"now",()=>now);
+  const staff={Authorization:"Bearer fixture-staff"},owner={"X-Ticket":token},delegate={"X-Pickup-Pass":pass};
+  const call=(path,headers,method="GET",data={})=>api(new Request("https://order.example/api"+path,{
+    method,headers:{"Content-Type":"application/json",...headers},...(method==="GET"?{}:{body:JSON.stringify(data)}),
+  }),{DB:db,STAFF_KEY:"fixture-staff"});
+  const arrive=(headers,revision)=>call("/ticket/arrival",headers,"POST",{revision});
+  const delegated=revision=>call("/pickup-pass/arrival",delegate,"POST",{revision});
+  const first={revision:0,arrivedAt:now,operationId:crypto.randomUUID()};
+  const withdraw=(operation,headers=owner)=>call("/ticket/arrival",headers,"PATCH",operation);
+  const details=async()=>await (await call("/kitchen/order-detail?id="+id,staff)).json();
+  const auditCount=()=>db.sqlite.prepare("SELECT COUNT(*) AS count FROM pickup_arrival_withdrawals").get().count;
+  assert.equal((await details()).pickupArrivedAt,now);
+  assert.equal((await call("/ticket/pickup-pass",owner,"POST",{revision:0,pass})).status,200);
+  assert.equal((await withdraw(first,{"X-Ticket":pass})).status,404);
+  assert.equal((await withdraw(first,{...owner,Origin:"https://other.example"})).status,403);
+  assert.equal((await withdraw({...first,arrivedAt:now-1})).status,409);
+  db.sqlite.exec(`CREATE TRIGGER withdrawal_write_failure BEFORE UPDATE OF pickup_arrival_revision ON orders
+    BEGIN SELECT RAISE(ABORT,'withdrawal test failure'); END;`);
+  await assert.rejects(withdraw(first),/withdrawal test failure/);
+  assert.equal(auditCount(),0);
+  assert.equal((await details()).pickupArrivedAt,now);
+  db.sqlite.exec("DROP TRIGGER withdrawal_write_failure");
+  const rival={...first,operationId:crypto.randomUUID()};
+  const results=await Promise.all([withdraw(first),withdraw(rival)]);
+  assert.deepEqual(results.map(response=>response.status).sort(),[200,409]);
+  const winnerIndex=results.findIndex(response=>response.ok),winningOperation=[first,rival][winnerIndex];
+  const original=await results[winnerIndex].json();
+  assert.deepEqual(original,{id,pickupArrivedAt:null,pickupArrivalRevision:1,
+    withdrawal:{revision:1,previousArrivedAt:now,withdrawnAt:now}});
+  assert.equal(auditCount(),1);
+  const logged=await details();
+  assert.equal(Object.hasOwn(logged,"pickupArrivedAt"),false);
+  assert.deepEqual(logged.pickupArrivalWithdrawal,{previousArrivedAt:now,withdrawnAt:now});
+  assert.deepEqual(await (await withdraw(winningOperation)).json(),original);
+  for(const stale of [await arrive(owner,undefined),await arrive(owner,0),await delegated(0)]){
+    assert.equal(stale.status,409);
+    assert.equal((await stale.json()).code,"arrival_changed");
+  }
+  const current=await (await call("/pickup-pass?handoff=1",delegate)).json();
+  assert.equal(current.pickupArrivalRevision,1);
+  assert.equal(current.pickupArrivedAt,null);
+  assert.equal((await delegated(1)).status,200);
+  assert.equal((await details()).pickupArrivedAt,now);
+  const replay=await (await withdraw(winningOperation)).json();
+  assert.deepEqual(replay,{...original,pickupArrivedAt:now});
+  assert.equal(auditCount(),1);
+  now+=5000;
+  assert.equal((await call("/kitchen/status",staff,"PATCH",{id,from:"ready",to:"completed"})).status,200);
+  assert.equal((await withdraw({...first,revision:1,operationId:crypto.randomUUID()})).status,409);
+  assert.equal((await details()).pickupArrivedAt,first.arrivedAt);
+  assert.equal(auditCount(),1);
+});
+
 test("pickup arrival uses the receipt credential and persists the first time through handoff",async t=>{
   const oldToken=crypto.randomUUID();
   let now=Date.parse("2026-11-25T12:00:00+08:00");

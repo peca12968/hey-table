@@ -21,6 +21,7 @@ import {canReschedulePickup,capacityAtPickupSlot,editablePickupSlots,orderPortio
   suggestPickupSlot,usedAtPickupSlot} from "./pickup-slots.mjs";
 import {pickupCalendar} from "./pickup-calendar.mjs";
 import {orderDetailsText,ticketTextAttachment} from "./ticket-document.mjs";
+import {latestPickupArrivalWithdrawal,pickupArrivalProjection,reportPickupArrival,withdrawPickupArrival} from "./pickup-arrival.mjs";
 import {completeStaffPickupPass,issuePickupPass,ownerPickupPass,readPickupPass,readStaffPickupPass,reportPickupPassArrival,
   revokePickupPass} from "./pickup-pass.mjs";
 import {acknowledgePickupDelay,pickupDelayColumn,pickupDelayReportRows,readPickupDelayHistory,updatePickupDelay} from "./pickup-delay.mjs";
@@ -37,6 +38,8 @@ const json = (value, status=200) => Response.json(value,{status,headers:{"Cache-
 const fail = (message,status=400) => json({error:message},status);
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const returnReviewFingerprint = /^[a-f0-9]{64}$/;
+const validArrivalRevision=revision=>Number.isSafeInteger(revision)&&revision>=0&&revision<Number.MAX_SAFE_INTEGER;
+const arrivalChanged=()=>json({error:"到店狀態已變更，請核對最新餐單。",code:"arrival_changed"},409);
 
 import {latestState,payableForKitchen,paymentApi,checkKitchenPayment,refundDemoPayment} from "./payment-api.mjs";
 import {paymentAttention,paymentAttentionQuery} from "./payment-attention.mjs";
@@ -86,6 +89,7 @@ function receipt(row) {
     ...(row.source === "staff" ? {source:row.source} : {}),
     ...(row.pickup_slot!=null ? {pickupSlot:row.pickup_slot} : {}),
     ...(row.mode==="pickup"&&row.pickup_arrived_at!=null ? {pickupArrivedAt:row.pickup_arrived_at} : {}),
+    ...(row.mode==="pickup"&&row.pickup_arrival_revision>0 ? {pickupArrivalRevision:row.pickup_arrival_revision} : {}),
     ...(row.combo_quote ? {combo:JSON.parse(row.combo_quote)} : {}),
     ...(row.cash_receipt ? {cashReceipt:JSON.parse(row.cash_receipt)} : {}),
     ...(row.cash_payment_change ? {cashPaymentChange:JSON.parse(row.cash_payment_change)} : {}),
@@ -621,9 +625,18 @@ export async function api(request, env) {
   const passArrival=path==="/api/pickup-pass/arrival"&&method==="POST";
   if((path==="/api/pickup-pass"&&method==="GET")||passArrival){
     const pass=request.headers.get("X-Pickup-Pass");
-    const load=passArrival?reportPickupPassArrival:readPickupPass;
-    const row=uuid.test(pass)?await load(db,pass,Date.now(),url.searchParams.get("handoff")==="1"):null;
-    return row?json(row):fail("代取連結已失效，請向原訂餐人確認。",404);
+    const invalidPass=()=>fail("代取連結已失效，請向原訂餐人確認。",404);
+    if(!uuid.test(pass))return invalidPass();
+    const now=Date.now();
+    if(!passArrival){
+      const row=await readPickupPass(db,pass,now,url.searchParams.get("handoff")==="1");
+      return row?json(row):invalidPass();
+    }
+    const {revision=0}=input;
+    if(!validArrivalRevision(revision))return fail("到店版次無效。");
+    const row=await reportPickupPassArrival(db,pass,now,revision);
+    if(!row)return invalidPass();
+    return row.pickupArrivalRevision===revision?json(pickupArrivalProjection(row)):arrivalChanged();
   }
   if(path==="/api/ticket/pickup-pass"&&["GET","POST","PATCH"].includes(method)){
     const token=request.headers.get("X-Ticket");
@@ -801,19 +814,24 @@ export async function api(request, env) {
     if(saved===null)return fail("找不到訂單",404);
     return saved?json(saved):fail("備妥通知已變更，請查看最新餐單。",409);
   }
-  if (path === "/api/ticket/arrival" && method === "POST") {
+  if(path==="/api/ticket/arrival"&&["POST","PATCH"].includes(method)){
     const token=request.headers.get("X-Ticket");
     if(!uuid.test(token))return fail("找不到訂單",404);
-    const [,lookup]=await db.batch([
-      db.prepare(`UPDATE orders SET pickup_arrived_at=?
-        WHERE token=? AND mode='pickup' AND status IN ('preparing','ready')
-        AND pickup_arrived_at IS NULL AND ${payableForKitchen}`).bind(Date.now(),token),
-      db.prepare("SELECT id,pickup_arrived_at FROM orders WHERE token=?").bind(token),
-    ]);
-    const row=lookup.results[0];
+    if(method==="PATCH"){
+      const {revision,arrivedAt,operationId}=input;
+      if(!validArrivalRevision(revision)||!Number.isSafeInteger(arrivedAt)||arrivedAt<1||!uuid.test(operationId))
+        return fail("請核對要撤回的到店回報。");
+      const row=await withdrawPickupArrival(db,token,{revision,arrivedAt,operationId:operationId.toLowerCase()},Date.now());
+      if(row===null)return fail("找不到訂單",404);
+      return row?json(row):arrivalChanged();
+    }
+    const {revision=0}=input;
+    if(!validArrivalRevision(revision))return fail("到店版次無效。");
+    const row=await reportPickupArrival(db,token,revision,Date.now());
     if(!row)return fail("找不到訂單",404);
-    return row.pickup_arrived_at==null?fail("目前無法回報到店，請核對餐單與付款狀態。",409):
-      json({id:row.id,pickupArrivedAt:row.pickup_arrived_at});
+    if(row.pickupArrivalRevision!==revision)return arrivalChanged();
+    return row.pickupArrivedAt==null?fail("目前無法回報到店，請核對餐單與付款狀態。",409):
+      json(pickupArrivalProjection(row));
   }
   if (path === "/api/ticket/note" && method === "PATCH") {
     const token=request.headers.get("X-Ticket");
@@ -1007,12 +1025,13 @@ export async function api(request, env) {
   if(path==="/api/kitchen/order-detail"&&method==="GET"){
     const id=collectionId(url);
     if(id===null||url.searchParams.getAll("id").length!==1)return fail("請輸入有效的餐號。");
-    const row=await db.prepare(`${orderColumns},${demoRefundReceiptColumn} FROM orders WHERE id=?`).bind(id).first();
+    const row=await db.prepare(`${orderColumns},${demoRefundReceiptColumn},${latestPickupArrivalWithdrawal} FROM orders WHERE id=?`).bind(id).first();
     if(!row)return fail("找不到這張餐單。",404);
     const {mode,table,source,pickupSlot,pickupArrivedAt,note,noteUpdatedAt,items,total,created,status,
       paymentMethod,paymentEnv,paymentState,cashReceipt,combo}=receipt(row);
     const demoRefund=row.demo_refund_receipt?JSON.parse(row.demo_refund_receipt):undefined;
     return json({id,mode,table,source,pickupSlot,pickupArrivedAt,note,noteUpdatedAt,total,created,status,
+      pickupArrivalWithdrawal:row.pickup_arrival_withdrawal?JSON.parse(row.pickup_arrival_withdrawal):undefined,
       items:items.map(({id,name,qty,price,note})=>({id,name,qty,price,note})),
       paymentMethod,paymentEnv,paymentState,cashReceipt,demoRefund,
       pricing:combo?{subtotal:combo.quote.subtotal,discount:combo.quote.discount}:undefined,

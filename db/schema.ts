@@ -9,6 +9,7 @@ export const orders = sqliteTable("orders", {
   pickupSlot: integer("pickup_slot"),
   pickupChanges: text("pickup_changes"),
   pickupArrivedAt: integer("pickup_arrived_at"),
+  pickupArrivalRevision: integer("pickup_arrival_revision").notNull().default(0),
   tableNo: text("table_no"),
   tableMoves: text("table_moves"),
   note: text("note").notNull(),
@@ -31,6 +32,18 @@ export const orders = sqliteTable("orders", {
   index("orders_pickup_slot").on(t.pickupSlot).where(sql`${t.pickupSlot} IS NOT NULL`),
   index("orders_pickup_arrival").on(t.pickupArrivedAt).where(sql`${t.pickupArrivedAt} IS NOT NULL`),
   index("orders_pending_payment_due").on(t.paymentDueAt).where(sql`${t.status}='pending' AND ${t.paymentDueAt} IS NOT NULL`),
+]);
+export const pickupArrivalWithdrawals = sqliteTable("pickup_arrival_withdrawals", {
+  orderId: integer("order_id").notNull().references(()=>orders.id),
+  revision: integer("revision").notNull(),
+  operationId: text("operation_id").notNull(),
+  previousArrivedAt: integer("previous_arrived_at").notNull(),
+  withdrawnAt: integer("withdrawn_at").notNull(),
+}, t => [
+  primaryKey({columns:[t.orderId,t.revision]}),
+  uniqueIndex("pickup_arrival_withdrawal_operation").on(t.orderId,t.operationId),
+  check("pickup_arrival_revision_positive",sql`${t.revision}>0`),
+  check("pickup_arrival_withdrawal_time",sql`${t.withdrawnAt}>=${t.previousArrivedAt}`),
 ]);
 export const paymentAttempts = sqliteTable("payment_attempts", {
   id: integer("id").primaryKey({autoIncrement:true}),

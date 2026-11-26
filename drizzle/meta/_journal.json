@@ -372,6 +372,13 @@
       "when": 1795668100000,
       "tag": "0052_table_handoff_history_indexes",
       "breakpoints": true
+    },
+    {
+      "idx": 53,
+      "version": "6",
+      "when": 1795670492288,
+      "tag": "0053_pickup_arrival_withdrawals",
+      "breakpoints": true
     }
   ]
 }

@@ -1,6 +1,39 @@
 {
   "format": "hey-table.pickup-pass-handoff-demo.v1",
   "orderId": 1,
+  "arrivalCorrection": [
+    {
+      "stage": "reported",
+      "status": 200,
+      "arrived": true,
+      "revision": 0
+    },
+    {
+      "stage": "withdrawn",
+      "status": 200,
+      "arrived": false,
+      "revision": 1
+    },
+    {
+      "stage": "stale",
+      "status": 409,
+      "arrived": false,
+      "revision": 1
+    },
+    {
+      "stage": "recovered",
+      "status": 200,
+      "arrived": false,
+      "revision": 1,
+      "sameWithdrawal": true
+    },
+    {
+      "stage": "reportedAgain",
+      "status": 200,
+      "arrived": true,
+      "revision": 1
+    }
+  ],
   "scenes": [
     {
       "stage": "guest",

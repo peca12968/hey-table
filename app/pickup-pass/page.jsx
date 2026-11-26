@@ -52,7 +52,7 @@ export default function SharedPickup(){
     </div>:pass&&<>
       <p>餐點已備妥。到店後請出示取餐 QR 碼。</p>
       <PickupAppointment start={pass.pickupSlot}/>
-      <PickupArrival key={token} arrivedAt={pass.pickupArrivedAt} token={token} pass onInvalid={reload}/>
+      <PickupArrival key={token} arrivedAt={pass.pickupArrivedAt} arrivalRevision={pass.pickupArrivalRevision} token={token} pass onInvalid={reload}/>
       <PickupCode key={token} number={numberOf(pass.id)} pass={pass.revision+"."+token}/>
       <p className="muted">連結有效至 <time dateTime={new Date(pass.expiresAt).toISOString()}>{expiresTime.format(pass.expiresAt)}</time></p>
     </>}

@@ -37,6 +37,26 @@ export async function buildPickupPassHandoffDemo(){
     assert.equal(guest.status,403);
     assert.equal(checked.status,200);
     assert.equal(firstOrder.status,"ready");
+    const ownerProof={"X-Ticket":owner},passProof={"X-Pickup-Pass":first};
+    const arrival=await call("/pickup-pass/arrival","POST",passProof,{revision:0});
+    const initiallyArrived=await arrival.json();
+    const correction={revision:0,arrivedAt:initiallyArrived.pickupArrivedAt,operationId:crypto.randomUUID()};
+    const withdraw=()=>call("/ticket/arrival","PATCH",ownerProof,correction);
+    const corrected=await withdraw(),withdrawal=await corrected.json();
+    const stale=await call("/pickup-pass/arrival","POST",passProof,{revision:0});
+    const delegateState=await (await call("/pickup-pass","GET",passProof)).json();
+    const repeated=await withdraw(),recorded=await repeated.json();
+    const retry=await call("/pickup-pass/arrival","POST",passProof,{revision:delegateState.pickupArrivalRevision});
+    const afterCorrection=await retry.json();
+    assert.deepEqual([arrival.status,corrected.status,stale.status,repeated.status,retry.status],[200,200,409,200,200]);
+    assert.equal((await stale.json()).code,"arrival_changed");
+    assert.deepEqual(recorded,withdrawal);
+    const arrivalState=(stage,response,data)=>({stage,status:response.status,arrived:Number.isSafeInteger(data.pickupArrivedAt),
+      revision:data.pickupArrivalRevision??0});
+    const arrivalCorrection=[arrivalState("reported",arrival,initiallyArrived),arrivalState("withdrawn",corrected,withdrawal),
+      arrivalState("stale",stale,delegateState),{...arrivalState("recovered",repeated,recorded),
+        sameWithdrawal:recorded.withdrawal.withdrawnAt===withdrawal.withdrawal.withdrawnAt},
+      arrivalState("reportedAgain",retry,afterCorrection)];
     assert.equal((await issue(replacement,1)).status,200);
     const rejected=await scan(first,1,"PATCH");
     const afterRejection=await (await scan(replacement,2)).json();
@@ -57,7 +77,7 @@ export async function buildPickupPassHandoffDemo(){
     assert.equal(recipient.status,200);
     assert.deepEqual(completion,{...original,expiresAt:completion.expiresAt});
     assert.equal((await call("/pickup-pass?handoff=1","GET",{"X-Pickup-Pass":first})).status,404);
-    return {format:"hey-table.pickup-pass-handoff-demo.v1",orderId:id,scenes:[
+    return {format:"hey-table.pickup-pass-handoff-demo.v1",orderId:id,arrivalCorrection,scenes:[
       {stage:"guest",status:guest.status},
       {stage:"verified",status:checked.status,orderStatus:firstOrder.status},
       {stage:"reissued",status:rejected.status,orderStatus:afterRejection.status},

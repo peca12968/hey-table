@@ -1328,6 +1328,66 @@ test("mobile pickup arrival recovers a lost reply and prioritizes ready arrivals
   }
 });
 
+test("mobile pickup arrival withdrawal survives a lost reply and updates the clerk queue",async({page,browser,request})=>{
+  const headers={Authorization:"Bearer local-test-kitchen"},token=randomUUID();
+  const placed=await request.post("/api/orders",{data:{token,mode:"pickup",note:"",items:[{id:"sencha",qty:1}]}});
+  expect(placed.ok()).toBe(true);
+  const {id}=await placed.json(),number=String(id).padStart(4,"0");
+  const advance=(from,to)=>request.patch("/api/kitchen/status",{headers,data:{id,from,to}});
+  expect((await advance("pending","preparing")).ok()).toBe(true);
+  expect((await advance("preparing","ready")).ok()).toBe(true);
+  const staff=await browser.newContext({viewport:{width:360,height:780}});
+  try{
+    await staff.addInitScript(()=>sessionStorage.setItem("he-ri-staff","local-test-kitchen"));
+    const kitchen=await staff.newPage();
+    await kitchen.goto("/kitchen");
+    await kitchen.getByRole("button",{name:"已到店",exact:true}).click();
+    const card=kitchen.locator(".kitchenTicket").getByRole("heading",{name:"#"+number,exact:true});
+    await expect(card).toHaveCount(0);
+    await page.setViewportSize({width:360,height:780});
+    await page.goto("/ticket#"+token);
+    const report=page.getByRole("button",{name:"我已到店"});
+    const withdraw=page.getByRole("button",{name:"撤回到店回報"});
+    await report.click();
+    await expect(card).toBeVisible();
+    await withdraw.click();
+    await page.getByRole("button",{name:"關閉",exact:true}).click();
+    await expect(withdraw).toBeVisible();
+    await expect(card).toBeVisible();
+    const attempts=[],results=[];
+    await page.route("**/api/ticket/arrival",async route=>{
+      if(route.request().method()!=="PATCH")return route.continue();
+      attempts.push(route.request().postDataJSON());
+      const result=await route.fetch();
+      expect(result.ok()).toBe(true);
+      results.push(await result.json());
+      if(attempts.length===1)return route.abort();
+      await route.fulfill({response:result});
+    });
+    await withdraw.click();
+    await page.getByRole("button",{name:"確認撤回",exact:true}).click();
+    await expect(page.getByRole("alert")).toContainText("尚未收到撤回結果");
+    await expect(card).toHaveCount(0);
+    await page.getByRole("button",{name:"重試撤回",exact:true}).click();
+    await expect(page.getByText("已撤回到店回報。到店後可以再次回報。")).toBeVisible();
+    expect(attempts).toEqual([attempts[0],attempts[0]]);
+    expect(results).toEqual([results[0],results[0]]);
+    const detail=await staff.newPage();
+    await detail.goto("/kitchen/order-detail?id="+number);
+    await expect(detail.getByText("顧客撤回到店回報",{exact:true})).toBeVisible();
+    await report.click();
+    await expect(card).toBeVisible();
+    expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBe(360);
+    expect((await advance("ready","completed")).ok()).toBe(true);
+    await page.getByRole("button",{name:"更新進度"}).click();
+    await expect(page.getByText("這張餐單已完成。")).toBeVisible();
+    await expect(withdraw).toHaveCount(0);
+  }finally{
+    await staff.close();
+    await advance("ready","completed");
+  }
+});
+
 test("pickup lookup stays scoped and a stale handoff shows the committed status",async({page,request})=>{
   const headers={Authorization:"Bearer local-test-kitchen"};
   async function order(mode){

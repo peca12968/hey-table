@@ -1,4 +1,5 @@
 import {payableForKitchen} from "./payment-api.mjs";
+import {pickupArrivalColumns,pickupArrivalProjection} from "./pickup-arrival.mjs";
 
 const lifetime=30*60_000;
 const eligible=`orders.mode='pickup' AND orders.status='ready' AND ${payableForKitchen}`;
@@ -59,20 +60,21 @@ export async function readPickupPass(db,token,now,includeHandoff=false){
   const handoff=includeHandoff?
     `,pass.revision,orders.status AS handoffStatus,CASE WHEN orders.status='completed' THEN ${completionAt} END AS completedAt`:"";
   const scope=includeHandoff?`${passScope} AND ((${eligible}) OR (${completedWithPass}))`:activePass;
-  const row=await db.prepare(`SELECT orders.id,orders.pickup_slot AS pickupSlot,pass.expires_at AS expiresAt,
-    orders.pickup_arrived_at AS pickupArrivedAt${handoff} ${scope}`).bind(await hashPass(token),now).first();
-  if(!row||!includeHandoff)return row;
+  const row=await db.prepare(`SELECT ${pickupArrivalColumns},orders.pickup_slot AS pickupSlot,pass.expires_at AS expiresAt
+    ${handoff} ${scope}`).bind(await hashPass(token),now).first();
+  if(!row)return null;
+  if(!includeHandoff)return pickupArrivalProjection(row);
   const {handoffStatus,completedAt,...active}=row;
-  if(handoffStatus!=="completed")return active;
+  if(handoffStatus!=="completed")return pickupArrivalProjection(active);
   return Number.isSafeInteger(completedAt)?{id:row.id,status:"completed",completedAt,expiresAt:row.expiresAt}:null;
 }
 
-export async function reportPickupPassArrival(db,token,now){
+export async function reportPickupPassArrival(db,token,now,revision){
   const digest=await hashPass(token);
   const [,lookup]=await db.batch([
-    db.prepare(`UPDATE orders SET pickup_arrived_at=? WHERE pickup_arrived_at IS NULL
-      AND id=(SELECT orders.id ${activePass})`).bind(now,digest,now),
-    db.prepare(`SELECT orders.id,orders.pickup_arrived_at AS pickupArrivedAt ${activePass}`).bind(digest,now),
+    db.prepare(`UPDATE orders SET pickup_arrived_at=? WHERE pickup_arrived_at IS NULL AND pickup_arrival_revision=?
+      AND id=(SELECT orders.id ${activePass})`).bind(now,revision,digest,now),
+    db.prepare(`SELECT ${pickupArrivalColumns} ${activePass}`).bind(digest,now),
   ]);
   return lookup.results[0]??null;
 }
