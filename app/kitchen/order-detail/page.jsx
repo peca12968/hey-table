@@ -95,13 +95,14 @@ export default function KitchenOrderDetail(){
   const number=query.get("id")??"";
   const from=query.get("from");
   const historyReturn=from?.startsWith("/kitchen/station-history?")?from:null;
+  const tableHandoffReturn=from?.startsWith("/kitchen/table-handoff-history?")?from:null;
   const paymentReturn=from==="/kitchen/payment-attention"||from?.startsWith("/kitchen/payment-attention?")?from:null;
   const delayReturn=from==="/kitchen?view=pickup-delay"?from:null;
   const delayReportDate=from?.match(/^\/kitchen\/daily\?date=(\d{4}-\d{2}-\d{2})#pickup-delay-report$/)?.[1];
   const delayReportReturn=businessDayRange(delayReportDate)?from:null;
   const shiftDate=from?.match(/^\/kitchen\/shift-handoff\?date=(\d{4}-\d{2}-\d{2})$/)?.[1];
   const shiftReturn=businessDayRange(shiftDate)?from:null;
-  const returnPath=historyReturn||paymentReturn||delayReturn||delayReportReturn||shiftReturn;
+  const returnPath=historyReturn||tableHandoffReturn||paymentReturn||delayReturn||delayReportReturn||shiftReturn;
   const current=view?.number===number&&view.revision===revision?view:null;
   useEffect(()=>{
     if(!number)return;
@@ -122,6 +123,7 @@ export default function KitchenOrderDetail(){
     <div className="actions">
       <a className="textLink" href="/kitchen">返回店家接單台</a>
       {historyReturn&&<a className="textLink" href={historyReturn}>返回分站批次紀錄</a>}
+      {tableHandoffReturn&&<a className="textLink" href={tableHandoffReturn}>返回同桌交餐紀錄</a>}
       {paymentReturn&&<a className="textLink" href={paymentReturn}>返回待核對付款</a>}
       {delayReturn&&<a className="textLink" href={delayReturn}>返回待確認延誤</a>}
       {delayReportReturn&&<a className="textLink" href={delayReportReturn}>返回延誤通知交班</a>}

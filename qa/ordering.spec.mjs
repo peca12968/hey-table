@@ -180,6 +180,59 @@ for(const reached of [true,false])test("mobile whole-table handoff recovers afte
   expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBe(360);
 });
 
+test("mobile staff browse table handoff receipts, download the displayed page and return from an order",async({page,request})=>{
+  const auth={Authorization:"Bearer local-test-kitchen"};
+  const table="A01",path="/kitchen/table-handoff-history";
+  async function completeBatch(){
+    const orders=[];
+    for(const dish of ["sencha","edamame"]){
+      const made=await request.post("/api/orders",{data:{
+        token:randomUUID(),mode:"table",table,note:"",items:[{id:dish,qty:1}],
+      }});
+      expect(made.status()).toBe(200);
+      const {id}=await made.json();
+      orders.push({id,tableRevision:0});
+      for(const [from,to] of [["pending","preparing"],["preparing","ready"]])
+        expect((await request.patch("/api/kitchen/status",{headers:auth,data:{id,from,to}})).status()).toBe(200);
+    }
+    const saved=await request.patch("/api/kitchen/table-handoff",{headers:auth,data:{table,orders,operationId:randomUUID()}});
+    expect(saved.status()).toBe(200);
+    return saved.json();
+  }
+  const first=await completeBatch(),second=await completeBatch(),date=businessDate(second.completedAt);
+  await page.setViewportSize({width:360,height:780});
+  await page.addInitScript(()=>sessionStorage.setItem("he-ri-staff","local-test-kitchen"));
+  await page.goto("/kitchen");
+  await expect(page.getByRole("link",{name:"同桌交餐紀錄",exact:true})).toHaveAttribute("href",path);
+  await page.goto(path+"?"+new URLSearchParams({date,table,limit:"1"}));
+  await expect(page.getByRole("heading",{name:"同桌交餐紀錄",exact:true})).toBeVisible();
+  const summary=page.getByText("符合 2 批，共 4 張餐單。");
+  await expect(summary).toBeVisible();
+  await expect(page.getByText(second.operationId,{exact:false})).toBeVisible();
+  const loaded=page.waitForResponse(url=>new URL(url.url()).pathname==="/api"+path&&url.status()===200);
+  await page.getByRole("link",{name:"下一頁"}).click();
+  const snapshot=await (await loaded).json();
+  await expect(page.getByText(first.operationId,{exact:false})).toBeVisible();
+  await expect(summary).toBeVisible();
+  const file=page.waitForEvent("download");
+  await page.getByRole("button",{name:"下載本頁 JSON"}).click();
+  expect(JSON.parse(await readFile(await (await file).path(),"utf8"))).toEqual(snapshot);
+  expect(snapshot.batches).toEqual([first]);
+  const originalUrl=new URL(page.url());
+  const number=String(first.orderIds[0]).padStart(4,"0");
+  await page.getByRole("link",{name:"#"+number,exact:true}).click();
+  await expect(page.getByRole("heading",{name:"查詢餐單紀錄"})).toBeVisible();
+  await page.getByRole("link",{name:"返回同桌交餐紀錄"}).click();
+  expect(new URL(page.url()).searchParams.get("before")).toBe(originalUrl.searchParams.get("before"));
+  await expect(page.getByText(first.operationId,{exact:false})).toBeVisible();
+  await page.getByRole("textbox",{name:"餐號"}).fill(number);
+  await page.getByRole("button",{name:"查詢交餐紀錄"}).click();
+  await expect(page.getByText("符合 1 批，共 2 張餐單。")).toBeVisible();
+  await expect(page.getByRole("heading",{name:date+" · A01 桌 · #"+number})).toBeVisible();
+  await expect(page.getByRole("link",{name:"下一頁"})).toHaveCount(0);
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBe(360);
+});
+
 test("table moves keep the original order retry and guard stale handoff and printing",async({page,browser,request})=>{
   const headers={Authorization:"Bearer local-test-kitchen"};
   const input={token:randomUUID(),mode:"table",table:"A03",note:"換桌測試備註",items:[{id:"oyakodon",qty:1}]};

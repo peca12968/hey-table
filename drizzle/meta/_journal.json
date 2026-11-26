@@ -365,6 +365,13 @@
       "when": 1795667000000,
       "tag": "0051_table_handoff_receipts",
       "breakpoints": true
+    },
+    {
+      "idx": 52,
+      "version": "6",
+      "when": 1795668100000,
+      "tag": "0052_table_handoff_history_indexes",
+      "breakpoints": true
     }
   ]
 }

@@ -137,6 +137,8 @@ function TableHandoffReceipt({receipt,onClose}){
       <a href={"/kitchen/order-detail?id="+numberOf(id)}>#{numberOf(id)}</a></li>)}</ul>
     <div className="actions">
       <button className="outline" onClick={()=>downloadJson("hey-table-handoff-",receipt.completedAt,receipt)}>下載交餐收據 JSON</button>
+      <a className="outline" href={"/kitchen/table-handoff-history?"+new URLSearchParams({date:businessDate(receipt.completedAt),table:receipt.table})}>
+        查看當日同桌交餐紀錄</a>
       <button className="outline" onClick={onClose}>關閉收據</button>
     </div>
   </section>;
@@ -456,6 +458,7 @@ export default function Kitchen(){
     content=<>
     <div className="actions"><a className="outline" href="/kitchen/create-pickup">代建自取單</a>
       <a className="outline" href="/kitchen/order-detail">查詢餐單紀錄</a>
+      <a className="outline" href="/kitchen/table-handoff-history">同桌交餐紀錄</a>
       <a className="outline" href="/kitchen/prep">查看備料單</a>
       <a className="outline" href="/kitchen/daily">每日訂單摘要</a>
       <a className="outline" href="/kitchen/refunds">示範退款紀錄</a>

@@ -5,8 +5,8 @@ import {dishes, itemNoteLimit, numberOf, orderNoteLimit, tables, transitions} fr
 import {intakeLabels,intakeNotice} from "../lib/order-intake.mjs";
 import {staffCancellationReasons} from "../lib/order-cancellation.mjs";
 import {orderNote,orderNoteRevision,updateOrderNote} from "./order-note.mjs";
-import {tableHandoffReview,validTableHandoffId} from "../lib/table-handoff.mjs";
-import {completeTableHandoff,readTableHandoff} from "./table-handoff.mjs";
+import {tableHandoffHistoryQuery,tableHandoffReview,validTableHandoffId} from "../lib/table-handoff.mjs";
+import {completeTableHandoff,readTableHandoff,tableHandoffHistory} from "./table-handoff.mjs";
 import {businessDate,businessDayRange} from "../lib/business-day.mjs";
 import {changePortionLimit,copyPortionLimits,dailyLimits,exceededOrderPortions,exceededPortions,portionLimitHistory,
   readRemaining,restockHistory,restockPortions,restorePortionLimit,supplyTime} from "./daily-limits.mjs";
@@ -1174,6 +1174,10 @@ export async function api(request, env) {
       AND COALESCE(json_array_length(table_moves),0)=?`).bind(to,to,Date.now(),id,from,revision).run();
     return meta.changes?json({id,table:to,tableRevision:revision+1}):
       fail("餐單或桌號已更新，請核對後再換桌。",409);
+  }
+  if (path === "/api/kitchen/table-handoff-history" && method === "GET") {
+    const report=tableHandoffHistoryQuery(url.searchParams);
+    return report?json(await tableHandoffHistory(db,report)):fail("請確認交餐日期、桌號、餐號與分頁連結。");
   }
   if (path === "/api/kitchen/table-handoff" && method === "GET") {
     const keys=url.searchParams.getAll("operationId");

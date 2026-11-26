@@ -55,7 +55,62 @@
           "handoffCount": 1,
           "completedAt": 1795493400000
         }
-      ]
+      ],
+      "history": {
+        "date": "2026-11-24",
+        "orderFilter": 1,
+        "latest": {
+          "summary": {
+            "batches": 2,
+            "orders": 4
+          },
+          "batches": [
+            {
+              "table": "A04",
+              "orderIds": [
+                3,
+                4
+              ],
+              "completed": 2,
+              "completedAt": 1795493460000
+            }
+          ]
+        },
+        "older": {
+          "summary": {
+            "batches": 2,
+            "orders": 4
+          },
+          "batches": [
+            {
+              "table": "A03",
+              "orderIds": [
+                1,
+                2
+              ],
+              "completed": 2,
+              "completedAt": 1795493400000
+            }
+          ]
+        },
+        "filtered": {
+          "summary": {
+            "batches": 1,
+            "orders": 2
+          },
+          "batches": [
+            {
+              "table": "A03",
+              "orderIds": [
+                1,
+                2
+              ],
+              "completed": 2,
+              "completedAt": 1795493400000
+            }
+          ]
+        }
+      }
     }
   },
   {

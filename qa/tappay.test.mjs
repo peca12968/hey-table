@@ -2044,6 +2044,46 @@ test("a table handoff claims one durable receipt and rolls it back when an order
   assert.equal(DB.sqlite.prepare("SELECT COUNT(*) n FROM table_handoff_receipts").get().n,1);
 });
 
+test("handoff history uses the Taipei completion day, repeats tied cursors and filters whole receipts by order",async t=>{
+  const DB=database(),env={DB,STAFF_KEY:"local-test-key"};
+  t.after(()=>DB.sqlite.close());
+  const day="2026-11-25",start=Date.parse(day+"T00:00:00+08:00"),end=start+86_400_000;
+  const path="https://order.example/api/kitchen/table-handoff-history?";
+  const auth={Authorization:"Bearer local-test-key"};
+  const get=(search,headers=auth)=>api(new Request(path+search,{headers}),env);
+  const insert=DB.sqlite.prepare("INSERT INTO table_handoff_receipts VALUES (?,?,?,?,?)");
+  const key=n=>`00000000-0000-4000-8000-${String(n).padStart(12,"0")}`;
+  const add=(at,keyNumber,table,ids)=>insert.run(key(keyNumber),"internal-write",table,JSON.stringify(ids.map(id=>[id,0])),at);
+  add(start-1,1,"A03",[1,2]);
+  add(start,2,"A03",[3,4]);
+  add(start+60_000,3,"A03",[5,6,7]);
+  add(start+60_000,4,"A04",[8,9]);
+  add(end,5,"A03",[10,11]);
+  assert.equal((await get("date="+day,{})).status,403);
+  const first=await get("date="+day+"&limit=1");
+  assert.equal(first.headers.get("Cache-Control"),"no-store");
+  const report=await first.json();
+  assert.deepEqual(report.summary,{batches:3,orders:7});
+  assert.deepEqual(report.batches,[{operationId:key(4),table:"A04",orderIds:[8,9],completed:2,completedAt:start+60_000}]);
+  assert.equal(report.nextBefore,(start+60_000)+"."+key(4));
+  add(start+120_000,6,"A04",[12,13]);
+  const second=await (await get("date="+day+"&limit=1&before="+report.nextBefore)).json();
+  assert.deepEqual(second.summary,{batches:4,orders:9});
+  assert.deepEqual(second.batches.map(batch=>batch.operationId),[key(3)]);
+  const old=await (await get("date="+day+"&before="+second.nextBefore)).json();
+  assert.deepEqual(old.batches.map(batch=>batch.operationId),[key(2)]);
+  assert.equal(old.nextBefore,null);
+  const selected=await (await get("date="+day+"&table=A03&id=0006")).json();
+  assert.equal(selected.id,6);
+  assert.deepEqual(selected.summary,{batches:1,orders:3});
+  assert.deepEqual(selected.batches[0].orderIds,[5,6,7]);
+  assert.deepEqual((await (await get("date="+day+"&table=A04&id=0006")).json()).summary,{batches:0,orders:0});
+  for(const search of ["date=2026-02-29","date="+day+"&date="+day,"date="+day+"&id=0","date="+day+"&table=A99",
+    "date="+day+"&before="+end+"."+key(5),"date="+day+"&before=invalid","date="+day+"&limit=51"]){
+    assert.equal((await get(search)).status,400,search);
+  }
+});
+
 test("the table handoff demonstration matches the committed receipt and both customer receipts",async()=>{
   const sample=JSON.parse(readFileSync(new URL("../examples/receipt-progress.json",import.meta.url),"utf8"));
   assert.deepEqual(await buildTableHandoffDemo(),sample.find(row=>row.scenario==="table").tableHandoff);

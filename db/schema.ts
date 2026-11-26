@@ -250,7 +250,10 @@ export const tableHandoffReceipts = sqliteTable("table_handoff_receipts", {
   tableNo: text("table_no").notNull(),
   reviewed: text("reviewed").notNull(),
   completedAt: integer("completed_at").notNull(),
-});
+}, t => [
+  index("table_handoff_receipts_day").on(t.completedAt,t.operationId),
+  index("table_handoff_receipts_table_day").on(t.tableNo,t.completedAt,t.operationId),
+]);
 
 export const returnQuoteEntries = sqliteTable("return_quote_entries", {
   orderId: integer("order_id").notNull().references(()=>orders.id),
