@@ -556,6 +556,160 @@
       ]
     }
   },
+  "return_receiving": {
+    "format": "dispatch-window.return-receiving-demo.v1",
+    "blocked_csv": "code,quantity\nDW1/B/B1/2,2\nDW1/D/D1/1,1\n",
+    "accepted_csv": "code,quantity\nDW1/B/B1/2,1\nDW1/D/D1/2,1\n",
+    "blocked": {
+      "format": "dispatch-window.return-inspection.v1",
+      "batch_id": "dock-early",
+      "captured_at_ms": 114000,
+      "boxes": [
+        {
+          "line": 2,
+          "code": "DW1/B/B1/2",
+          "reservation_id": "B",
+          "shipment_id": "B1",
+          "label_quantity": 2,
+          "quantity": 2,
+          "dispatched": 2,
+          "returnable": 1,
+          "status": "insufficient_returnable"
+        },
+        {
+          "line": 3,
+          "code": "DW1/D/D1/1",
+          "reservation_id": "D",
+          "shipment_id": "D1",
+          "label_quantity": 1,
+          "quantity": 1,
+          "dispatched": 2,
+          "returnable": 2,
+          "status": "label_mismatch"
+        }
+      ],
+      "state": "blocked"
+    },
+    "preview": {
+      "format": "dispatch-window.return-inspection.v1",
+      "batch_id": "dock-early",
+      "captured_at_ms": 114000,
+      "boxes": [
+        {
+          "line": 2,
+          "code": "DW1/B/B1/2",
+          "reservation_id": "B",
+          "shipment_id": "B1",
+          "label_quantity": 2,
+          "quantity": 1,
+          "dispatched": 2,
+          "returnable": 1,
+          "status": "ready"
+        },
+        {
+          "line": 3,
+          "code": "DW1/D/D1/2",
+          "reservation_id": "D",
+          "shipment_id": "D1",
+          "label_quantity": 2,
+          "quantity": 1,
+          "dispatched": 2,
+          "returnable": 2,
+          "status": "ready"
+        }
+      ],
+      "state": "ready"
+    },
+    "interrupted": {
+      "format": "dispatch-window.return-inspection.v1",
+      "batch_id": "dock-early",
+      "captured_at_ms": 114000,
+      "boxes": [
+        {
+          "line": 2,
+          "code": "DW1/B/B1/2",
+          "reservation_id": "B",
+          "shipment_id": "B1",
+          "label_quantity": 2,
+          "quantity": 1,
+          "dispatched": 2,
+          "returnable": 1,
+          "status": "ready"
+        },
+        {
+          "line": 3,
+          "code": "DW1/D/D1/2",
+          "reservation_id": "D",
+          "shipment_id": "D1",
+          "label_quantity": 2,
+          "quantity": 1,
+          "dispatched": 2,
+          "returnable": 2,
+          "status": "ready"
+        }
+      ],
+      "state": "retry"
+    },
+    "recovered": {
+      "format": "dispatch-window.return-inspection.v1",
+      "batch_id": "dock-early",
+      "captured_at_ms": 114000,
+      "boxes": [
+        {
+          "line": 2,
+          "code": "DW1/B/B1/2",
+          "reservation_id": "B",
+          "shipment_id": "B1",
+          "label_quantity": 2,
+          "quantity": 1,
+          "dispatched": 2,
+          "returnable": 0,
+          "status": "insufficient_returnable"
+        },
+        {
+          "line": 3,
+          "code": "DW1/D/D1/2",
+          "reservation_id": "D",
+          "shipment_id": "D1",
+          "label_quantity": 2,
+          "quantity": 1,
+          "dispatched": 2,
+          "returnable": 1,
+          "status": "ready"
+        }
+      ],
+      "state": "recovered",
+      "receipt": {
+        "batch_id": "dock-early",
+        "boxes": [
+          {
+            "reservation_id": "B",
+            "shipment_id": "B1",
+            "return_id": "dock-early",
+            "quantity": 1,
+            "returnable_after": 0
+          },
+          {
+            "reservation_id": "D",
+            "shipment_id": "D1",
+            "return_id": "dock-early",
+            "quantity": 1,
+            "returnable_after": 1
+          }
+        ]
+      }
+    },
+    "inventory_before": {
+      "sku": "KIT-01",
+      "capacity": 12,
+      "available": 12
+    },
+    "inventory_after": {
+      "sku": "KIT-01",
+      "capacity": 14,
+      "available": 14
+    }
+  },
   "audit": {
     "format": "dispatch-window.audit-demo.v1",
     "before": {

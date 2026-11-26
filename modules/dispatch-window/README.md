@@ -92,6 +92,25 @@ python compare_audits.py earlier-audit.json later-audit.json
 
 同一個示範延伸到交班後，D1 新增出貨 2 件，B1 退回 1 件。從錯填 D1 的報告比較，可看到件數差異已排除、D1 的原出貨量仍為 2 件。
 
+## 掃描退回箱件並批次入庫
+
+驗收後把原出貨條碼和可重新販售的件數填入 UTF-8 CSV。第一欄辨識原保留單、箱號和出貨量，第二欄是這次驗收合格件數。每箱填一行，最多 100 箱。
+
+```csv
+code,quantity
+DW1/B/B1/2,1
+DW1/D/D1/2,1
+```
+
+```sh
+python receive_returns.py inspection.csv --batch-id dock-early --stockroom http://127.0.0.1:8000
+python receive_returns.py inspection.csv --batch-id dock-early --stockroom http://127.0.0.1:8000 --confirm
+```
+
+先從同一份 Stockroom 快照核對原出貨量與尚可退量。重複掃到同箱、條碼件數與原出貨不符，或任一箱超過可退量，都會擋下整批。加上 `--confirm` 才送出入庫。其他人若在預覽後用掉額度，Stockroom 會拒絕整批，請重新核對。若收不到入庫回應，保留原批號與原內容重試，已入庫的批次會取回原收據。預覽可入庫、確認完成或取回收據的結束碼為 0，核對未通過、衝突或需重試為 1，檔案或讀取失敗為 2。
+
+`demo.py --execute-plan` 會演練 B1 已退回一件後，錯報兩件時整批停下。修正後與 D1 一起入庫，模擬回應遺失，再用原批號取回兩箱收據。[實際整合資料](examples/execution-demo.json)
+
 ## 排程規則
 
 最多安排 17 張單，優先最大化出貨件數，再最大化完成訂單數，最後比較工作完成時間。每張單只能由同一個工作站連續包裝。完成時間須早於保留期限與裝車截止時間，符合 Stockroom 到期時刻即釋回的行為。工時可包含預留的裝車和服務提交時間。

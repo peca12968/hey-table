@@ -16,10 +16,44 @@ from audit import audit
 from compare_audits import compare_audits
 from execute import execute, prepare
 from load_scan import labels_for, verify_load
+from receive_returns import receive
 from replan import replan
 
 
 ROOT = Path(__file__).resolve().parent
+
+
+def receiving_demo(client, request):
+    before = client.get("/inventory").json()[0]
+    blocked_csv = "code,quantity\nDW1/B/B1/2,2\nDW1/D/D1/1,1\n"
+    accepted_csv = "code,quantity\nDW1/B/B1/2,1\nDW1/D/D1/2,1\n"
+    batch_id = "dock-early"
+    sends = []
+
+    def discard_first_reply(path, body=None, headers=None):
+        reply = request(path, body, headers)
+        if path == "/return-batches":
+            sends.append(reply[0])
+            if len(sends) == 1:
+                raise TimeoutError("simulated loss after the return batch committed")
+        return reply
+
+    blocked = receive(blocked_csv, batch_id, discard_first_reply, confirm=True)
+    assert blocked["state"] == "blocked"
+    assert [row["status"] for row in blocked["boxes"]] == ["insufficient_returnable", "label_mismatch"]
+    preview = receive(accepted_csv, batch_id, discard_first_reply)
+    assert preview["state"] == "ready" and not sends and client.get("/inventory").json()[0] == before
+    interrupted = receive(accepted_csv, batch_id, discard_first_reply, confirm=True)
+    assert interrupted["state"] == "retry" and sends == [201]
+    recovered = receive(accepted_csv, batch_id, discard_first_reply, confirm=True)
+    assert recovered["state"] == "recovered" and sends == [201]
+    assert recovered["boxes"][0]["returnable"] == 0
+    assert recovered["receipt"] == client.get("/return-batches/dock-early").json()
+    after = client.get("/inventory").json()[0]
+    assert after["available"] == before["available"] + 2 and after["capacity"] == before["capacity"] + 2
+    return {"format": "dispatch-window.return-receiving-demo.v1", "blocked_csv": blocked_csv,
+            "accepted_csv": accepted_csv, "blocked": blocked, "preview": preview,
+            "interrupted": interrupted, "recovered": recovered, "inventory_before": before, "inventory_after": after}
 
 
 def execution_demo(client, clock, report, manifest):
@@ -133,6 +167,7 @@ def execution_demo(client, clock, report, manifest):
     assert (corrected["resolved_conflicts"], corrected["new_dispatched_units"], corrected["new_restocked_units"]) == (1, 0, 1)
     assert (expanded["added_boxes"], expanded["comparable_boxes"], expanded["new_restocked_units"]) == (3, 1, 0)
     assert client.get("/inventory").json() == [{"sku": "KIT-01", "capacity": 12, "available": 12}]
+    returns = receiving_demo(client, request)
     return {"format": "dispatch-window.execution-demo.v1", "start_ms": report["start_ms"],
             "stages": stages, "attempts": first_attempts, "inventory_after": with_inventory[0],
             "next_truck": {"plan": next_plan, "execution": sent, "first_truck_review": old_plan,
@@ -140,6 +175,7 @@ def execution_demo(client, clock, report, manifest):
             "load_scan": {"format": "dispatch-window.load-scan-demo.v1", "labels": labels,
                           "rejected_log": rejected_log, "accepted_log": accepted_log, "rejected": gated["load_check"],
                           "accepted": ready_scan, "receipt": receipt},
+            "return_receiving": returns,
             "audit": {"format": "dispatch-window.audit-demo.v1", "before": before_audit, "after": after_audit,
                       "plan_conflict": plan_conflict, "stock_conflict": stock_conflict,
                       "after_returns": after_returns, "differences": {"movement": movement, "corrected": corrected,
