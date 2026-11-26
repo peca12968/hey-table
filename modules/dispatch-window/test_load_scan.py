@@ -66,3 +66,24 @@ class LoadScanTests(unittest.TestCase):
             load = json.loads(result.stdout)["load_check"]
             self.assertEqual(load["missing"], [labels_for(self.jobs)[0]])
             self.assertEqual(load["issues"], [])
+
+    def test_workbench_export_keeps_all_verified_jobs_and_excludes_unverified_boxes(self):
+        jobs = prepare(self.plan, ())
+        with TemporaryDirectory() as directory:
+            report, scans = Path(directory) / "plan.json", Path(directory) / "scans.txt"
+            report.write_text(json.dumps(self.plan), encoding="utf-8")
+            command = [sys.executable, "-B", str(ROOT / "execute.py"), str(report), "--export-workbench"]
+            scans.write_text("DW1/B/B1/2\n", encoding="utf-8")
+            blocked = subprocess.run([*command, "--scan-log", scans], capture_output=True, timeout=10)
+            self.assertEqual(blocked.returncode, 1)
+            self.assertEqual(json.loads(blocked.stdout)["jobs"], [])
+            self.assertEqual(subprocess.run(command, capture_output=True, timeout=10).returncode, 2)
+            scans.write_text("\n".join(box["code"] for box in reversed(labels_for(jobs))), encoding="utf-8-sig")
+            valid = subprocess.check_output([*command, "--scan-log", scans], timeout=10)
+            manifest = json.loads(valid)
+            self.assertEqual(manifest["format"], "dispatch-window.workbench.v1")
+            self.assertEqual(manifest["jobs"], jobs)
+            self.assertTrue(manifest["load_check"]["ready"])
+            self.assertEqual(manifest["load_check"]["verified_units"], self.plan["ship_units"])
+            self.assertEqual(subprocess.run([*command, "--scan-log", scans, "--confirm", "--stockroom",
+                                             "http://127.0.0.1:1"], capture_output=True, timeout=10).returncode, 2)

@@ -1,6 +1,6 @@
 import {test,expect} from "@playwright/test";
 import {execFileSync,spawn} from "node:child_process";
-import {mkdtemp,readFile,rm} from "node:fs/promises";
+import {mkdtemp,readFile,rm,writeFile} from "node:fs/promises";
 import {tmpdir} from "node:os";
 import {join} from "node:path";
 import {fileURLToPath} from "node:url";
@@ -291,4 +291,89 @@ test("dispatch workbench rechecks the entire truck, then recovers the committed 
   await page.getByRole("button",{name:"取回交運收據"}).click();
   await expect(receipt).toContainText(batch);
   expect(writes).toBe(1);
+});
+
+test("the workbench imports a real scan export, enforces its window and shares one receipt with the CLI",async({page,request})=>{
+  const cli=fileURLToPath(new URL("../modules/dispatch-window/execute.py",import.meta.url));
+  const endpoint="/dispatch-batches",now=Date.now();
+  const plan={start_ms:now-120_000,cutoff_ms:now+600_000,ship_units:3,scheduled:[]};
+  const codes=[];
+  for(const [id,opens,closes] of [["import-late",-90_000,-60_000],["import-ready",-30_000,120_000],["import-wait",300_000,480_000]]){
+    const created=await request.post(origin+"/reservations",{headers:{"Idempotency-Key":id},data:{sku:"KIT-01",quantity:1}});
+    expect(created.status()).toBe(201);
+    const original=(await created.json()).expires_at_ms;
+    const renewed=await request.post(origin+"/reservations/"+id+"/renewals",{headers:{"Idempotency-Key":"loading"},
+      data:{expected_expires_at_ms:original,extend_seconds:600}});
+    expect(renewed.status()).toBe(201);
+    plan.scheduled.push({reservation_id:id,units:1,pack_start_ms:now+opens-1000,dispatch_ms:now+opens,deadline_ms:now+closes,
+      dispatch:{boxes:[{reservation_id:id,shipment_id:"A",quantity:1}]}});
+    codes.push("DW1/"+id+"/A/1");
+  }
+  const planPath=join(directory,"planned.json"),scanPath=join(directory,"packed.txt");
+  await writeFile(planPath,JSON.stringify(plan));
+  await writeFile(scanPath,codes.join("\n"));
+  const exported=execFileSync(python,["-B",cli,planPath,"--scan-log",scanPath,"--export-workbench"],{windowsHide:true});
+  const manifest=JSON.parse(exported);
+  const target=manifest.jobs.find(job=>job.reservation_id==="import-ready");
+  await page.setViewportSize({width:360,height:780});
+  await page.goto(origin+"/workbench/dispatch");
+  const file=page.getByLabel("掃碼核對檔");
+  const upload=buffer=>file.setInputFiles({name:"ready-load.json",mimeType:"application/json",buffer});
+  const invalid=structuredClone(manifest);
+  invalid.load_check.verified_units++;
+  await upload(Buffer.from(JSON.stringify(invalid)));
+  await expect(page.getByRole("alert")).toContainText("無法匯入");
+  await expect(page.getByLabel("排程訂單")).toBeHidden();
+  await upload(exported);
+  const options=page.getByLabel("排程訂單");
+  const preview=page.getByRole("button",{name:"預覽交運"});
+  const review=page.getByRole("region",{name:"核對交運"});
+  const confirm=page.getByRole("button",{name:"確認整車交運"});
+  const receipt=page.getByRole("region",{name:"交運收據",exact:true});
+  async function choose(id){
+    await options.selectOption({label:id+" · 1 箱"});
+    await page.getByRole("button",{name:"載入選定箱單"}).click();
+  }
+  for(const [id,text] of [["import-wait","尚未到交運時間"],["import-late","交運已截止"]]){
+    await choose(id);
+    await preview.click();
+    await expect(review).toContainText(text);
+    await expect(confirm).toBeHidden();
+  }
+  await choose("import-ready");
+  await expect(page.getByLabel("交運批號")).toHaveValue(target.batch_id);
+  await expect(page.getByLabel("交運批號")).toBeDisabled();
+  await expect(page.getByLabel("件數")).toBeDisabled();
+  await preview.click();
+  await expect(review).toContainText("目前在交運時窗內");
+  let attempts=0;
+  await page.route(url=>url.pathname===endpoint,async route=>{
+    expect(route.request().headers()["idempotency-key"]).toBe(target.batch_id);
+    expect(route.request().postDataJSON()).toEqual({boxes:target.boxes,window:target.window});
+    if(++attempts===1)return route.abort("connectionreset");
+    const response=await route.fetch();
+    expect(response.status()).toBe(201);
+    await route.fulfill({response});
+  });
+  await confirm.click();
+  await expect(page.getByRole("alert")).toContainText("尚未確認交運結果");
+  await page.reload();
+  await expect(review).toContainText("交運時窗");
+  await page.getByRole("button",{name:"重試原交運批次"}).click();
+  await expect(receipt).toContainText(target.batch_id);
+  await expect(receipt).toContainText("import-ready/A · 已交運 1 件");
+  expect(attempts).toBe(2);
+
+  await writeFile(scanPath,codes[1]+"\n");
+  const result=JSON.parse(execFileSync(python,["-B",cli,planPath,"--scan-log",scanPath,"--reservation","import-ready",
+    "--stockroom",origin,"--confirm"],{windowsHide:true}));
+  expect(result.results[0].state).toBe("recovered");
+  expect(result.results[0].receipt).toEqual(await (await request.get(origin+endpoint+"/"+target.batch_id)).json());
+  await upload(exported);
+  await choose("import-ready");
+  await preview.click();
+  await expect(page.getByRole("status")).toHaveText("已取回同一份掃碼箱單的原交運收據。");
+  await expect(receipt).toContainText(target.batch_id);
+  expect(attempts).toBe(2);
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBe(360);
 });

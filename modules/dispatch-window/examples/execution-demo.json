@@ -554,6 +554,40 @@
           "held_after": 0
         }
       ]
+    },
+    "workbench": {
+      "format": "dispatch-window.workbench.v1",
+      "load_check": {
+        "format": "dispatch-window.load-check.v1",
+        "ready": true,
+        "verified_boxes": 2,
+        "verified_units": 4,
+        "missing": [],
+        "issues": []
+      },
+      "jobs": [
+        {
+          "reservation_id": "B",
+          "batch_id": "dispatch-6ffb1008c4e044d6fc9c06f10ba4a6d3b3d913e60ea0775b01e52e5bb97673e1",
+          "units": 4,
+          "boxes": [
+            {
+              "reservation_id": "B",
+              "shipment_id": "B1",
+              "quantity": 2
+            },
+            {
+              "reservation_id": "B",
+              "shipment_id": "B2",
+              "quantity": 2
+            }
+          ],
+          "window": {
+            "not_before_ms": 107000,
+            "before_ms": 108000
+          }
+        }
+      ]
     }
   },
   "return_receiving": {

@@ -20,8 +20,8 @@ main { padding-block: 12px 36px; }
 .panel { background: #fff; border: 1px solid var(--line); border-radius: 10px; padding: 16px; margin: 12px 0; }
 .actions { display: flex; flex-wrap: wrap; align-items: end; gap: 10px; }
 label { display: grid; gap: 4px; font-weight: 650; min-width: 0; }
-input, button { font: inherit; }
-input {
+input, select, button { font: inherit; }
+input, select {
   color: var(--ink); background: #fff; border: 1px solid #81978c;
   border-radius: 6px; padding: 8px; min-height: 42px; width: 100%;
 }
@@ -35,6 +35,7 @@ legend { padding: 0 4px; font-weight: 700; overflow-wrap: anywhere; }
 .box-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 12px; }
 .reason { grid-column: 1 / -1; }
 .meta { color: var(--muted); overflow-wrap: anywhere; }
+#import-actions, #import-summary { margin-top: 10px; }
 #confirm-text { overflow-wrap: anywhere; }
 ul { padding-inline-start: 1.25rem; margin-top: 0; }
 li { padding: 3px 0; overflow-wrap: anywhere; }

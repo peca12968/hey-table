@@ -14,7 +14,7 @@ from fastapi.testclient import TestClient
 
 from audit import audit
 from compare_audits import compare_audits
-from execute import execute, prepare
+from execute import execute, export_workbench, prepare
 from load_scan import labels_for, verify_load
 from receive_returns import receive
 from replan import replan
@@ -158,12 +158,14 @@ def execution_demo(client, clock, report, manifest):
     ]
     ready_scan = verify_load(selected, "\n".join(accepted_log))
     assert ready_scan["ready"] and ready_scan["verified_units"] == 4
+    workbench = export_workbench(report, selected=("B",), scan_log="\n".join(accepted_log))
     all_codes = [label["code"] for label in labels_for(prepare(report, ()))]
     timeout = execute_at(107000, scan_log="\n".join(all_codes))
     assert timeout["load_check"]["ready"]
     recovered = execute_at(109000)
     receipt = recovered["results"][0]["receipt"]
     assert sum(box["quantity"] for box in receipt["boxes"]) == ready_scan["verified_units"]
+    assert workbench["jobs"][0]["batch_id"] == receipt["batch_id"]
     late = execute_at(111000, 110000)
     reconciled = execute_at(111000)
 
@@ -244,7 +246,7 @@ def execution_demo(client, clock, report, manifest):
                            "inventory_after": final_inventory[0]},
             "load_scan": {"format": "dispatch-window.load-scan-demo.v1", "labels": labels,
                           "rejected_log": rejected_log, "accepted_log": accepted_log, "rejected": gated["load_check"],
-                          "accepted": ready_scan, "receipt": receipt},
+                          "accepted": ready_scan, "receipt": receipt, "workbench": workbench},
             "return_receiving": returns,
             "return_conditions": conditions,
             "quarantine_disposition": disposition,

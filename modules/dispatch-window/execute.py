@@ -121,6 +121,15 @@ def execute(report, request=None, *, clock=now_ms, selected=(), scan_log=None):
     return result
 
 
+def export_workbench(report, *, selected=(), scan_log):
+    jobs = prepare(report, selected)
+    if not jobs:
+        raise ValueError("no scheduled orders to export")
+    load_check = verify_load(jobs, scan_log)
+    return {"format": "dispatch-window.workbench.v1", "load_check": load_check,
+            "jobs": jobs if load_check["ready"] else []}
+
+
 class NoRedirect(HTTPRedirectHandler):
     def redirect_request(self, request, file, code, message, headers, new_url):
         return None
@@ -154,6 +163,7 @@ def main(argv=None):
     parser.add_argument("plan", type=Path)
     parser.add_argument("--stockroom", help="Stockroom HTTP(S) base URL")
     parser.add_argument("--confirm", action="store_true", help="Send due boxes after confirming they are packed")
+    parser.add_argument("--export-workbench", action="store_true", help="Export verified boxes and windows for Stockroom")
     parser.add_argument("--reservation", action="append", default=[], help="Select an order, repeat for multiple orders")
     loading = parser.add_mutually_exclusive_group()
     loading.add_argument("--labels", action="store_true", help="Export selected box labels as CSV")
@@ -163,6 +173,8 @@ def main(argv=None):
         parser.error("--labels exports CSV without dispatch")
     if args.confirm and not args.stockroom:
         parser.error("--confirm requires --stockroom")
+    if args.export_workbench and (not args.scan_log or args.confirm):
+        parser.error("--export-workbench requires --scan-log and does not submit dispatches")
     try:
         report = json.loads(args.plan.read_text(encoding="utf-8-sig"))
         if args.labels:
@@ -174,13 +186,16 @@ def main(argv=None):
             return 0
         client = stockroom_client(args.stockroom) if args.confirm else None
         scan_log = args.scan_log.read_text(encoding="utf-8-sig") if args.scan_log else None
-        result = execute(report, client, selected=args.reservation, scan_log=scan_log)
+        if args.export_workbench:
+            result = export_workbench(report, selected=args.reservation, scan_log=scan_log)
+        else:
+            result = execute(report, client, selected=args.reservation, scan_log=scan_log)
     except (OSError, ValueError, TypeError, KeyError) as error:
         parser.exit(2, f"{error}\n")
     print(json.dumps(result, indent=2))
     if "load_check" in result and not result["load_check"]["ready"]:
         return 1
-    return int(any(row["state"] in ("retry", "rejected", "expired") for row in result["results"]))
+    return int(any(row["state"] in ("retry", "rejected", "expired") for row in result.get("results", [])))
 
 
 if __name__ == "__main__":

@@ -10,6 +10,16 @@
 <body>
   <header><div class="shell"><span>Stockroom</span><h1>整車交運</h1></div></header>
   <main class="shell">
+    <section class="panel" aria-labelledby="import-heading">
+      <h2 id="import-heading">匯入已核對的裝車箱單</h2>
+      <label>掃碼核對檔<input id="manifest" type="file" accept=".json,application/json"></label>
+      <div class="actions" id="import-actions" hidden>
+        <label>排程訂單<select id="import-order"></select></label>
+        <button id="use-import" type="button" class="outline">載入選定箱單</button>
+      </div>
+      <p id="import-summary" class="meta" hidden></p>
+      <button id="use-manual" type="button" class="outline" hidden>改用手動箱單</button>
+    </section>
     <section class="panel" aria-labelledby="boxes-heading">
       <h2 id="boxes-heading">交運箱單</h2>
       <form id="draft">
@@ -26,6 +36,7 @@
     <section id="review" class="panel" aria-labelledby="review-heading" hidden>
       <h2 id="review-heading">核對交運</h2>
       <p id="summary" class="meta"></p>
+      <p id="review-window" class="meta" hidden></p>
       <ul id="review-lines"></ul>
       <button id="ship" type="button">確認整車交運</button>
     </section>

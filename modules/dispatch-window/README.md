@@ -59,6 +59,16 @@ python execute.py plan.json --scan-log scans.txt --reservation B --stockroom htt
 
 核對會列出漏掃箱件，以及掃描紀錄裡的重複、錯箱、件數不符和格式錯誤。每個問題會標出原始行號。使用 `--scan-log` 時，整份選取清單通過後才執行交運，Stockroom 會照常核對交運時窗及保留量。同一份正確紀錄可重試查回交運收據。[裝車掃碼核對（私人預覽）](https://peca-github-demo.peca12968.chatgpt.site/?demo=dispatchScan#demos)
 
+### 把掃碼核對檔帶到交運工作台
+
+在終端匯出通過核對的排程訂單。
+
+```sh
+python execute.py plan.json --scan-log scans.txt --export-workbench > ready-load.json
+```
+
+命令支援重複使用 `--reservation` 選取多張單。核對失敗會回傳原始掃描行號、缺漏項目與空箱單，結束碼為 1。在 Stockroom 的 `/workbench/dispatch` 上傳成功匯出的 JSON，選擇要交運的一張單。工作台沿用該單的原批號、箱件與交運時窗。店員可依服務端預覽時間確認是否到時；正式送出時，Stockroom 會再核對時窗和保留量。CLI 和工作台可用相同的批號查回交運收據。
+
 ## 接續下一車
 
 將原始的完整 `work` 箱單和新車時窗交給 `replan.py`。新時窗檔必須提供 Unix 毫秒 `cutoff_ms`，可選填 `start_ms`、`stations`、`station_ready_ms` 與 `station_pauses`。省略開始時間就從 Stockroom 快照時間起算。指定開始時間時須等於或晚於快照，裝車截止則須晚於開始時間。
