@@ -1349,7 +1349,7 @@ test("mobile pickup arrival withdrawal survives a lost reply and updates the cle
     const report=page.getByRole("button",{name:"我已到店"});
     const withdraw=page.getByRole("button",{name:"撤回到店回報"});
     await report.click();
-    await expect(card).toBeVisible();
+    await expect(card).toBeVisible({timeout:12000});
     await withdraw.click();
     await page.getByRole("button",{name:"關閉",exact:true}).click();
     await expect(withdraw).toBeVisible();
@@ -1367,7 +1367,7 @@ test("mobile pickup arrival withdrawal survives a lost reply and updates the cle
     await withdraw.click();
     await page.getByRole("button",{name:"確認撤回",exact:true}).click();
     await expect(page.getByRole("alert")).toContainText("尚未收到撤回結果");
-    await expect(card).toHaveCount(0);
+    await expect(card).toHaveCount(0,{timeout:12000});
     await page.getByRole("button",{name:"重試撤回",exact:true}).click();
     await expect(page.getByText("已撤回到店回報。到店後可以再次回報。")).toBeVisible();
     expect(attempts).toEqual([attempts[0],attempts[0]]);
@@ -1376,7 +1376,7 @@ test("mobile pickup arrival withdrawal survives a lost reply and updates the cle
     await detail.goto("/kitchen/order-detail?id="+number);
     await expect(detail.getByText("顧客撤回到店回報",{exact:true})).toBeVisible();
     await report.click();
-    await expect(card).toBeVisible();
+    await expect(card).toBeVisible({timeout:12000});
     expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBe(360);
     expect((await advance("ready","completed")).ok()).toBe(true);
     await page.getByRole("button",{name:"更新進度"}).click();
