@@ -53,57 +53,6 @@ test.afterAll(async()=>{
   if(directory)await rm(directory,{recursive:true,force:true,maxRetries:4});
 });
 
-test("mobile stock count history filters, pages and opens both receipts from one snapshot",async({page,request})=>{
-  execFileSync(python,["-c",`import sqlite3, sys
-with sqlite3.connect(sys.argv[1]) as db:
-    db.execute("INSERT INTO products VALUES ('HISTORY-01', 5, 5)")
-`,join(directory,"stockroom.sqlite")],{windowsHide:true});
-  const date=new Date(Date.now()+28_800_000).toISOString().slice(0,10);
-  const create=batch=>request.post(origin+"/stock-count-batches",{
-    headers:{"Idempotency-Key":batch},data:{count_session:"晚班複點",reason:"核對盤點",items:[
-      {sku:"HISTORY-01",expected_revision:0,counted:5},
-    ]},
-  });
-  const oldest="history-00-opening";
-  expect((await create(oldest)).status()).toBe(201);
-  for(let index=1;index<=25;index++)expect((await create("history-"+String(index).padStart(2,"0"))).status()).toBe(201);
-  const reversed=await request.post(origin+"/stock-count-batches/"+oldest+"/reversal",{
-    headers:{"Idempotency-Key":"history-correction"},data:{reason:"交班撤銷"},
-  });
-  expect(reversed.status()).toBe(201);
-  const correction=(await reversed.json()).batch_id;
-  await page.setViewportSize({width:360,height:780});
-  await page.goto(origin+"/workbench/stock-count");
-  await page.getByRole("link",{name:"查看盤點紀錄"}).click();
-  await page.getByLabel("入帳日期（台灣）").fill(date);
-  await page.getByLabel("商品 SKU").fill("HISTORY-01");
-  await page.getByRole("button",{name:"查詢盤點紀錄"}).click();
-  await expect(page.getByRole("status")).toHaveText(date+" · HISTORY-01 · 27 批 · 沖回單 1 批 · 已沖回 1 批");
-  await expect(page.getByRole("link",{name:"原盤點 "+oldest})).toBeVisible();
-  const capture=page.waitForResponse(response=>new URL(response.url()).pathname==="/stock-count-batches"&&
-    new URL(response.url()).searchParams.has("before_batch_id")&&response.ok());
-  await page.getByRole("button",{name:"下一頁"}).click();
-  const snapshot=await (await capture).json();
-  await expect(page).toHaveURL(/before_batch_id=/);
-  const pageUrl=page.url();
-  const original=page.getByRole("listitem").filter({has:page.getByRole("link",{name:oldest,exact:true})});
-  await expect(original).toContainText("盤點入帳 · 已沖回");
-  expect(snapshot.batches).toHaveLength(2);
-  const downloading=page.waitForEvent("download");
-  await page.getByRole("button",{name:"下載本頁 JSON"}).click();
-  const download=await downloading;
-  expect(JSON.parse(await readFile(await download.path(),"utf8"))).toEqual(snapshot);
-  await original.getByRole("link",{name:"沖回單 "+correction}).click();
-  const receipt=page.getByRole("region",{name:"盤點收據",exact:true});
-  await expect(receipt).toContainText(correction);
-  await expect(receipt).toContainText("HISTORY-01");
-  await page.getByRole("link",{name:"查看盤點紀錄"}).click();
-  await expect(page).toHaveURL(pageUrl);
-  await original.getByRole("link",{name:oldest,exact:true}).click();
-  await expect(receipt).toContainText(oldest);
-  expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBe(360);
-});
-
 test("quarantine workbench refreshes a stale batch and recovers the original receipt after a lost reply",async({page,request})=>{
   const path="/return-inspections/dock",endpoint=path+"/dispositions";
   const post=(path,key,data)=>request.post(origin+path,{headers:{"Idempotency-Key":key},data});
@@ -692,4 +641,56 @@ with sqlite3.connect(sys.argv[1]) as db:
   expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBe(360);
   await page.getByRole("link",{name:"開啟這批的隔離品複驗"}).click();
   await expect(page.getByText(batch+" · 尚待處理 1 件")).toBeVisible();
+});
+
+test("mobile stock count history filters, pages and opens both receipts from one snapshot",async({page,request})=>{
+  const sku="COUNT-HISTORY-01";
+  execFileSync(python,["-c",`import sqlite3, sys
+with sqlite3.connect(sys.argv[1]) as db:
+    db.execute("INSERT INTO products VALUES (?, 5, 5)", (sys.argv[2],))
+`,join(directory,"stockroom.sqlite"),sku],{windowsHide:true});
+  const date=new Date(Date.now()+28_800_000).toISOString().slice(0,10);
+  const create=batch=>request.post(origin+"/stock-count-batches",{
+    headers:{"Idempotency-Key":batch},data:{count_session:"晚班複點",reason:"核對盤點",items:[
+      {sku,expected_revision:0,counted:5},
+    ]},
+  });
+  const oldest="history-00-opening";
+  expect((await create(oldest)).status()).toBe(201);
+  for(let index=1;index<=25;index++)expect((await create("history-"+String(index).padStart(2,"0"))).status()).toBe(201);
+  const reversed=await request.post(origin+"/stock-count-batches/"+oldest+"/reversal",{
+    headers:{"Idempotency-Key":"history-correction"},data:{reason:"交班撤銷"},
+  });
+  expect(reversed.status()).toBe(201);
+  const correction=(await reversed.json()).batch_id;
+  await page.setViewportSize({width:360,height:780});
+  await page.goto(origin+"/workbench/stock-count");
+  await page.getByRole("link",{name:"查看盤點紀錄"}).click();
+  await page.getByLabel("入帳日期（台灣）").fill(date);
+  await page.getByLabel("商品 SKU").fill(sku);
+  await page.getByRole("button",{name:"查詢盤點紀錄"}).click();
+  await expect(page.getByRole("status")).toHaveText(date+" · "+sku+" · 27 批 · 沖回單 1 批 · 已沖回 1 批");
+  await expect(page.getByRole("link",{name:"原盤點 "+oldest})).toBeVisible();
+  const capture=page.waitForResponse(response=>new URL(response.url()).pathname==="/stock-count-batches"&&
+    new URL(response.url()).searchParams.has("before_batch_id")&&response.ok());
+  await page.getByRole("button",{name:"下一頁"}).click();
+  const snapshot=await (await capture).json();
+  await expect(page).toHaveURL(/before_batch_id=/);
+  const pageUrl=page.url();
+  const original=page.getByRole("listitem").filter({has:page.getByRole("link",{name:oldest,exact:true})});
+  await expect(original).toContainText("盤點入帳 · 已沖回");
+  expect(snapshot.batches).toHaveLength(2);
+  const downloading=page.waitForEvent("download");
+  await page.getByRole("button",{name:"下載本頁 JSON"}).click();
+  const download=await downloading;
+  expect(JSON.parse(await readFile(await download.path(),"utf8"))).toEqual(snapshot);
+  await original.getByRole("link",{name:"沖回單 "+correction}).click();
+  const receipt=page.getByRole("region",{name:"盤點收據",exact:true});
+  await expect(receipt).toContainText(correction);
+  await expect(receipt).toContainText(sku);
+  await page.getByRole("link",{name:"查看盤點紀錄"}).click();
+  await expect(page).toHaveURL(pageUrl);
+  await original.getByRole("link",{name:oldest,exact:true}).click();
+  await expect(receipt).toContainText(oldest);
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBe(360);
 });
