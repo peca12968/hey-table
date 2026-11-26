@@ -168,6 +168,19 @@ CREATE TABLE IF NOT EXISTS return_batch_boxes (
     FOREIGN KEY (reservation_id, shipment_id, batch_id)
         REFERENCES shipment_returns(reservation_id, shipment_id, return_id)
 );
+CREATE TABLE IF NOT EXISTS return_inspection_boxes (
+    reservation_id TEXT NOT NULL,
+    shipment_id TEXT NOT NULL,
+    batch_id TEXT NOT NULL,
+    sellable INTEGER NOT NULL CHECK (sellable >= 0),
+    quarantined INTEGER NOT NULL CHECK (quarantined >= 0),
+    returnable_after INTEGER NOT NULL CHECK (returnable_after >= 0),
+    CHECK (sellable + quarantined BETWEEN 1 AND 1000000),
+    PRIMARY KEY (reservation_id, shipment_id, batch_id),
+    FOREIGN KEY (reservation_id, shipment_id) REFERENCES fulfillments(reservation_id, shipment_id)
+);
+CREATE INDEX IF NOT EXISTS return_inspection_by_batch
+    ON return_inspection_boxes(batch_id, reservation_id, shipment_id);
 """
 
 
@@ -1059,7 +1072,12 @@ class Store:
             SELECT f.reservation_id, f.shipment_id, f.quantity AS dispatched, r.sku,
                    COALESCE((SELECT SUM(sr.quantity) FROM shipment_returns sr
                              WHERE sr.reservation_id=f.reservation_id AND sr.shipment_id=f.shipment_id), 0)
-                       AS restocked
+                       + COALESCE((SELECT SUM(i.sellable) FROM return_inspection_boxes i
+                                   WHERE i.reservation_id=f.reservation_id AND i.shipment_id=f.shipment_id), 0)
+                       AS restocked,
+                   COALESCE((SELECT SUM(i.quarantined) FROM return_inspection_boxes i
+                             WHERE i.reservation_id=f.reservation_id AND i.shipment_id=f.shipment_id), 0)
+                       AS quarantined
             FROM fulfillments f JOIN reservations r ON r.id=f.reservation_id
         """
         query += " WHERE f.reservation_id IN (" + ",".join("?" for _ in keys) + ")"
@@ -1068,7 +1086,11 @@ class Store:
             query += " AND f.shipment_id=?"
             parameters.append(shipment_id)
         for row in conn.execute(query + " ORDER BY f.reservation_id, f.shipment_id", parameters):
-            yield dict(row) | {"returnable": row["dispatched"] - row["restocked"]}
+            box = dict(row)
+            quarantined = box.pop("quarantined")
+            if quarantined:
+                box["quarantined"] = quarantined
+            yield box | {"returnable": row["dispatched"] - row["restocked"] - quarantined}
 
     def shipment_balance(self, conn, key, shipment_id):
         balance = next(self.shipment_balances(conn, (key,), shipment_id), None)
@@ -1083,9 +1105,13 @@ class Store:
             return self.packing_row(reservation, boxes)
 
     def packing_row(self, reservation, boxes):
-        return {"reservation": self.progress_row(reservation), "boxes": boxes,
-                "restocked": sum(box["restocked"] for box in boxes),
-                "returnable": sum(box["returnable"] for box in boxes)}
+        report = {"reservation": self.progress_row(reservation), "boxes": boxes,
+                  "restocked": sum(box["restocked"] for box in boxes),
+                  "returnable": sum(box["returnable"] for box in boxes)}
+        quarantined = sum(box.get("quarantined", 0) for box in boxes)
+        if quarantined:
+            report["quarantined"] = quarantined
+        return report
 
     @staticmethod
     def products_for(conn, skus):
@@ -1139,16 +1165,60 @@ class Store:
         remaining = balance["returnable"] - quantity
         if remaining < 0:
             raise Conflict("Return exceeds the units outstanding for this shipment")
-        updated = conn.execute("""UPDATE products SET capacity=capacity+?, available=available+?
-                                  WHERE sku=? AND capacity<=?""",
-                               (quantity, quantity, balance["sku"], 2**63 - 1 - quantity))
-        if not updated.rowcount:
-            raise Conflict("Capacity exceeds SQLite integer range")
+        self.restock_product(conn, balance["sku"], quantity)
         conn.execute("""INSERT INTO shipment_returns(reservation_id, shipment_id, return_id, quantity,
                                                      returnable_after) VALUES (?, ?, ?, ?, ?)""",
                      (*ids, quantity, remaining))
         return {"reservation_id": key, "shipment_id": shipment_id, "return_id": return_id,
                 "quantity": quantity, "returnable_after": remaining}, True
+
+    @staticmethod
+    def restock_product(conn, sku, quantity):
+        updated = conn.execute("""UPDATE products SET capacity=capacity+?, available=available+?
+                                  WHERE sku=? AND capacity<=?""",
+                               (quantity, quantity, sku, 2**63 - 1 - quantity))
+        if not updated.rowcount:
+            raise Conflict("Capacity exceeds SQLite integer range")
+
+    @staticmethod
+    def return_inspection_rows(conn, batch_id):
+        rows = conn.execute("""SELECT reservation_id,shipment_id,sellable,quarantined,returnable_after
+                               FROM return_inspection_boxes WHERE batch_id=?
+                               ORDER BY reservation_id,shipment_id""", (batch_id,))
+        return [dict(row) for row in rows]
+
+    def return_inspection(self, batch_id, boxes):
+        ordered = sorted(boxes)
+        with self.current_inventory() as (conn, _):
+            receipts = self.return_inspection_rows(conn, batch_id)
+            if receipts:
+                prior = [(r["reservation_id"], r["shipment_id"], r["sellable"], r["quarantined"]) for r in receipts]
+                if prior != ordered:
+                    raise Conflict("Inspection key already used with different boxes or conditions")
+                return {"batch_id": batch_id, "boxes": receipts}, False
+            for key, shipment, sellable, quarantined in ordered:
+                try:
+                    balance = self.shipment_balance(conn, key, shipment)
+                    remaining = balance["returnable"] - sellable - quarantined
+                    if remaining < 0:
+                        raise Conflict("Inspection exceeds the units outstanding for this shipment")
+                    if sellable:
+                        self.restock_product(conn, balance["sku"], sellable)
+                    conn.execute("""INSERT INTO return_inspection_boxes
+                                    (reservation_id,shipment_id,batch_id,sellable,quarantined,returnable_after)
+                                    VALUES (?,?,?,?,?,?)""", (key, shipment, batch_id, sellable, quarantined, remaining))
+                except (Missing, Conflict) as exc:
+                    raise type(exc)(f"{key}/{shipment}: {exc}") from exc
+                receipts.append({"reservation_id": key, "shipment_id": shipment, "sellable": sellable,
+                                 "quarantined": quarantined, "returnable_after": remaining})
+            return {"batch_id": batch_id, "boxes": receipts}, True
+
+    def return_inspection_receipt(self, batch_id):
+        with closing(self.connect()) as conn:
+            boxes = self.return_inspection_rows(conn, batch_id)
+            if not boxes:
+                raise Missing("Unknown return inspection")
+            return {"batch_id": batch_id, "boxes": boxes}
 
     @staticmethod
     def return_batch_rows(conn, batch_id):

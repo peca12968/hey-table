@@ -111,6 +111,8 @@ python receive_returns.py inspection.csv --batch-id dock-early --stockroom http:
 
 `demo.py --execute-plan` 會演練 B1 已退回一件後，錯報兩件時整批停下。修正後與 D1 一起入庫，模擬回應遺失，再用原批號取回兩箱收據。[實際整合資料](examples/execution-demo.json)
 
+遇到受損商品時，可改用 `code,sellable,quarantined` 三欄。欄位依序是原出貨條碼、可重新販售件數、需隔離件數。例如 `DW1/C/C1/3,1,1` 表示收到 2 件，只有 1 件回到可販售庫存。沿用同一組指令預覽與確認。驗收工具會依 CSV 欄名選擇對應的 Stockroom 端點，重試時保留相同欄名、批號和件數。[Stockroom 條件驗收](../stockroom-reservations/README.md#區分合格入庫與受損隔離)
+
 ## 排程規則
 
 最多安排 17 張單，優先最大化出貨件數，再最大化完成訂單數，最後比較工作完成時間。每張單只能由同一個工作站連續包裝。完成時間須早於保留期限與裝車截止時間，符合 Stockroom 到期時刻即釋回的行為。工時可包含預留的裝車和服務提交時間。

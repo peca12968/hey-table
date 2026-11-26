@@ -41,6 +41,8 @@ python -m uvicorn stockroom.api:app
 | POST /reservations/{key}/fulfillments/{box}/returns | 以 Idempotency-Key 當作本箱的退貨單號，將驗收合格的 quantity 件商品入庫 |
 | POST /return-batches | 以驗收批號一次登記多箱退回，所有箱子共同入庫 |
 | GET /return-batches/{batch_id} | 依驗收批號查詢原始收據 |
+| POST /return-inspections | 以驗收批號一次登記各箱合格入庫與受損隔離的件數 |
+| GET /return-inspections/{batch_id} | 查詢各箱的原始驗收明細 |
 | GET /reservations/{key}/fulfillments/{box} | 查詢該箱實際寄出的 dispatched、已重新入庫的 restocked，以及尚可退回的 returnable |
 | GET /reservations/{key}/fulfillments | 一次查詢保留狀態、各箱出貨與退貨明細，以及全單已重新入庫和仍可退回的件數 |
 | POST /packing-snapshots | 一次查詢多張訂單，從同一時點取得各單的箱單和對應商品庫存 |
@@ -145,6 +147,12 @@ SQLite 會核對每個 SKU 的原入帳後版次，並嘗試恢復原批次調�
 任一箱不存在或超過該箱可退回的數量，整批回滾，回應指出訂單與箱號。成功後，每箱收據保留當時的剩餘可退數量。網路中斷時可依驗收批號查回原收據，也可原樣重送，箱子的排列次序可以不同。同批號改動箱號或件數會回傳 409。整批與單箱驗收共用退貨帳及每箱的可退上限。若原有單箱收據在同一箱已使用此批號，需使用新批號提交整批。
 
 啟動本機服務後執行 `python demo.py --return-batch`，可重現兩張訂單各出貨一件，再一次驗收兩件。並行測試另用兩個服務實例送出 12 次請求，讓兩個驗收批和一張單箱驗收爭用同一箱，驗證只有其中一組能入庫。[跨單驗收測試](tests/test_return_batches.py)
+
+### 區分合格入庫與受損隔離
+
+送出 `POST /return-inspections` 時，用 `Idempotency-Key` 指定驗收批號。每箱帶原保留編號、箱號、`sellable` 和 `quarantined`。例如 `{"boxes":[{"reservation_id":"east","shipment_id":"box","sellable":1,"quarantined":2}]}` 會登記收到 3 件，將其中 1 件加回可販售庫存，另外 2 件記錄為隔離。箱別明細和整單快照會顯示已有隔離的件數，供倉庫核對實物。
+
+每批最多 100 箱，合格與隔離加總須在各箱可退量內。任何一箱不符時，整批都會回滾。舊的單箱退貨、整批退貨和新版驗收共用同一個剩餘可退量。用原批號重送相同箱件與條件可查回原收據。SQLite 快照對帳會分列合格入庫與新增隔離，只有合格入庫影響可販售盤點。[舊資料、回滾與並行驗收測試](tests/test_return_inspections.py)
 
 ## 兩次盤點都是 20 件，期間進出了多少貨？
 

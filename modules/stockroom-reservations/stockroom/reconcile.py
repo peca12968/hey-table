@@ -83,6 +83,7 @@ def read_snapshot(path, sku):
         receipts = {}
         totals = Counter()
         returns_by_box = Counter()
+        quarantine_by_box = Counter()
         for table, (kind, query) in RECEIPT_QUERIES.items():
             if table in tables:
                 for *key, quantity in db.execute(query, (sku,)):
@@ -91,6 +92,16 @@ def read_snapshot(path, sku):
                         totals[kind, key[0]] += quantity
                     elif kind == "restock":
                         returns_by_box[tuple(key[:2])] += quantity
+        if "return_inspection_boxes" in tables:
+            rows = db.execute("""SELECT i.reservation_id,i.shipment_id,i.batch_id,i.sellable,i.quarantined
+                FROM return_inspection_boxes i JOIN reservations r ON r.id=i.reservation_id WHERE r.sku=?""", (sku,))
+            for reservation, shipment, batch, sellable, quarantined in rows:
+                returns_by_box[reservation, shipment] += sellable + quarantined
+                if sellable:
+                    receipts["restock", reservation, shipment, batch, "inspection"] = sellable
+                if quarantined:
+                    receipts["quarantine", reservation, shipment, batch] = quarantined
+                    quarantine_by_box[reservation, shipment] += quarantined
         # Original databases predate both counters and their receipt tables.
         for column, table in (
             ("shipped", "fulfillments"),
@@ -104,15 +115,17 @@ def read_snapshot(path, sku):
         reservations = {}
         held = 0
         issues = []
-        for box, restocked in sorted(returns_by_box.items()):
+        for box, inspected in sorted(returns_by_box.items()):
             dispatched = receipts.get(("dispatch", *box), 0)
-            if restocked > dispatched:
+            if inspected > dispatched:
+                quarantined = quarantine_by_box[box]
                 issues.append(
                     {
                         "reason": "excess_returns",
                         "ids": list(box),
                         "dispatched": dispatched,
-                        "restocked": restocked,
+                        "restocked": inspected - quarantined,
+                        **({"quarantined": quarantined} if quarantined else {}),
                     }
                 )
         for key, quantity, state, sent, released, timed_out in db.execute(
@@ -215,6 +228,8 @@ def reconcile(opening, closing_snapshot, sku):
     keys = before.receipts.keys() | after.receipts.keys()
     if any(kind == "count_adjustment" for kind, *_ in keys):
         movement["count_adjustment"] = 0
+    if any(kind == "quarantine" for kind, *_ in keys):
+        movement["quarantine"] = 0
     for key in sorted(keys):
         kind, *ids = key
         previous = before.receipts.get(key)

@@ -18,27 +18,35 @@ from replan import packing_snapshot
 MAX_FILE = 65536
 MAX_QUANTITY = 1_000_000
 QUANTITY = re.compile(r"[1-9][0-9]{0,6}")
+CONDITION_QUANTITY = re.compile(r"0|[1-9][0-9]{0,6}")
 
 
 def parse_returns(document):
     if len(document.encode("utf-8")) > MAX_FILE:
         raise ValueError("inspection CSV exceeds 64 KiB")
     reader = csv.reader(StringIO(document, newline=""), strict=True)
-    if next(reader, None) != ["code", "quantity"]:
-        raise ValueError("expected CSV header code,quantity")
+    header = next(reader, None)
+    if header not in (["code", "quantity"], ["code", "sellable", "quarantined"]):
+        raise ValueError("expected CSV header code,quantity or code,sellable,quarantined")
+    mixed = len(header) == 3
     entries = []
     seen = set()
     for row in reader:
         if not row:
             continue
         line = reader.line_num
-        if len(row) != 2:
-            raise ValueError(f"line {line}: expected a box code and inspected quantity")
-        code, quantity = (value.strip() for value in row)
+        if len(row) != len(header):
+            raise ValueError(f"line {line}: expected {', '.join(header)}")
+        code, *amounts = (value.strip() for value in row)
         label = SCAN.fullmatch(code)
         if not label or int(label[3]) > MAX_QUANTITY:
             raise ValueError(f"line {line}: invalid Dispatch Window box code")
-        if not QUANTITY.fullmatch(quantity) or int(quantity) > MAX_QUANTITY:
+        pattern = CONDITION_QUANTITY if mixed else QUANTITY
+        if any(not pattern.fullmatch(value) for value in amounts):
+            raise ValueError(f"line {line}: inspected quantities must be whole numbers")
+        quantities = dict(zip(header[1:], map(int, amounts)))
+        quantity = sum(quantities.values())
+        if not 1 <= quantity <= MAX_QUANTITY:
             raise ValueError(f"line {line}: inspected quantity must be between 1 and {MAX_QUANTITY}")
         reservation, shipment = label[1], label[2]
         pair = (reservation, shipment)
@@ -46,7 +54,7 @@ def parse_returns(document):
             raise ValueError(f"line {line}: {reservation}/{shipment} was already scanned")
         seen.add(pair)
         entries.append({"line": line, "code": code, "reservation_id": reservation, "shipment_id": shipment,
-                        "label_quantity": int(label[3]), "quantity": int(quantity)})
+                        "label_quantity": int(label[3]), "quantity": quantity, **quantities})
         if len(entries) > 100:
             raise ValueError("Stockroom accepts at most 100 boxes per return batch")
     if not entries:
@@ -70,7 +78,8 @@ def inspection_rows(entries, snapshot):
             raise ValueError("snapshot box belongs to another reservation")
         dispatched = integer(box["dispatched"], "dispatched", 1, MAX_QUANTITY)
         restocked = integer(box["restocked"], "restocked", high=dispatched)
-        returnable = dispatched - restocked
+        quarantined = integer(box.get("quarantined", 0), "quarantined", high=dispatched - restocked)
+        returnable = dispatched - restocked - quarantined
         if integer(box["returnable"], "returnable") != returnable:
             raise ValueError("packing snapshot has inconsistent returnable units")
         if entry["label_quantity"] != dispatched:
@@ -83,7 +92,7 @@ def inspection_rows(entries, snapshot):
     return rows
 
 
-def verify_receipt(batch_id, receipt, rows):
+def verify_receipt(batch_id, receipt, rows, quantity_fields):
     expected = {(row["reservation_id"], row["shipment_id"]): row for row in rows}
     if receipt["batch_id"] != batch_id or len(receipt["boxes"]) != len(expected):
         raise ValueError("Stockroom receipt does not match the inspection batch")
@@ -91,27 +100,34 @@ def verify_receipt(batch_id, receipt, rows):
     for box in receipt["boxes"]:
         pair = (box["reservation_id"], box["shipment_id"])
         row = expected.pop(pair, None)
-        if row is None or box["return_id"] != batch_id or integer(box["quantity"], "quantity", 1) != row["quantity"]:
+        quantities = {field: integer(box[field], field) for field in quantity_fields}
+        ids = {"return_id": batch_id} if quantity_fields == ("quantity",) else {}
+        if (row is None or any(row[field] != value for field, value in quantities.items())
+                or any(box[field] != value for field, value in ids.items())):
             raise ValueError("batch ID is already used for different inspected boxes or quantities")
         remaining = integer(box["returnable_after"], "returnable_after", high=row["dispatched"] - row["quantity"])
-        boxes.append({"reservation_id": pair[0], "shipment_id": pair[1], "return_id": batch_id,
-                      "quantity": row["quantity"], "returnable_after": remaining})
+        boxes.append({"reservation_id": pair[0], "shipment_id": pair[1], **ids,
+                      **quantities, "returnable_after": remaining})
     return {"batch_id": batch_id, "boxes": sorted(boxes, key=lambda box: (box["reservation_id"], box["shipment_id"]))}
 
 
 def receive(document, batch_id, request, *, confirm=False):
     batch_id = key(batch_id)
     entries = parse_returns(document)
+    mixed = "sellable" in entries[0]
+    quantity_fields = ("sellable", "quarantined") if mixed else ("quantity",)
+    endpoint = "/return-inspections" if mixed else "/return-batches"
     snapshot = packing_snapshot(request, {entry["reservation_id"] for entry in entries})
     rows = inspection_rows(entries, snapshot)
-    result = {"format": "dispatch-window.return-inspection.v1", "batch_id": batch_id,
+    result = {"format": "dispatch-window.return-inspection.v2" if mixed else "dispatch-window.return-inspection.v1",
+              "batch_id": batch_id,
               "captured_at_ms": integer(snapshot["captured_at_ms"], "captured_at_ms"), "boxes": rows}
     if any(row["status"] in ("unknown_shipment", "label_mismatch") for row in rows):
         return {**result, "state": "blocked"}
 
-    status, saved = request("/return-batches/" + batch_id)
+    status, saved = request(endpoint + "/" + batch_id)
     if status == 200:
-        return {**result, "state": "recovered", "receipt": verify_receipt(batch_id, saved, rows)}
+        return {**result, "state": "recovered", "receipt": verify_receipt(batch_id, saved, rows, quantity_fields)}
     if status != 404:
         return {**result, "state": "retry", "http_status": status}
     if any(row["status"] != "ready" for row in rows):
@@ -119,12 +135,12 @@ def receive(document, batch_id, request, *, confirm=False):
     if not confirm:
         return {**result, "state": "ready"}
 
-    boxes = [{field: row[field] for field in ("reservation_id", "shipment_id", "quantity")} for row in rows]
+    boxes = [{field: row[field] for field in ("reservation_id", "shipment_id", *quantity_fields)} for row in rows]
     try:
-        status, saved = request("/return-batches", {"boxes": boxes}, {"Idempotency-Key": batch_id})
+        status, saved = request(endpoint, {"boxes": boxes}, {"Idempotency-Key": batch_id})
         if status in (200, 201):
             return {**result, "state": "received" if status == 201 else "recovered",
-                    "receipt": verify_receipt(batch_id, saved, rows)}
+                    "receipt": verify_receipt(batch_id, saved, rows, quantity_fields)}
         return {**result, "state": "conflict" if status in (404, 409, 422) else "retry", "http_status": status}
     except (OSError, HTTPException, ValueError, TypeError, KeyError):
         return {**result, "state": "retry"}
@@ -132,7 +148,7 @@ def receive(document, batch_id, request, *, confirm=False):
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("inspection", type=Path, help="UTF-8 CSV with the columns code,quantity")
+    parser.add_argument("inspection", type=Path, help="UTF-8 CSV with code,quantity or code,sellable,quarantined columns")
     parser.add_argument("--batch-id", required=True, help="Stable receiving batch ID, reused for retries")
     parser.add_argument("--stockroom", required=True, help="Stockroom HTTP(S) base URL")
     parser.add_argument("--confirm", action="store_true", help="Post verified boxes as a single return batch")

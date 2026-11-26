@@ -365,6 +365,7 @@ class ShipmentBalance(BaseModel):
     dispatched: int
     restocked: int
     returnable: int
+    quarantined: int = 0
 
 
 class ReturnReceipt(BaseModel):
@@ -380,11 +381,45 @@ class ReturnBatchReceipt(BaseModel):
     boxes: list[ReturnReceipt]
 
 
+class ReturnInspectionBox(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    reservation_id: BoxKey
+    shipment_id: BoxKey
+    sellable: int = Field(strict=True, ge=0, le=1_000_000)
+    quarantined: int = Field(strict=True, ge=0, le=1_000_000)
+
+    @model_validator(mode="after")
+    def quantities(self):
+        if not 1 <= self.sellable + self.quarantined <= 1_000_000:
+            raise ValueError("Inspect between 1 and 1000000 units per shipment")
+        return self
+
+
+class ReturnInspectionBatch(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    boxes: list[ReturnInspectionBox] = Field(min_length=1, max_length=100)
+
+    @field_validator("boxes")
+    @classmethod
+    def distinct_boxes(cls, boxes):
+        return DispatchBatch.distinct_boxes(boxes)
+
+
+class ReturnInspectedBox(ReturnInspectionBox):
+    returnable_after: int
+
+
+class ReturnInspectionReceipt(BaseModel):
+    batch_id: str
+    boxes: list[ReturnInspectedBox]
+
+
 class PackingStatement(BaseModel):
     reservation: Progress
     boxes: list[ShipmentBalance]
     restocked: int
     returnable: int
+    quarantined: int = 0
 
 
 class PackingScope(BaseModel):
@@ -723,6 +758,21 @@ def create_app(path: Path, *, ttl_seconds=900, clock=time.time):
     def return_batch_receipt(batch_id: str):
         return store.return_batch_receipt(batch_id)
 
+    @app.post("/return-inspections", response_model=ReturnInspectionReceipt, status_code=201,
+              responses={200: {"model": ReturnInspectionReceipt, "description": "Original return inspection receipt"}})
+    def return_inspection(batch: ReturnInspectionBatch, response: Response, idempotency_key: RequestKey):
+        boxes = [(box.reservation_id, box.shipment_id, box.sellable, box.quarantined) for box in batch.boxes]
+        receipt, created = store.return_inspection(idempotency_key, boxes)
+        response.headers["Cache-Control"] = "no-store"
+        if not created:
+            response.status_code = 200
+        return receipt
+
+    @app.get("/return-inspections/{batch_id}", response_model=ReturnInspectionReceipt)
+    def return_inspection_receipt(batch_id: BoxKey, response: Response):
+        response.headers["Cache-Control"] = "no-store"
+        return store.return_inspection_receipt(batch_id)
+
     @app.post("/reservation-batches", response_model=ReservationBatchReceipt, status_code=201,
               responses={200: {"model": ReservationBatchReceipt, "description": "Original reservation batch receipt"}})
     def reserve_batch(batch: ReservationBatch, response: Response, idempotency_key: RequestKey):
@@ -832,11 +882,11 @@ def create_app(path: Path, *, ttl_seconds=900, clock=time.time):
     def progress(key: str):
         return store.progress(key)
 
-    @app.get("/reservations/{key}/fulfillments", response_model=PackingStatement)
+    @app.get("/reservations/{key}/fulfillments", response_model=PackingStatement, response_model_exclude_unset=True)
     def packing_statement(key: str):
         return store.packing_statement(key)
 
-    @app.post("/packing-snapshots", response_model=PackingSnapshot)
+    @app.post("/packing-snapshots", response_model=PackingSnapshot, response_model_exclude_unset=True)
     def packing_snapshot(scope: PackingScope, response: Response):
         response.headers["Cache-Control"] = "no-store"
         return store.packing_snapshot(scope.reservation_ids)
@@ -863,7 +913,7 @@ def create_app(path: Path, *, ttl_seconds=900, clock=time.time):
             response.status_code = 200
         return receipt
 
-    @app.get("/reservations/{key}/fulfillments/{shipment_id}", response_model=ShipmentBalance)
+    @app.get("/reservations/{key}/fulfillments/{shipment_id}", response_model=ShipmentBalance, response_model_exclude_unset=True)
     def shipment(key: str, shipment_id: str):
         return store.shipment(key, shipment_id)
 

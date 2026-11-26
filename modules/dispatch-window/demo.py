@@ -56,6 +56,31 @@ def receiving_demo(client, request):
             "interrupted": interrupted, "recovered": recovered, "inventory_before": before, "inventory_after": after}
 
 
+def condition_demo(client, request):
+    before = client.get("/inventory").json()[0]
+    header = "code,sellable,quarantined\n"
+    invalid = header + "DW1/C/C1/3,1,3\nDW1/D/D1/2,0,1\n"
+    valid = header + "DW1/C/C1/3,1,1\nDW1/D/D1/2,0,1\n"
+    batch = "dock-conditions"
+    blocked = receive(invalid, batch, request, confirm=True)
+    assert blocked["state"] == "blocked"
+    assert client.get("/return-inspections/" + batch).status_code == 404
+    assert client.get("/inventory").json()[0] == before
+    preview = receive(valid, batch, request)
+    assert preview["state"] == "ready"
+    confirmed = receive(valid, batch, request, confirm=True)
+    assert confirmed["state"] == "received"
+    recovered = receive(valid, batch, request, confirm=True)
+    assert recovered["state"] == "recovered" and recovered["receipt"] == confirmed["receipt"]
+    after = client.get("/inventory").json()[0]
+    assert after["available"] == before["available"] + 1 and after["capacity"] == before["capacity"] + 1
+    assert sum(row["quarantined"] for row in recovered["receipt"]["boxes"]) == 2
+    assert client.get("/reservations/D/fulfillments/D1").json()["quarantined"] == 1
+    return {"format": "dispatch-window.return-conditions-demo.v1", "blocked_csv": invalid, "accepted_csv": valid,
+            "blocked": blocked, "preview": preview, "confirmed": confirmed, "recovered": recovered,
+            "inventory_before": before, "inventory_after": after}
+
+
 def execution_demo(client, clock, report, manifest):
     attempts = []
 
@@ -168,6 +193,7 @@ def execution_demo(client, clock, report, manifest):
     assert (expanded["added_boxes"], expanded["comparable_boxes"], expanded["new_restocked_units"]) == (3, 1, 0)
     assert client.get("/inventory").json() == [{"sku": "KIT-01", "capacity": 12, "available": 12}]
     returns = receiving_demo(client, request)
+    conditions = condition_demo(client, request)
     return {"format": "dispatch-window.execution-demo.v1", "start_ms": report["start_ms"],
             "stages": stages, "attempts": first_attempts, "inventory_after": with_inventory[0],
             "next_truck": {"plan": next_plan, "execution": sent, "first_truck_review": old_plan,
@@ -176,6 +202,7 @@ def execution_demo(client, clock, report, manifest):
                           "rejected_log": rejected_log, "accepted_log": accepted_log, "rejected": gated["load_check"],
                           "accepted": ready_scan, "receipt": receipt},
             "return_receiving": returns,
+            "return_conditions": conditions,
             "audit": {"format": "dispatch-window.audit-demo.v1", "before": before_audit, "after": after_audit,
                       "plan_conflict": plan_conflict, "stock_conflict": stock_conflict,
                       "after_returns": after_returns, "differences": {"movement": movement, "corrected": corrected,
