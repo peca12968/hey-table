@@ -37,6 +37,62 @@ def quarantine(api):
     return response.json()["boxes"]
 
 
+def test_queue_reads_open_balances_by_sku_and_pages_past_a_resolved_old_batch(tmp_path):
+    database = tmp_path / "stockroom.db"
+    clock = [100.0]
+    def app():
+        return create_app(database, clock=lambda: clock[0])
+
+    def add(api, order, count, sku="KIT-01"):
+        assert post(api, "/reservations", order, {"sku": sku, "quantity": count}).status_code == 201
+        assert post(api, f"/reservations/{order}/fulfillments", "box", {"quantity": count}).status_code == 201
+        return {"reservation_id": order, "shipment_id": "box", "sellable": 0, "quarantined": count}
+
+    def queue(api, **params):
+        reply = api.get("/quarantine-queue", params=params)
+        assert (reply.status_code, reply.headers["Cache-Control"]) == (200, "no-store")
+        return reply.json()
+
+    with TestClient(app()) as api:
+        legacy = add(api, "legacy", 2)
+        original = post(api, "/return-inspections", "legacy-dock", {"boxes": [legacy]}).json()
+    with closing(sqlite3.connect(database)) as conn, conn:
+        conn.execute("ALTER TABLE return_inspection_boxes DROP COLUMN received_at_ms")
+        conn.execute("INSERT INTO products VALUES ('WRAP-01',5,5)")
+    with TestClient(app()) as api:
+        clock[0] = 101.0
+        rows = [add(api, "recent-kit", 3), add(api, "recent-wrap", 2, "WRAP-01")]
+        assert post(api, "/return-inspections", "a-recent-dock", {"boxes": rows}).status_code == 201
+        assert post(api, "/return-inspections", "b-recent-dock", {"boxes": [add(api, "other", 1)]}).status_code == 201
+        clock[0] = 120.0
+        assert post(api, "/return-inspections", "legacy-dock", {"boxes": [legacy]}).json() == original
+        first = queue(api, limit=1)
+        assert first == {
+            "captured_at_ms": 120000, "sku": None, "summary": {"batches": 3, "boxes": 4, "units": 8},
+            "batches": [{"batch_id": "legacy-dock", "received_at_ms": None, "pending_boxes": 1, "pending_units": 2}],
+            "next": {"after_received_at_ms": -1, "after_batch_id": "legacy-dock"},
+        }
+        assert post(api, "/return-inspections/legacy-dock/dispositions", "clear", {
+            "boxes": [decision("legacy", 2, 0, 2)],
+        }).status_code == 201
+        second = queue(api, limit=1, **first["next"])
+        assert second["summary"] == {"batches": 2, "boxes": 3, "units": 6}
+        assert second["batches"] == [{"batch_id": "a-recent-dock", "received_at_ms": 101000,
+                                      "pending_boxes": 2, "pending_units": 5}]
+        assert second["next"] == {"after_received_at_ms": 101000, "after_batch_id": "a-recent-dock"}
+        assert queue(api, limit=1, **second["next"])["batches"][0]["batch_id"] == "b-recent-dock"
+        assert queue(api, sku="WRAP-01")["summary"] == {"batches": 1, "boxes": 1, "units": 2}
+        assert post(api, "/return-inspections/a-recent-dock/dispositions", "partial", {
+            "boxes": [decision("recent-wrap", 1, 0, 2)],
+        }).status_code == 201
+        assert queue(api, sku="WRAP-01")["batches"][0]["pending_units"] == 1
+        assert queue(api, sku="NONE")["summary"] == {"batches": 0, "boxes": 0, "units": 0}
+        past_end = queue(api, after_batch_id="b-recent-dock", after_received_at_ms=101000)
+        assert past_end["batches"] == [] and past_end["summary"] == {"batches": 2, "boxes": 3, "units": 5}
+        assert api.get("/quarantine-queue?after_batch_id=legacy-dock").status_code == 422
+        assert api.get("/quarantine-queue?limit=101").status_code == 422
+
+
 def test_partial_decisions_preserve_original_receipts_and_reconcile_saleable_inventory(tmp_path):
     database, opening = tmp_path / "stockroom.db", tmp_path / "before.db"
     with TestClient(create_app(database)) as api:

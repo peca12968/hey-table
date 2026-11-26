@@ -1093,6 +1093,66 @@
       "sku": "KIT-01",
       "capacity": 16,
       "available": 16
+    },
+    "queue": {
+      "workbench": "/workbench/quarantine-queue",
+      "first_page": {
+        "captured_at_ms": 114000,
+        "sku": "KIT-01",
+        "summary": {
+          "batches": 2,
+          "boxes": 3,
+          "units": 3
+        },
+        "batches": [
+          {
+            "batch_id": "dock-conditions",
+            "received_at_ms": 114000,
+            "pending_boxes": 2,
+            "pending_units": 2
+          }
+        ],
+        "next": {
+          "after_received_at_ms": 114000,
+          "after_batch_id": "dock-conditions"
+        }
+      },
+      "next_page": {
+        "captured_at_ms": 114000,
+        "sku": "KIT-01",
+        "summary": {
+          "batches": 2,
+          "boxes": 3,
+          "units": 3
+        },
+        "batches": [
+          {
+            "batch_id": "overflow-dock",
+            "received_at_ms": 114000,
+            "pending_boxes": 1,
+            "pending_units": 1
+          }
+        ],
+        "next": null
+      },
+      "after": {
+        "captured_at_ms": 114000,
+        "sku": "KIT-01",
+        "summary": {
+          "batches": 1,
+          "boxes": 1,
+          "units": 1
+        },
+        "batches": [
+          {
+            "batch_id": "overflow-dock",
+            "received_at_ms": 114000,
+            "pending_boxes": 1,
+            "pending_units": 1
+          }
+        ],
+        "next": null
+      }
     }
   },
   "audit": {

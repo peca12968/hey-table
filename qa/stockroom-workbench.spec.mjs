@@ -463,3 +463,52 @@ with sqlite3.connect(sys.argv[1]) as db:
   await page.getByRole("link",{name:"開啟隔離品複驗"}).click();
   await expect(page.getByText(batch+" · 尚待處理 1 件")).toBeVisible();
 });
+
+test("the mobile quarantine queue can page past a finished batch and open the remaining work",async({page,request})=>{
+  execFileSync(python,["-c",`import sqlite3, sys
+with sqlite3.connect(sys.argv[1]) as db:
+    db.execute("INSERT INTO products VALUES ('QUEUE-01', 6, 6)")
+`,join(directory,"stockroom.sqlite")],{windowsHide:true});
+  const post=(path,key,data)=>request.post(origin+path,{headers:{"Idempotency-Key":key},data});
+  for(const [order,batch,quantity] of [["queue-east","east-dock",2],["queue-west","west-dock",3]]){
+    expect((await post("/reservations",order,{sku:"QUEUE-01",quantity})).status()).toBe(201);
+    expect((await post("/reservations/"+order+"/fulfillments","box",{quantity})).status()).toBe(201);
+    expect((await post("/return-inspections",batch,{boxes:[
+      {reservation_id:order,shipment_id:"box",sellable:0,quarantined:quantity},
+    ]})).status()).toBe(201);
+  }
+  await page.route(url=>url.pathname==="/quarantine-queue",async route=>{
+    const url=new URL(route.request().url());
+    url.searchParams.set("limit","1");
+    await route.fulfill({response:await route.fetch({url:url.href})});
+  });
+  await page.setViewportSize({width:360,height:780});
+  await page.goto(origin+"/workbench/returns");
+  await page.getByRole("link",{name:"查看待複驗清單"}).click();
+  const summary=page.getByRole("status");
+  await expect(summary).toContainText("批、");
+  await page.getByRole("textbox",{name:"商品 SKU"}).fill("QUEUE-01");
+  await page.getByRole("button",{name:"更新清單"}).click();
+  await expect(summary).toHaveText("QUEUE-01 · 2 批、2 箱、5 件");
+  await expect(page.getByRole("link",{name:"east-dock"})).toBeVisible();
+  const next=page.getByRole("button",{name:"下一頁"});
+  await expect(next).toBeEnabled();
+
+  expect((await post("/return-inspections/east-dock/dispositions","cleared",{boxes:[
+    {reservation_id:"queue-east",shipment_id:"box",restock:1,discard:1,expected_remaining:2,reason:"人工複驗"},
+  ]})).status()).toBe(201);
+  await next.click();
+  await expect(summary).toHaveText("QUEUE-01 · 1 批、1 箱、3 件");
+  await expect(page.getByRole("link",{name:"east-dock"})).toHaveCount(0);
+  const downloadPromise=page.waitForEvent("download");
+  await page.getByRole("button",{name:"下載本頁 JSON"}).click();
+  const download=await downloadPromise;
+  const snapshot=JSON.parse(await readFile(await download.path(),"utf8"));
+  expect(snapshot.sku).toBe("QUEUE-01");
+  expect(snapshot.summary).toEqual({batches:1,boxes:1,units:3});
+  expect(snapshot.batches).toEqual([{batch_id:"west-dock",pending_boxes:1,pending_units:3,received_at_ms:expect.any(Number)}]);
+  expect(snapshot.next).toBeNull();
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBe(360);
+  await page.getByRole("link",{name:"west-dock"}).click();
+  await expect(page.getByText("west-dock · 尚待處理 3 件")).toBeVisible();
+});

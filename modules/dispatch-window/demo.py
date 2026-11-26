@@ -107,6 +107,25 @@ def disposition_demo(client):
     assert workbench.status_code == 200
     assert workbench.headers["Cache-Control"] == "no-store"
     assert 'id="decision-form"' in workbench.text
+    queue_url = "/workbench/quarantine-queue"
+    queue_page = client.get(queue_url)
+    assert queue_page.status_code == 200 and queue_page.headers["Cache-Control"] == "no-store"
+    other_batch = "overflow-dock"
+    spare = client.post("/return-inspections", headers={"Idempotency-Key": other_batch}, json={"boxes": [
+        {"reservation_id": "C", "shipment_id": "C1", "sellable": 0, "quarantined": 1},
+    ]})
+    assert spare.status_code == 201
+
+    def queue(**params):
+        response = client.get("/quarantine-queue", params={"sku": "KIT-01", **params})
+        assert response.status_code == 200 and response.headers["Cache-Control"] == "no-store"
+        return response.json()
+
+    first_page = queue(limit=1)
+    assert first_page["summary"] == {"batches": 2, "boxes": 3, "units": 3}
+    assert [row["batch_id"] for row in first_page["batches"]] == [batch]
+    next_page = queue(limit=1, **first_page["next"])
+    assert [row["batch_id"] for row in next_page["batches"]] == [other_batch]
     stock_before = client.get("/inventory").json()[0]
     original = client.get(path).json()
     waiting = client.get(path + "/quarantine").json()
@@ -136,10 +155,14 @@ def disposition_demo(client):
     stock_after = client.get("/inventory").json()[0]
     assert stock_after["available"] == stock_before["available"] + 1
     assert stock_after["capacity"] == stock_before["capacity"] + 1
+    after = queue()
+    assert after["summary"] == {"batches": 1, "boxes": 1, "units": 1}
+    assert after["batches"] == next_page["batches"]
     return {"format": "dispatch-window.quarantine-disposition-demo.v1", "workbench": workbench_url,
             "waiting": waiting, "decisions": decisions,
             "stale_status": stale.status_code, "created_status": confirmed.status_code, "replay_status": replay.status_code,
-            "receipt": replay.json(), "final": final, "inventory_before": stock_before, "inventory_after": stock_after}
+            "receipt": replay.json(), "final": final, "inventory_before": stock_before, "inventory_after": stock_after,
+            "queue": {"workbench": queue_url, "first_page": first_page, "next_page": next_page, "after": after}}
 
 
 def execution_demo(client, clock, report, manifest):

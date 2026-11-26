@@ -438,6 +438,32 @@ class QuarantineStatus(BaseModel):
     boxes: list[QuarantineStatusBox]
 
 
+class QuarantineQueueBatch(BaseModel):
+    batch_id: str
+    received_at_ms: int | None
+    pending_boxes: int
+    pending_units: int
+
+
+class QuarantineQueueCounts(BaseModel):
+    batches: int
+    boxes: int
+    units: int
+
+
+class QuarantineQueueCursor(BaseModel):
+    after_received_at_ms: int
+    after_batch_id: str
+
+
+class QuarantineQueue(BaseModel):
+    captured_at_ms: int
+    sku: str | None
+    summary: QuarantineQueueCounts
+    batches: list[QuarantineQueueBatch]
+    next: QuarantineQueueCursor | None
+
+
 class QuarantineDecision(BaseModel):
     model_config = ConfigDict(extra="forbid")
     reservation_id: BoxKey
@@ -639,6 +665,7 @@ def create_app(path: Path, *, ttl_seconds=900, clock=time.time):
         media_type = {
             "dispatch.mjs": "text/javascript",
             "quarantine.mjs": "text/javascript",
+            "quarantine-queue.mjs": "text/javascript",
             "replacement.mjs": "text/javascript",
             "returns.mjs": "text/javascript",
             "quarantine.css": "text/css",
@@ -652,7 +679,7 @@ def create_app(path: Path, *, ttl_seconds=900, clock=time.time):
 
     @app.get("/workbench/{tool_name}", include_in_schema=False)
     def workbench_page(tool_name: str):
-        if tool_name not in ("dispatch", "quarantine", "replacement", "returns"):
+        if tool_name not in ("dispatch", "quarantine", "quarantine-queue", "replacement", "returns"):
             raise HTTPException(status_code=404)
         return FileResponse(workbench / (tool_name + ".html"), media_type="text/html", headers={
             "Cache-Control": "no-store",
@@ -872,6 +899,20 @@ def create_app(path: Path, *, ttl_seconds=900, clock=time.time):
     def return_inspection_receipt(batch_id: BoxKey, response: Response):
         response.headers["Cache-Control"] = "no-store"
         return store.return_inspection_receipt(batch_id)
+
+    @app.get("/quarantine-queue", response_model=QuarantineQueue)
+    def quarantine_queue(
+        response: Response,
+        sku: Annotated[str | None, Query(min_length=1, max_length=80)] = None,
+        limit: Annotated[int, Query(ge=1, le=100)] = 25,
+        after_received_at_ms: Annotated[int | None, Query(ge=-1, le=2**63 - 1)] = None,
+        after_batch_id: Annotated[str | None, Query(pattern=r"^[A-Za-z0-9_-]{1,80}$")] = None,
+    ):
+        if (after_received_at_ms is None) != (after_batch_id is None):
+            raise HTTPException(422, "Supply a complete quarantine queue cursor")
+        after = None if after_batch_id is None else (after_received_at_ms, after_batch_id)
+        response.headers["Cache-Control"] = "no-store"
+        return store.quarantine_queue(sku, limit, after)
 
     @app.get("/return-inspections/{batch_id}/quarantine", response_model=QuarantineStatus)
     def quarantine_status(batch_id: BoxKey, response: Response):

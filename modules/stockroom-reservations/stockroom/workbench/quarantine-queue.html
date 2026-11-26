@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>待複驗清單｜Stockroom</title>
+  <link rel="stylesheet" href="/workbench/assets/workbench.css">
+  <script type="module" src="/workbench/assets/quarantine-queue.mjs"></script>
+</head>
+<body>
+  <header><div class="shell"><span>Stockroom</span><h1>待複驗清單</h1></div></header>
+  <main class="shell">
+    <p class="meta"><a href="/workbench/quarantine">依批號查複驗</a></p>
+    <section class="panel" aria-labelledby="filter-heading">
+      <h2 id="filter-heading">篩選待複驗批次</h2>
+      <form id="filter" class="actions">
+        <label>商品 SKU<input id="sku" maxlength="80" autocomplete="off" placeholder="留空查全庫"></label>
+        <button id="search">更新清單</button>
+      </form>
+    </section>
+    <p id="error" role="alert" hidden></p>
+    <section class="panel" aria-labelledby="queue-heading">
+      <h2 id="queue-heading">待處理批次</h2>
+      <p id="summary" role="status">正在查詢待複驗批次…</p>
+      <p class="meta" id="captured" hidden>擷取時間（台灣） <time id="capture-time"></time></p>
+      <ol id="batches" aria-label="驗收批次"></ol>
+      <div class="actions">
+        <button id="first" class="outline" type="button" hidden>返回第一頁</button>
+        <button id="more" class="outline" type="button" hidden>下一頁</button>
+        <button id="download" class="outline" type="button" hidden>下載本頁 JSON</button>
+      </div>
+    </section>
+  </main>
+</body>
+</html>

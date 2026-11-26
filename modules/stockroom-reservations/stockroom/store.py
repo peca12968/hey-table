@@ -175,6 +175,7 @@ CREATE TABLE IF NOT EXISTS return_inspection_boxes (
     sellable INTEGER NOT NULL CHECK (sellable >= 0),
     quarantined INTEGER NOT NULL CHECK (quarantined >= 0),
     returnable_after INTEGER NOT NULL CHECK (returnable_after >= 0),
+    received_at_ms INTEGER CHECK (received_at_ms >= 0),
     CHECK (sellable + quarantined BETWEEN 1 AND 1000000),
     PRIMARY KEY (reservation_id, shipment_id, batch_id),
     FOREIGN KEY (reservation_id, shipment_id) REFERENCES fulfillments(reservation_id, shipment_id)
@@ -236,6 +237,9 @@ class Store:
             release_columns = {row["name"] for row in conn.execute("PRAGMA table_info(reservation_releases)")}
             if "released_at_ms" not in release_columns:
                 conn.execute("ALTER TABLE reservation_releases ADD COLUMN released_at_ms INTEGER")
+            inspection_columns = {row["name"] for row in conn.execute("PRAGMA table_info(return_inspection_boxes)")}
+            if "received_at_ms" not in inspection_columns:
+                conn.execute("ALTER TABLE return_inspection_boxes ADD COLUMN received_at_ms INTEGER CHECK (received_at_ms >= 0)")
             conn.execute("""CREATE INDEX IF NOT EXISTS active_deadlines ON reservations(expires_at_ms)
                             WHERE state='held' AND expires_at_ms IS NOT NULL""")
             conn.execute("""CREATE INDEX IF NOT EXISTS expiry_history_deadlines ON reservations(expires_at_ms, id)
@@ -1236,7 +1240,7 @@ class Store:
 
     def return_inspection(self, batch_id, boxes):
         ordered = sorted(boxes)
-        with self.current_inventory() as (conn, _):
+        with self.current_inventory() as (conn, now):
             receipts = self.return_inspection_rows(conn, batch_id)
             if receipts:
                 prior = [(r["reservation_id"], r["shipment_id"], r["sellable"], r["quarantined"]) for r in receipts]
@@ -1252,8 +1256,8 @@ class Store:
                     if sellable:
                         self.restock_product(conn, balance["sku"], sellable)
                     conn.execute("""INSERT INTO return_inspection_boxes
-                                    (reservation_id,shipment_id,batch_id,sellable,quarantined,returnable_after)
-                                    VALUES (?,?,?,?,?,?)""", (key, shipment, batch_id, sellable, quarantined, remaining))
+                                    (reservation_id,shipment_id,batch_id,sellable,quarantined,returnable_after,received_at_ms)
+                                    VALUES (?,?,?,?,?,?,?)""", (key, shipment, batch_id, sellable, quarantined, remaining, now))
                 except (Missing, Conflict) as exc:
                     raise type(exc)(f"{key}/{shipment}: {exc}") from exc
                 receipts.append({"reservation_id": key, "shipment_id": shipment, "sellable": sellable,
@@ -1267,17 +1271,56 @@ class Store:
                 raise Missing("Unknown return inspection")
             return {"batch_id": batch_id, "boxes": boxes}
 
-    @staticmethod
-    def quarantine_balances(conn, batch_id):
-        rows = conn.execute("""SELECT i.reservation_id,i.shipment_id,r.sku,i.quarantined,
+    quarantine_balance_sql = """SELECT i.batch_id,i.received_at_ms,i.reservation_id,i.shipment_id,r.sku,i.quarantined,
                 COALESCE(SUM(d.restock),0) AS restocked,COALESCE(SUM(d.discard),0) AS discarded
             FROM return_inspection_boxes i JOIN reservations r ON r.id=i.reservation_id
             LEFT JOIN return_quarantine_dispositions d ON d.batch_id=i.batch_id
                 AND d.reservation_id=i.reservation_id AND d.shipment_id=i.shipment_id
-            WHERE i.batch_id=? AND i.quarantined>0
-            GROUP BY i.reservation_id,i.shipment_id,r.sku,i.quarantined
-            ORDER BY i.reservation_id,i.shipment_id""", (batch_id,))
-        return [dict(row, remaining=row["quarantined"] - row["restocked"] - row["discarded"]) for row in rows]
+            WHERE i.quarantined>0"""
+
+    def quarantine_balances(self, conn, batch_id):
+        balances = []
+        rows = conn.execute(f"""{self.quarantine_balance_sql} AND i.batch_id=?
+            GROUP BY i.reservation_id,i.shipment_id,i.batch_id ORDER BY i.reservation_id,i.shipment_id""", (batch_id,))
+        for row in rows:
+            box = dict(row)
+            box.pop("batch_id")
+            box.pop("received_at_ms")
+            balances.append(dict(box, remaining=box["quarantined"] - box["restocked"] - box["discarded"]))
+        return balances
+
+    def quarantine_queue(self, sku, limit, after):
+        sku_filter = "" if sku is None else "AND r.sku=?"
+        page_filter = "" if after is None else "WHERE (queue_time,batch_id)>(?,?)"
+        parameters = (() if sku is None else (sku,)) + (() if after is None else after) + (limit + 1,)
+        with closing(self.connect()) as conn:
+            rows = conn.execute(f"""WITH box_totals AS (
+                {self.quarantine_balance_sql} {sku_filter}
+                GROUP BY i.reservation_id,i.shipment_id,i.batch_id
+            ), open_batches AS (
+                SELECT batch_id,MIN(COALESCE(received_at_ms,-1)) AS queue_time,
+                       COUNT(*) AS pending_boxes,SUM(quarantined-restocked-discarded) AS pending_units
+                FROM box_totals
+                WHERE quarantined>restocked+discarded GROUP BY batch_id
+            ), totals AS (
+                SELECT COUNT(*) AS batches,COALESCE(SUM(pending_boxes),0) AS boxes,
+                       COALESCE(SUM(pending_units),0) AS units FROM open_batches
+            ), page AS (
+                SELECT * FROM open_batches {page_filter} ORDER BY queue_time,batch_id LIMIT ?
+            )
+            SELECT page.*,totals.* FROM totals LEFT JOIN page ON TRUE
+            ORDER BY page.queue_time,page.batch_id""", parameters).fetchall()
+            captured_at_ms = int(self.clock() * 1000)
+        first = rows[0]
+        batches = [{"batch_id": row["batch_id"], "received_at_ms": None if row["queue_time"] == -1 else row["queue_time"],
+                    "pending_boxes": row["pending_boxes"], "pending_units": row["pending_units"]}
+                   for row in rows[:limit] if row["batch_id"] is not None]
+        next_cursor = None
+        if len(rows) > limit:
+            tail = rows[limit - 1]
+            next_cursor = {"after_received_at_ms": tail["queue_time"], "after_batch_id": tail["batch_id"]}
+        return {"captured_at_ms": captured_at_ms, "sku": sku, "summary": {key: first[key] for key in ("batches", "boxes", "units")},
+                "batches": batches, "next": next_cursor}
 
     def quarantine_status(self, batch_id):
         with closing(self.connect()) as conn:
