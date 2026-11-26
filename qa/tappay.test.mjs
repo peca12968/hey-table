@@ -24,6 +24,7 @@ import {buildPaymentAttentionDemo} from "../scripts/payment-attention-demo.mjs";
 import {buildPickupPassHandoffDemo} from "../scripts/pickup-pass-handoff-demo.mjs";
 import {buildPickupRosterFollowUpDemo} from "../scripts/pickup-roster-followup-demo.mjs";
 import {buildCashCloseComparisonDemo} from "../scripts/cash-close-comparison-demo.mjs";
+import {buildShiftHandoffDemo} from "../scripts/shift-handoff-demo.mjs";
 import {compareCashCloses} from "../server/cash-close-compare.mjs";
 import {buildCustomerPaymentRecoveryDemo} from "../scripts/customer-payment-recovery-demo.mjs";
 import {buildCartSupplyReviewDemo} from "../scripts/cart-supply-review-demo.mjs";
@@ -2971,6 +2972,62 @@ test("pickup roster follows booked slot, kitchen readiness and customer arrival 
 test("pickup roster follow-up sample comes from the current roster service",async()=>{
   const saved=JSON.parse(readFileSync(new URL("../examples/pickup-roster-followup-demo.json",import.meta.url),"utf8"));
   assert.deepEqual(await buildPickupRosterFollowUpDemo(),saved);
+});
+
+test("shift handoff scopes cash and pickup by Taipei date and keeps the full count of open payments",async t=>{
+  const db=database();
+  t.after(()=>db.sqlite.close());
+  const date="2026-11-26",oldDate="2026-11-25",midnight=Date.parse(date+"T00:00:00+08:00"),minute=60_000;
+  const slot=Date.parse(date+"T11:30:00+08:00"),now=slot+15*minute;
+  t.mock.method(Date,"now",()=>now);
+  const headers={Authorization:"Bearer fixture-staff"},path="https://order.example/api/kitchen/";
+  const call=(resource,access=headers)=>api(new Request(path+resource,{headers:access}),{DB:db,STAFF_KEY:"fixture-staff"});
+  const insert=db.sqlite.prepare(`INSERT INTO orders(id,token,mode,status,items,note,total,created,
+    pickup_slot,status_history,pickup_arrived_at,payment_method,payment_env) VALUES (?,?,'pickup',?,'[]','private order note',45,?,?,?,?,?,?)`);
+  const cash=(id,created)=>insert.run(id,crypto.randomUUID(),"completed",created,null,null,null,"cash","cash");
+  cash(1,midnight-1);
+  cash(2,midnight);
+  cash(3,midnight+24*60*minute);
+  const history=JSON.stringify([{from:"preparing",status:"ready",at:slot+2*minute}]);
+  insert.run(4,crypto.randomUUID(),"ready",midnight-1,slot,history,null,"cash","cash");
+  insert.run(5,crypto.randomUUID(),"ready",midnight,slot,history,slot+5*minute,"cash","cash");
+  insert.run(6,crypto.randomUUID(),"ready",midnight,slot,history,null,"line_pay","sandbox");
+  const attempt=db.sqlite.prepare(`INSERT INTO payment_attempts(order_id,reference,merchant,state,created)
+    VALUES (?,?,'private merchant',?,?)`);
+  for(let id=20;id<=32;id++){
+    insert.run(id,crypto.randomUUID(),"pending",midnight-minute,null,null,null,"line_pay","sandbox");
+    attempt.run(id,crypto.randomUUID(),id%2?"authorized":"pending",midnight-minute+id);
+  }
+  attempt.run(21,crypto.randomUUID(),"paid",midnight+1);
+  attempt.run(22,crypto.randomUUID(),"pending",now+1);
+  assert.equal((await call("shift-handoff",{})).status,403);
+  for(const invalid of ["?date=2026-02-30","?date=","?date="+date+"&date="+date])
+    assert.equal((await call("shift-handoff"+invalid)).status,400);
+  const response=await call("shift-handoff");
+  assert.equal(response.headers.get("Cache-Control"),"no-store");
+  const snapshot=await response.json();
+  assert.equal(snapshot.format,"hey-table.shift-handoff.v1");
+  assert.equal(snapshot.date,date);
+  assert.equal(snapshot.capturedAt,now);
+  assert.deepEqual(snapshot.pickup,{
+    unreported:{total:1,orders:[{id:4,pickupSlot:slot,dueAt:now}]},
+    arrived:{total:1,orders:[{id:5,pickupSlot:slot,dueAt:now}]},
+  });
+  assert.deepEqual(snapshot.cash,{total:1,orders:[{id:2,createdAt:midnight}]});
+  assert.equal(snapshot.payments.total,11);
+  assert.deepEqual(snapshot.payments.orders.map(row=>row.id),[20,23,24,25,26,27,28,29,30,31]);
+  assert.ok(!/private|token|merchant|status_history|reference/.test(JSON.stringify(snapshot)));
+  const queue=await (await call("payment-attention?summary=1")).json();
+  assert.equal(queue.summary.totals.orders,snapshot.payments.total);
+  const older=await (await call("shift-handoff?date="+oldDate)).json();
+  assert.deepEqual(older.payments,snapshot.payments);
+  assert.deepEqual(older.cash.orders.map(row=>row.id),[1]);
+  assert.equal(older.pickup.unreported.total+older.pickup.arrived.total,0);
+});
+
+test("shift handoff demo recomputes opening and resolved snapshots",async()=>{
+  const saved=JSON.parse(readFileSync(new URL("../examples/shift-handoff-demo.json",import.meta.url),"utf8"));
+  assert.deepEqual(await buildShiftHandoffDemo(),saved);
 });
 
 test("daily pickup punctuality uses the current booked date, cutoff and recorded readiness",async t=>{

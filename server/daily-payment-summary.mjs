@@ -1,11 +1,14 @@
 import {methods,paymentStates} from "../lib/payments.mjs";
 import {latestState} from "./payment-api.mjs";
 
+export const cashRecorded="EXISTS(SELECT 1 FROM cash_receipts WHERE order_id=orders.id)";
+export const completedOnDay="orders.created>=? AND orders.created<? AND orders.status='completed'";
+
 export const dailyPaymentRows=(db,range)=>db.prepare(`
   SELECT orders.id,orders.payment_method AS method,orders.payment_env AS environment,CAST(orders.total AS TEXT) AS total,
     COALESCE(${latestState},'unpaid') AS state,
-    EXISTS(SELECT 1 FROM cash_receipts WHERE order_id=orders.id) AS cashRecorded
-  FROM orders WHERE orders.created>=? AND orders.created<? AND orders.status='completed'
+    ${cashRecorded} AS cashRecorded
+  FROM orders WHERE ${completedOnDay}
   ORDER BY orders.payment_method,orders.payment_env,orders.id`).bind(...range);
 
 const environments=new Set(["demo","sandbox","production"]);

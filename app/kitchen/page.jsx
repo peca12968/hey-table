@@ -357,6 +357,7 @@ export default function Kitchen(){
       <a className="outline" href="/kitchen/prep">查看備料單</a>
       <a className="outline" href="/kitchen/daily">每日訂單摘要</a>
       <a className="outline" href="/kitchen/refunds">示範退款紀錄</a>
+      <a className="outline" href="/kitchen/shift-handoff">交班待辦</a>
       <a className="outline" href="/kitchen/payment-attention">線上付款待核對</a>
       <a className="outline" href="/kitchen/return-ledger">退餐試算交班</a>
       <a className="outline" href="/kitchen/cash-close">現金日結</a>

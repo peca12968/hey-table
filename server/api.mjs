@@ -21,6 +21,7 @@ import {completeStaffPickupPass,issuePickupPass,ownerPickupPass,readPickupPass,r
   revokePickupPass} from "./pickup-pass.mjs";
 import {acknowledgePickupDelay,pickupDelayColumn,pickupDelayReportRows,readPickupDelayHistory,updatePickupDelay} from "./pickup-delay.mjs";
 import {pickupRoster} from "./pickup-roster.mjs";
+import {shiftHandoff} from "./shift-handoff.mjs";
 import {pickupWeek} from "./pickup-week.mjs";
 import {cashCorrectionHistory,cashReceiptColumn,collectCash,correctCashReceipt,dailyCashReceipts} from "./cash-receipts.mjs";
 import {cashCloseComparison,cashCloseVersion,cashCloseVersions,saveCashClose} from "./cash-close-versions.mjs";
@@ -1033,6 +1034,12 @@ export async function api(request, env) {
       return json(await pickupRoster(db,date,[start,start+1],capturedAt,includeFollowUp));
     }
     return json(await pickupRoster(db,date,range,capturedAt,includeFollowUp));
+  }
+  if(path==="/api/kitchen/shift-handoff"&&method==="GET"){
+    const capturedAt=Date.now(),dates=url.searchParams.getAll("date");
+    const date=dates[0]??businessDate(capturedAt),range=businessDayRange(date);
+    if(dates.length>1||!range)return fail("請選擇有效的交班日期。");
+    return json(await shiftHandoff(db,date,range,capturedAt));
   }
   if(path==="/api/kitchen/return-ledger-review-history"&&method==="GET"){
     const dates=url.searchParams.getAll("date"),befores=url.searchParams.getAll("before");

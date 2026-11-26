@@ -1,0 +1,12 @@
+.section .shiftHandoffFilters{max-width:none;align-items:end}
+.section .shiftHandoffFilters button{margin-top:0}
+.shiftHandoffFilters label{display:grid;gap:4px}
+.shiftHandoffTime{margin:18px 0 12px}
+.shiftHandoffGrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,320px),1fr));gap:16px;align-items:start}
+.shiftHandoffGroup h2{display:flex;justify-content:space-between;align-items:baseline;gap:8px;margin:0}
+.shiftHandoffGroup h2 span{font-size:.9rem;white-space:nowrap}
+.shiftHandoffGroup p,.shiftHandoffOrders small{color:var(--muted)}
+.shiftHandoffOrders{list-style:none;margin:12px 0 0;padding:0}
+.shiftHandoffOrders li{border-top:1px solid var(--line);padding:8px 0}
+.shiftHandoffOrders a{margin-top:0}
+.shiftHandoffOrders small{display:block}

@@ -4,6 +4,48 @@ import {readFile} from "node:fs/promises";
 import {businessDate} from "../lib/business-day.mjs";
 const staff={Authorization:"Bearer local-test-kitchen"};
 
+test("mobile shift handoff opens cash review and removes the order after collection",async({page,request})=>{
+  const created=await request.post("/api/orders",{data:{token:randomUUID(),mode:"pickup",note:"交班頁不顯示餐單細節",
+    items:[{id:"sencha",qty:1}]}});
+  expect(created.ok()).toBe(true);
+  const {id,created:createdAt}=await created.json();
+  const number=String(id).padStart(4,"0"),date=businessDate(createdAt);
+  for(const [from,to] of [["pending","preparing"],["preparing","ready"],["ready","completed"]]){
+    expect((await request.patch("/api/kitchen/status",{headers:staff,data:{id,from,to}})).ok()).toBe(true);
+  }
+  await page.setViewportSize({width:360,height:780});
+  await page.addInitScript(()=>sessionStorage.setItem("he-ri-staff","local-test-kitchen"));
+  await page.goto("/kitchen");
+  await page.getByRole("link",{name:"交班待辦",exact:true}).click();
+  await expect(page.getByRole("heading",{name:"交班待辦"})).toBeVisible();
+  await page.getByLabel("交班日期").fill(date);
+  await page.getByRole("button",{name:"套用日期"}).click();
+  await expect(page).toHaveURL("/kitchen/shift-handoff?date="+date);
+  const absent=page.getByRole("region",{name:/逾時未回報到店/});
+  const arrived=page.getByRole("region",{name:/已到店等候過久/});
+  const payments=page.getByRole("region",{name:/線上付款待核對/});
+  const cash=page.getByRole("region",{name:/已交餐、現金缺登/});
+  await expect(absent.getByRole("link",{name:"開啟未回報清單"})).toHaveAttribute("href","/kitchen/pickup-roster?date="+date+"&review=unreported");
+  await expect(arrived.getByRole("link",{name:"開啟已到店清單"})).toHaveAttribute("href","/kitchen/pickup-roster?date="+date+"&review=arrived");
+  await expect(payments.getByText(/跨日/)).toBeVisible();
+  await expect(payments.getByRole("link",{name:"開啟付款核對"})).toHaveAttribute("href","/kitchen/payment-attention");
+  await expect(cash.getByRole("link",{name:"開啟日結核對"})).toHaveAttribute("href","/kitchen/daily?date="+date);
+  await expect(cash.getByText("交班頁不顯示餐單細節")).toHaveCount(0);
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBe(360);
+  await cash.getByRole("link",{name:"餐單 #"+number}).click();
+  await expect(page.getByRole("heading",{name:"交班付款核對"})).toBeVisible();
+  await page.getByText("登記現金收款",{exact:true}).click();
+  await page.getByLabel("實收金額").fill("50");
+  await page.getByRole("button",{name:"確認現金收款"}).click();
+  await expect(page.getByRole("region",{name:"現金收款紀錄"})).toBeVisible();
+  await page.goto("/kitchen/shift-handoff?date="+date);
+  await expect(cash.getByRole("link",{name:"開啟日結核對"})).toBeVisible();
+  await expect(cash.getByRole("link",{name:"餐單 #"+number})).toHaveCount(0);
+  await page.getByRole("button",{name:"重新擷取"}).click();
+  await expect(cash.getByRole("link",{name:"開啟日結核對"})).toBeVisible();
+  await expect(cash.getByRole("link",{name:"餐單 #"+number})).toHaveCount(0);
+});
+
 test("mobile receipt switches the original unpaid order to cash and recovers a lost switch response",async({page,request})=>{
   await page.setViewportSize({width:360,height:780});
   const token=randomUUID(),guest={"X-Ticket":token};

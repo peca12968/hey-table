@@ -4,6 +4,13 @@ import {latestPaymentAttentionNote,paymentFollowUpJoin} from "./payment-attentio
 const pageSize=25;
 const amountBase=1_000_000;
 const summaryTotals=()=>({orders:0,amount:0n,pending:0,authorized:0,overdue:0});
+export const paymentAttentionTable="FROM payment_attempts AS attempt JOIN orders ON orders.id=attempt.order_id";
+export const openPaymentAttention=[
+  "attempt.state IN ('pending','authorized')",
+  "orders.payment_method<>'cash'",
+  "attempt.created<=?",
+  "attempt.id=(SELECT newest.id FROM payment_attempts AS newest WHERE newest.order_id=orders.id ORDER BY newest.id DESC LIMIT 1)",
+].join(" AND ");
 const filters={
   state:paymentAttentionStates,
   environment:onlinePaymentEnvironments,
@@ -53,12 +60,7 @@ function summarize(rows,query,capturedAt){
 }
 
 export async function paymentAttention(env,{state,environment,method,followUp,after,summary},capturedAt){
-  const conditions=[
-    "attempt.state IN ('pending','authorized')",
-    "orders.payment_method<>'cash'",
-    "attempt.created<=?",
-    "attempt.id=(SELECT newest.id FROM payment_attempts AS newest WHERE newest.order_id=orders.id ORDER BY newest.id DESC LIMIT 1)",
-  ];
+  const conditions=[openPaymentAttention];
   const args=[capturedAt];
   for(const [column,value] of [["attempt.state",state],["orders.payment_env",environment],["orders.payment_method",method]]){
     if(value){conditions.push(column+"=?");args.push(value);}
@@ -67,10 +69,9 @@ export async function paymentAttention(env,{state,environment,method,followUp,af
     conditions.push("followUp.follow_up_at BETWEEN 1 AND ?");
     args.push(capturedAt);
   }
-  const table="FROM payment_attempts AS attempt JOIN orders ON orders.id=attempt.order_id";
   const where=" WHERE "+conditions.join(" AND ");
-  const pageScope=table+" "+paymentFollowUpJoin+where;
-  const summaryScope=(followUp?table+" "+paymentFollowUpJoin:table)+where;
+  const pageScope=paymentAttentionTable+" "+paymentFollowUpJoin+where;
+  const summaryScope=(followUp?paymentAttentionTable+" "+paymentFollowUpJoin:paymentAttentionTable)+where;
   const cursor=after?" AND (attempt.created,attempt.order_id)>(?,?)":"";
   const page=env.DB.prepare(`SELECT orders.id,orders.status,orders.payment_method AS method,orders.payment_env AS environment,
     orders.total,orders.payment_due_at AS paymentDueAt,attempt.state,attempt.created AS startedAt,NULLIF(attempt.checked,0) AS checkedAt,

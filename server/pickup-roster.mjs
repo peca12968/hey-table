@@ -5,7 +5,8 @@ import {pickupSlotDuration} from "../lib/pickup-slots.mjs";
 import {canPrepare} from "../lib/payments.mjs";
 import {kitchenReadyWait,kitchenStageStartedAt} from "./kitchen-overdue.mjs";
 
-function pickupFollowUp(row,order,capturedAt){
+export function pickupFollowUp(row,capturedAt){
+  const order={status:row.status,paymentMethod:row.payment_method,paymentState:row.payment_state};
   if(order.status!=="ready"||!canPrepare(order))return null;
   const readyAt=kitchenStageStartedAt(row,"ready"),arrivedAt=row.pickup_arrived_at;
   if(readyAt===null||readyAt>capturedAt)return null;
@@ -37,7 +38,7 @@ export async function pickupRoster(db,date,range,capturedAt,includeFollowUp=fals
       paymentMethod:row.payment_method,paymentState:row.payment_state,portions:row.portions,
       ...(row.cash_collected?{cashCollected:true}:{})};
     if(includeFollowUp){
-      const review=pickupFollowUp(row,order,capturedAt);
+      const review=pickupFollowUp(row,capturedAt);
       if(review){
         order.followUp=review;
         followUp[review.state]++;

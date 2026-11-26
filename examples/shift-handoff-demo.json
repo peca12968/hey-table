@@ -1,0 +1,82 @@
+{
+  "format": "hey-table.shift-handoff-demo.v1",
+  "scenes": [
+    {
+      "stage": "open",
+      "snapshot": {
+        "format": "hey-table.shift-handoff.v1",
+        "date": "2026-11-26",
+        "capturedAt": 1795664700000,
+        "pickup": {
+          "unreported": {
+            "total": 1,
+            "orders": [
+              {
+                "id": 81,
+                "pickupSlot": 1795663800000,
+                "dueAt": 1795664700000
+              }
+            ]
+          },
+          "arrived": {
+            "total": 1,
+            "orders": [
+              {
+                "id": 82,
+                "pickupSlot": 1795663800000,
+                "dueAt": 1795664640000
+              }
+            ]
+          }
+        },
+        "payments": {
+          "total": 1,
+          "orders": [
+            {
+              "id": 84,
+              "method": "line_pay",
+              "environment": "demo",
+              "state": "pending",
+              "startedAt": 1795621500000
+            }
+          ]
+        },
+        "cash": {
+          "total": 1,
+          "orders": [
+            {
+              "id": 83,
+              "createdAt": 1795662000000
+            }
+          ]
+        }
+      }
+    },
+    {
+      "stage": "resolved",
+      "snapshot": {
+        "format": "hey-table.shift-handoff.v1",
+        "date": "2026-11-26",
+        "capturedAt": 1795664820000,
+        "pickup": {
+          "unreported": {
+            "total": 0,
+            "orders": []
+          },
+          "arrived": {
+            "total": 0,
+            "orders": []
+          }
+        },
+        "payments": {
+          "total": 0,
+          "orders": []
+        },
+        "cash": {
+          "total": 0,
+          "orders": []
+        }
+      }
+    }
+  ]
+}
