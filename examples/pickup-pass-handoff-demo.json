@@ -1,0 +1,33 @@
+{
+  "format": "hey-table.pickup-pass-handoff-demo.v1",
+  "orderId": 1,
+  "scenes": [
+    {
+      "stage": "guest",
+      "status": 403
+    },
+    {
+      "stage": "verified",
+      "status": 200,
+      "orderStatus": "ready"
+    },
+    {
+      "stage": "reissued",
+      "status": 409,
+      "orderStatus": "ready"
+    },
+    {
+      "stage": "completed",
+      "status": 200,
+      "orderStatus": "completed"
+    },
+    {
+      "stage": "recovered",
+      "status": 200,
+      "orderStatus": "completed",
+      "receiptEvents": 1,
+      "handoff": "pickup-pass",
+      "sameCompletion": true
+    }
+  ]
+}

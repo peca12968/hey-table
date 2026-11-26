@@ -21,6 +21,7 @@ import {sqliteD1} from "../scripts/sqlite-d1.mjs";
 import {applyDemoMigrations} from "../scripts/apply-demo-migrations.mjs";
 import {buildReturnLedgerDemo} from "../scripts/return-ledger-demo.mjs";
 import {buildPaymentAttentionDemo} from "../scripts/payment-attention-demo.mjs";
+import {buildPickupPassHandoffDemo} from "../scripts/pickup-pass-handoff-demo.mjs";
 import {buildCustomerPaymentRecoveryDemo} from "../scripts/customer-payment-recovery-demo.mjs";
 import {buildCartSupplyReviewDemo} from "../scripts/cart-supply-review-demo.mjs";
 import {bookablePickupSlots} from "../lib/pickup-slots.mjs";
@@ -3009,6 +3010,8 @@ test("pickup pass scopes access to one receipt and expires, rotates and revokes 
   const guest=await read(pass);
   assert.equal(guest.headers.get("Cache-Control"),"no-store");
   assert.deepEqual(await guest.json(),{id:1,pickupSlot:1800000,expiresAt:1801000,pickupArrivedAt:null});
+  const handoffView=await call("/pickup-pass?handoff=1",{headers:{"X-Pickup-Pass":pass}});
+  assert.equal((await handoffView.json()).revision,1);
   assert.equal((await call("/ticket",{headers:{"X-Ticket":pass}})).status,404);
   assert.equal((await owner(pass)).status,404);
   assert.equal((await call("/kitchen/pickup?id=1",{headers:{"X-Pickup-Pass":pass}})).status,403);
@@ -3041,6 +3044,68 @@ test("pickup pass scopes access to one receipt and expires, rotates and revokes 
     body:JSON.stringify({id:1,from:"ready",to:"completed"})})).status,200);
   assert.equal((await read(closing)).status,404);
   assert.equal((await issue(closing,4)).status,409);
+});
+
+test("delegated kitchen scan rechecks the issued pass at handoff and records exactly one event",async t=>{
+  const db=database();
+  t.after(()=>db.sqlite.close());
+  let now=1000;
+  t.mock.method(Date,"now",()=>now);
+  const original=crypto.randomUUID(),other=crypto.randomUUID();
+  const firstPass=crypto.randomUUID(),secondPass=crypto.randomUUID();
+  const add=db.sqlite.prepare(`INSERT INTO orders(token,mode,status,items,note,total,created)
+    VALUES (?,'pickup','ready','[]','staff-only note',45,1)`);
+  add.run(original);
+  add.run(other);
+  const env={DB:db,STAFF_KEY:"fixture-staff"};
+  const call=(path,options)=>api(new Request("https://order.example/api"+path,options),env);
+  const staff={Authorization:"Bearer fixture-staff"};
+  const issue=async(pass,revision,owner=original)=>call("/ticket/pickup-pass",{method:"POST",
+    headers:{"X-Ticket":owner,"Content-Type":"application/json"},body:JSON.stringify({pass,revision})});
+  const scan=(pass,opts={})=>{
+    const {id=1,method="GET",headers=staff,revision=1}=opts;
+    return call("/kitchen/pickup-pass-handoff?id="+id,{method,
+      headers:{...headers,...(pass?{"X-Pickup-Pass":revision+"."+pass}:{}),"Content-Type":"application/json"},
+      ...(method==="PATCH"?{body:"{}"}:{})});
+  };
+  assert.equal((await issue(firstPass,0)).status,200);
+  assert.equal((await scan(firstPass,{headers:{}})).status,403);
+  assert.equal((await scan(firstPass,{method:"PATCH",headers:{}})).status,403);
+  assert.equal((await scan(null)).status,400);
+  assert.equal((await scan(firstPass,{id:"1&id=1"})).status,400);
+  assert.equal((await scan(firstPass,{id:2})).status,409);
+  assert.equal((await scan(other)).status,409);
+  const order=await (await scan(firstPass)).json();
+  assert.equal(order.status,"ready");
+  assert.equal(order.note,"staff-only note");
+  assert.ok(!JSON.stringify(order).includes(firstPass)&&!JSON.stringify(order).includes(original));
+  const second=await (await issue(secondPass,1)).json();
+  assert.equal((await scan(firstPass)).status,409);
+  assert.equal((await scan(firstPass,{method:"PATCH"})).status,409);
+  now=second.expiresAt;
+  assert.equal((await scan(secondPass,{method:"PATCH",revision:2})).status,409);
+  assert.equal((await issue(firstPass,2)).status,200);
+  assert.equal((await scan(firstPass,{method:"PATCH"})).status,409);
+  const complete=()=>scan(firstPass,{method:"PATCH",revision:3});
+  const [left,right]=await Promise.all([complete(),complete()]);
+  assert.equal(left.status,200);
+  assert.equal(right.status,200);
+  const proof={id:1,status:"completed",completedAt:now};
+  assert.deepEqual(await left.json(),proof);
+  now++;
+  assert.deepEqual(await right.json(),proof);
+  assert.deepEqual(await (await complete()).json(),proof);
+  assert.equal((await (await scan(firstPass,{revision:3})).json()).status,"completed");
+  assert.equal((await call("/pickup-pass",{headers:{"X-Pickup-Pass":firstPass}})).status,404);
+  const history=(await (await call("/kitchen/order-detail?id=1",{headers:staff})).json()).statusHistory;
+  assert.deepEqual(history.filter(row=>row.status==="completed"),[{status:"completed",at:proof.completedAt,handoff:"pickup-pass"}]);
+  assert.equal((await (await scan(firstPass,{id:2,revision:3})).json()).status,undefined);
+  assert.equal(db.sqlite.prepare("SELECT status FROM orders WHERE id=2").get().status,"ready");
+});
+
+test("delegated handoff demo matches the protected API workflow",async()=>{
+  const saved=JSON.parse(readFileSync(new URL("../examples/pickup-pass-handoff-demo.json",import.meta.url),"utf8"));
+  assert.deepEqual(await buildPickupPassHandoffDemo(),saved);
 });
 
 test("staff pickup delay changes are versioned, retain their estimate on replay and close on readiness",async t=>{

@@ -4,6 +4,9 @@ const lifetime=30*60_000;
 const eligible=`orders.mode='pickup' AND orders.status='ready' AND ${payableForKitchen}`;
 const activePass=`FROM pickup_passes AS pass JOIN orders ON orders.id=pass.order_id
   WHERE pass.token_hash=? AND pass.expires_at>? AND ${eligible}`;
+const staffProof=`pass.order_id=orders.id AND pass.token_hash=? AND pass.revision=? AND pass.expires_at>?`;
+const completedWithPass=`orders.mode='pickup' AND orders.status='completed'
+  AND json_extract(orders.status_history,'$[#-1].pickupPassRevision')=pass.revision`;
 const encoder=new TextEncoder();
 async function hashPass(token){
   const digest=await crypto.subtle.digest("SHA-256",encoder.encode(token.toLowerCase()));
@@ -50,8 +53,8 @@ export async function revokePickupPass(db,token,revision,now){
   return row.revision===revision+1&&row.token_hash===null?passState(row,now):false;
 }
 
-export async function readPickupPass(db,token,now){
-  return db.prepare(`SELECT orders.id,orders.pickup_slot AS pickupSlot,pass.expires_at AS expiresAt,
+export async function readPickupPass(db,token,now,includeRevision=false){
+  return db.prepare(`SELECT orders.id,orders.pickup_slot AS pickupSlot,pass.expires_at AS expiresAt,${includeRevision?"pass.revision,":""}
     orders.pickup_arrived_at AS pickupArrivedAt ${activePass}`).bind(await hashPass(token),now).first();
 }
 
@@ -63,4 +66,25 @@ export async function reportPickupPassArrival(db,token,now){
     db.prepare(`SELECT orders.id,orders.pickup_arrived_at AS pickupArrivedAt ${activePass}`).bind(digest,now),
   ]);
   return lookup.results[0]??null;
+}
+
+export async function readStaffPickupPass(db,selectOrders,id,token,revision,now){
+  return db.prepare(`${selectOrders} WHERE orders.id=? AND EXISTS (
+    SELECT 1 FROM pickup_passes AS pass WHERE ${staffProof} AND ((${eligible}) OR (${completedWithPass})))`)
+    .bind(id,await hashPass(token),revision,now).first();
+}
+
+export async function completeStaffPickupPass(db,id,token,revision,now){
+  const digest=await hashPass(token);
+  const [,receipt]=await db.batch([
+    db.prepare(`UPDATE orders SET status='completed',
+      status_history=json_insert(COALESCE(status_history,'[]'),'$[#]',
+        json_object('from','ready','status','completed','at',?,'pickupPassRevision',?))
+      WHERE orders.id=? AND ${eligible} AND EXISTS (SELECT 1 FROM pickup_passes AS pass WHERE ${staffProof})`)
+      .bind(now,revision,id,digest,revision,now),
+    db.prepare(`SELECT json_extract(orders.status_history,'$[#-1].at') AS completedAt
+      FROM orders WHERE orders.id=? AND EXISTS (
+        SELECT 1 FROM pickup_passes AS pass WHERE ${staffProof} AND ${completedWithPass})`).bind(id,digest,revision,now),
+  ]);
+  return receipt.results[0]??null;
 }

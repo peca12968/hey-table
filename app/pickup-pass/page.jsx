@@ -26,7 +26,7 @@ export default function SharedPickup(){
       if(pending||ended)return;
       pending=true;
       try{
-        const pass=await request("/api/pickup-pass",{headers:{"X-Pickup-Pass":token},
+        const pass=await request("/api/pickup-pass?handoff=1",{headers:{"X-Pickup-Pass":token},
           signal:AbortSignal.any([abort.signal,AbortSignal.timeout(10_000)])});
         if(!abort.signal.aborted)setView({token,revision,pass});
       }catch(error){
@@ -52,7 +52,7 @@ export default function SharedPickup(){
       <PickupAppointment start={pass.pickupSlot}/>
       <PickupArrival key={token} arrivedAt={pass.pickupArrivedAt} token={token} pass
         onInvalid={error=>setInvalid({token,revision,error})}/>
-      <PickupCode key={pass.id} number={numberOf(pass.id)}/>
+      <PickupCode key={token} number={numberOf(pass.id)} pass={pass.revision+"."+token}/>
       <p className="muted">連結有效至 <time dateTime={new Date(pass.expiresAt).toISOString()}>{expiresTime.format(pass.expiresAt)}</time></p>
     </>}
   </article></main><Footer/></>;

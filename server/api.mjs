@@ -17,7 +17,8 @@ import {canReschedulePickup,capacityAtPickupSlot,editablePickupSlots,orderPortio
   suggestPickupSlot,usedAtPickupSlot} from "./pickup-slots.mjs";
 import {pickupCalendar} from "./pickup-calendar.mjs";
 import {orderDetailsText,ticketTextAttachment} from "./ticket-document.mjs";
-import {issuePickupPass,ownerPickupPass,readPickupPass,reportPickupPassArrival,revokePickupPass} from "./pickup-pass.mjs";
+import {completeStaffPickupPass,issuePickupPass,ownerPickupPass,readPickupPass,readStaffPickupPass,reportPickupPassArrival,
+  revokePickupPass} from "./pickup-pass.mjs";
 import {acknowledgePickupDelay,pickupDelayColumn,pickupDelayReportRows,readPickupDelayHistory,updatePickupDelay} from "./pickup-delay.mjs";
 import {pickupRoster} from "./pickup-roster.mjs";
 import {pickupWeek} from "./pickup-week.mjs";
@@ -100,9 +101,10 @@ function kitchenOrder(row,capturedAt){
 }
 function statusHistory(row) {
   const history = [{status:"pending",at:row.created}];
-  for (const {from,status,at,actor} of JSON.parse(row.status_history ?? "[]")) {
+  for (const {from,status,at,actor,pickupPassRevision} of JSON.parse(row.status_history ?? "[]")) {
     if (history.at(-1).status !== from) history.push({status:from,at:null});
-    history.push({status,at,...(status==="cancelled"&&["customer","payment_expiry","demo_refund"].includes(actor)?{actor}:{})});
+    history.push({status,at,...(status==="cancelled"&&["customer","payment_expiry","demo_refund"].includes(actor)?{actor}:{}),
+      ...(status==="completed"&&Number.isSafeInteger(pickupPassRevision)&&pickupPassRevision>0?{handoff:"pickup-pass"}:{})});
   }
   if (history.at(-1).status !== row.status) history.push({status:row.status,at:null});
   return history;
@@ -599,7 +601,7 @@ export async function api(request, env) {
   if((path==="/api/pickup-pass"&&method==="GET")||passArrival){
     const pass=request.headers.get("X-Pickup-Pass");
     const load=passArrival?reportPickupPassArrival:readPickupPass;
-    const row=uuid.test(pass)?await load(db,pass,Date.now()):null;
+    const row=uuid.test(pass)?await load(db,pass,Date.now(),url.searchParams.get("handoff")==="1"):null;
     return row?json(row):fail("代取連結已失效，請向原訂餐人確認。",404);
   }
   if(path==="/api/ticket/pickup-pass"&&["GET","POST","PATCH"].includes(method)){
@@ -943,6 +945,19 @@ export async function api(request, env) {
     if (id === null) return fail("請輸入有效的取餐號碼");
     const row = await db.prepare(`${selectOrders} WHERE id=? AND mode='pickup'`).bind(id).first();
     return row ? json(receipt(row)) : fail("找不到這張自取餐單",404);
+  }
+  if(path==="/api/kitchen/pickup-pass-handoff"&&["GET","PATCH"].includes(method)){
+    const id=collectionId(url),proof=/^([1-9]\d{0,15})\.(.+)$/.exec(request.headers.get("X-Pickup-Pass")??"");
+    const revision=Number(proof?.[1]),pass=proof?.[2];
+    if(id===null||url.searchParams.getAll("id").length!==1||!Number.isSafeInteger(revision)||!uuid.test(pass))
+      return fail("請重新掃描親友出示的完整代取 QR 碼。");
+    const now=Date.now(),unavailable=()=>fail("這張代取 QR 碼已失效或餐單狀態已更新，請重新核對。",409);
+    if(method==="PATCH"){
+      const saved=await completeStaffPickupPass(db,id,pass,revision,now);
+      return saved?json({id,status:"completed",completedAt:saved.completedAt}):unavailable();
+    }
+    const row=await readStaffPickupPass(db,selectOrders,id,pass,revision,now);
+    return row?json(receipt(row)):unavailable();
   }
   if (path === "/api/kitchen/pickup-booking" && method === "GET") {
     const id=collectionId(url);

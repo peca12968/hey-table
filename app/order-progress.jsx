@@ -14,8 +14,9 @@ export default function OrderProgress({history}){
   if(!history?.length)return null;
   return <section className="receiptProgress" aria-labelledby="receipt-progress">
     <h2 id="receipt-progress">餐單進度</h2>
-    <ol role="list">{history.map(({status,at,actor},index)=><li key={index} aria-current={index===history.length-1?"step":undefined}>
-      <span>{status==="cancelled"?(cancellationLabels[actor]??progressLabels[status]):progressLabels[status]}</span>
+    <ol role="list">{history.map(({status,at,actor,handoff},index)=><li key={index} aria-current={index===history.length-1?"step":undefined}>
+      <span>{handoff==="pickup-pass"?"親友代取已交餐":
+        status==="cancelled"?(cancellationLabels[actor]??progressLabels[status]):progressLabels[status]}</span>
       <ProgressTime at={at}/>
     </li>)}</ol>
   </section>;

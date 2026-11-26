@@ -1015,6 +1015,81 @@ test("a phone can share a revocable pickup pass without sharing the receipt",asy
   }
 });
 
+test("mobile delegate QR requires staff sign-in, rejects a reissued pass, and recovers the original handoff",async({page,browser,request})=>{
+  const token=randomUUID(),staffHeaders={Authorization:"Bearer local-test-kitchen"};
+  const created=await request.post("/api/orders",{data:{token,mode:"pickup",note:"本餐單備註",items:[{id:"sencha",qty:1}]}});
+  expect(created.status()).toBe(200);
+  const {id}=await created.json(),number=String(id).padStart(4,"0");
+  for(const [from,to] of [["pending","preparing"],["preparing","ready"]])
+    expect((await request.patch("/api/kitchen/status",{headers:staffHeaders,data:{id,from,to}})).status()).toBe(200);
+  const issue=async(revision)=>{
+    const pass=randomUUID();
+    const issued=await request.post("/api/ticket/pickup-pass",{headers:{"X-Ticket":token},data:{pass,revision}});
+    expect(issued.status()).toBe(200);
+    return pass;
+  };
+  const staff=await browser.newContext({viewport:{width:360,height:780}});
+  try{
+    const first=await issue(0);
+    await page.setViewportSize({width:360,height:780});
+    const scan=async(pass,revision)=>{
+      await page.goto("/pickup-pass#"+pass);
+      await page.getByText("出示取餐 QR 碼",{exact:true}).click();
+      const image=page.getByRole("img",{name:"取餐 "+number+" QR 碼"});
+      const png=PNG.sync.read(await image.screenshot());
+      const decoded=jsQR(new Uint8ClampedArray(png.data),png.width,png.height)?.data;
+      expect(decoded).toBe(new URL("/kitchen?delegate="+number+"#"+revision+"."+pass,page.url()).href);
+      return decoded;
+    };
+    const kitchen=await staff.newPage();
+    const firstCode=await scan(first,1);
+    await kitchen.goto(firstCode);
+    await expect(kitchen.getByRole("heading",{name:"店員登入"})).toBeVisible();
+    await expect(kitchen.getByRole("button",{name:"完成交餐"})).toHaveCount(0);
+    const login=kitchen.getByRole("link",{name:"使用 ChatGPT 登入"});
+    const target="/kitchen?delegate="+number;
+    await expect(login).toHaveAttribute("href","/signin-with-chatgpt?return_to="+encodeURIComponent(target));
+    await kitchen.route("**/signin-with-chatgpt?*",route=>route.fulfill({status:302,headers:{Location:target+"#"}}),{times:1});
+    await login.click();
+    await expect(kitchen).toHaveURL(firstCode);
+    await expect(kitchen.getByRole("heading",{name:"店員登入"})).toBeVisible();
+    await kitchen.getByText("使用自架店員金鑰").click();
+    await kitchen.getByLabel("店員金鑰",{exact:true}).fill("local-test-kitchen");
+    await kitchen.getByRole("button",{name:"登入",exact:true}).click();
+    const submit=kitchen.getByRole("button",{name:"完成交餐"});
+    await expect(kitchen.getByText("已核對親友代取 QR 碼。")).toBeVisible();
+    await expect(submit).toBeEnabled();
+    const second=await issue(1);
+    await submit.click();
+    await expect(kitchen.getByRole("alert")).toContainText("這張代取 QR 碼已失效");
+    await expect(submit).toHaveCount(0);
+    const secondCode=await scan(second,2);
+    await kitchen.goto(secondCode);
+    await expect(submit).toBeEnabled();
+    const api="/api/kitchen/pickup-pass-handoff";
+    let result;
+    await kitchen.route("**"+api+"?*",async route=>{
+      if(route.request().method()!=="PATCH")return route.continue();
+      expect(route.request().headers()["x-pickup-pass"]).toBe("2."+second);
+      expect(route.request().url()).not.toContain(second);
+      const returned=await route.fetch();
+      expect(returned.status()).toBe(200);
+      result=await returned.json();
+      await route.abort("connectionreset");
+    });
+    await submit.click();
+    await expect(kitchen.getByText("這張餐單已憑代取 QR 碼完成交餐。")).toBeVisible();
+    await expect(submit).toHaveCount(0);
+    expect(await kitchen.evaluate(()=>document.documentElement.scrollWidth)).toBe(360);
+    await page.goto("/ticket#"+token);
+    const progress=page.getByRole("listitem").filter({hasText:"親友代取已交餐"});
+    await expect(progress.locator("time")).toHaveAttribute("datetime",new Date(result.completedAt).toISOString());
+  }finally{
+    await staff.close();
+    await request.patch("/api/kitchen/status",{headers:staffHeaders,data:{id,from:"ready",to:"completed"}});
+  }
+});
+
 test("mobile pickup arrival recovers a lost reply and prioritizes ready arrivals for handoff",async({page,browser,request})=>{
   const headers={Authorization:"Bearer local-test-kitchen"};
   const transition=(id,from,to)=>request.patch("/api/kitchen/status",{headers,data:{id,from,to}});
