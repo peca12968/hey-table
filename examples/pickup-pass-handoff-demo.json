@@ -9,6 +9,13 @@
       "revision": 0
     },
     {
+      "stage": "notReceived",
+      "status": 200,
+      "arrived": true,
+      "revision": 0,
+      "canResend": true
+    },
+    {
       "stage": "withdrawn",
       "status": 200,
       "arrived": false,
@@ -25,7 +32,8 @@
       "status": 200,
       "arrived": false,
       "revision": 1,
-      "sameWithdrawal": true
+      "sameWithdrawal": true,
+      "method": "GET"
     },
     {
       "stage": "reportedAgain",

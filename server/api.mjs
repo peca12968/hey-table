@@ -21,7 +21,7 @@ import {canReschedulePickup,capacityAtPickupSlot,editablePickupSlots,orderPortio
   suggestPickupSlot,usedAtPickupSlot} from "./pickup-slots.mjs";
 import {pickupCalendar} from "./pickup-calendar.mjs";
 import {orderDetailsText,ticketTextAttachment} from "./ticket-document.mjs";
-import {latestPickupArrivalWithdrawal,pickupArrivalProjection,reportPickupArrival,withdrawPickupArrival} from "./pickup-arrival.mjs";
+import {latestPickupArrivalWithdrawal,pickupArrivalProjection,readPickupArrivalWithdrawal,reportPickupArrival,withdrawPickupArrival} from "./pickup-arrival.mjs";
 import {completeStaffPickupPass,issuePickupPass,ownerPickupPass,readPickupPass,readStaffPickupPass,reportPickupPassArrival,
   revokePickupPass} from "./pickup-pass.mjs";
 import {acknowledgePickupDelay,pickupDelayColumn,pickupDelayReportRows,readPickupDelayHistory,updatePickupDelay} from "./pickup-delay.mjs";
@@ -814,9 +814,15 @@ export async function api(request, env) {
     if(saved===null)return fail("找不到訂單",404);
     return saved?json(saved):fail("備妥通知已變更，請查看最新餐單。",409);
   }
-  if(path==="/api/ticket/arrival"&&["POST","PATCH"].includes(method)){
+  if(path==="/api/ticket/arrival"&&["GET","POST","PATCH"].includes(method)){
     const token=request.headers.get("X-Ticket");
     if(!uuid.test(token))return fail("找不到訂單",404);
+    if(method==="GET"){
+      const operations=url.searchParams.getAll("operationId");
+      if(operations.length!==1||!uuid.test(operations[0]))return fail("請核對撤回操作識別碼。");
+      const result=await readPickupArrivalWithdrawal(db,token,operations[0].toLowerCase());
+      return result?json(result):fail("找不到訂單",404);
+    }
     if(method==="PATCH"){
       const {revision,arrivedAt,operationId}=input;
       if(!validArrivalRevision(revision)||!Number.isSafeInteger(arrivedAt)||arrivedAt<1||!uuid.test(operationId))

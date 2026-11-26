@@ -41,21 +41,27 @@ export async function buildPickupPassHandoffDemo(){
     const arrival=await call("/pickup-pass/arrival","POST",passProof,{revision:0});
     const initiallyArrived=await arrival.json();
     const correction={revision:0,arrivedAt:initiallyArrived.pickupArrivedAt,operationId:crypto.randomUUID()};
+    const lookup=()=>call("/ticket/arrival?operationId="+correction.operationId,"GET",ownerProof);
+    const missing=await lookup(),beforeSend=await missing.json();
+    assert.equal(beforeSend.withdrawal,null);
+    assert.equal(beforeSend.canWithdraw,true);
+    assert.equal(beforeSend.pickupArrivedAt,initiallyArrived.pickupArrivedAt);
     const withdraw=()=>call("/ticket/arrival","PATCH",ownerProof,correction);
     const corrected=await withdraw(),withdrawal=await corrected.json();
     const stale=await call("/pickup-pass/arrival","POST",passProof,{revision:0});
     const delegateState=await (await call("/pickup-pass","GET",passProof)).json();
-    const repeated=await withdraw(),recorded=await repeated.json();
+    const repeated=await lookup(),recorded=await repeated.json();
     const retry=await call("/pickup-pass/arrival","POST",passProof,{revision:delegateState.pickupArrivalRevision});
     const afterCorrection=await retry.json();
-    assert.deepEqual([arrival.status,corrected.status,stale.status,repeated.status,retry.status],[200,200,409,200,200]);
+    assert.deepEqual([arrival.status,missing.status,corrected.status,stale.status,repeated.status,retry.status],[200,200,200,409,200,200]);
     assert.equal((await stale.json()).code,"arrival_changed");
-    assert.deepEqual(recorded,withdrawal);
+    assert.deepEqual(recorded,{...withdrawal,canWithdraw:false});
     const arrivalState=(stage,response,data)=>({stage,status:response.status,arrived:Number.isSafeInteger(data.pickupArrivedAt),
       revision:data.pickupArrivalRevision??0});
-    const arrivalCorrection=[arrivalState("reported",arrival,initiallyArrived),arrivalState("withdrawn",corrected,withdrawal),
+    const arrivalCorrection=[arrivalState("reported",arrival,initiallyArrived),
+      {...arrivalState("notReceived",missing,beforeSend),canResend:beforeSend.canWithdraw},arrivalState("withdrawn",corrected,withdrawal),
       arrivalState("stale",stale,delegateState),{...arrivalState("recovered",repeated,recorded),
-        sameWithdrawal:recorded.withdrawal.withdrawnAt===withdrawal.withdrawal.withdrawnAt},
+        sameWithdrawal:recorded.withdrawal.withdrawnAt===withdrawal.withdrawal.withdrawnAt,method:"GET"},
       arrivalState("reportedAgain",retry,afterCorrection)];
     assert.equal((await issue(replacement,1)).status,200);
     const rejected=await scan(first,1,"PATCH");

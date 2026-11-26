@@ -1328,7 +1328,7 @@ test("mobile pickup arrival recovers a lost reply and prioritizes ready arrivals
   }
 });
 
-test("mobile pickup arrival withdrawal survives a lost reply and updates the clerk queue",async({page,browser,request})=>{
+test("mobile pickup arrival withdrawal recovers a lost reply across tabs and updates the clerk queue",async({page,browser,request})=>{
   const headers={Authorization:"Bearer local-test-kitchen"},token=randomUUID();
   const placed=await request.post("/api/orders",{data:{token,mode:"pickup",note:"",items:[{id:"sencha",qty:1}]}});
   expect(placed.ok()).toBe(true);
@@ -1368,10 +1368,31 @@ test("mobile pickup arrival withdrawal survives a lost reply and updates the cle
     await page.getByRole("button",{name:"確認撤回",exact:true}).click();
     await expect(page.getByRole("alert")).toContainText("尚未收到撤回結果");
     await expect(card).toHaveCount(0,{timeout:12000});
-    await page.getByRole("button",{name:"重試撤回",exact:true}).click();
-    await expect(page.getByText("已撤回到店回報。到店後可以再次回報。")).toBeVisible();
-    expect(attempts).toEqual([attempts[0],attempts[0]]);
-    expect(results).toEqual([results[0],results[0]]);
+    await page.reload();
+    const lookup=page.getByRole("button",{name:"查回撤回結果",exact:true});
+    await expect(lookup).toBeVisible();
+    const second=await page.context().newPage();
+    const requests=[];
+    second.on("request",req=>{
+      const url=new URL(req.url());
+      if(url.pathname==="/api/ticket/arrival")requests.push([req.method(),url.searchParams.get("operationId")]);
+    });
+    try{
+      await second.goto("/ticket#"+token);
+      const retry=second.getByRole("button",{name:"查回撤回結果",exact:true});
+      await expect(retry).toBeVisible();
+      expect(requests).toEqual([]);
+      const keys=await second.evaluate(()=>Object.keys(localStorage).filter(key=>key.startsWith("he-ri-arrival-withdrawal:")));
+      expect(keys).toHaveLength(1);
+      expect(keys[0]).not.toContain(token);
+      expect(await second.evaluate(key=>JSON.parse(localStorage.getItem(key)),keys[0])).toEqual(attempts[0]);
+      await retry.click();
+      await expect(second.getByText("已撤回到店回報。到店後可以再次回報。")).toBeVisible();
+      await expect(lookup).toHaveCount(0);
+      expect(requests).toEqual([["GET",attempts[0].operationId]]);
+    }finally{await second.close();}
+    expect(attempts).toHaveLength(1);
+    expect(results).toHaveLength(1);
     const detail=await staff.newPage();
     await detail.goto("/kitchen/order-detail?id="+number);
     await expect(detail.getByText("顧客撤回到店回報",{exact:true})).toBeVisible();
@@ -1384,6 +1405,48 @@ test("mobile pickup arrival withdrawal survives a lost reply and updates the cle
     await expect(withdraw).toHaveCount(0);
   }finally{
     await staff.close();
+    await advance("ready","completed");
+  }
+});
+
+test("a withdrawal that never reached the server can be looked up and explicitly resent after reload",async({page,request})=>{
+  const headers={Authorization:"Bearer local-test-kitchen"},token=randomUUID();
+  const placed=await request.post("/api/orders",{data:{token,mode:"pickup",note:"",items:[{id:"sencha",qty:1}]}});
+  expect(placed.ok()).toBe(true);
+  const {id}=await placed.json();
+  const advance=(from,to)=>request.patch("/api/kitchen/status",{headers,data:{id,from,to}});
+  expect((await advance("pending","preparing")).ok()).toBe(true);
+  try{
+    const attempts=[];
+    await page.route("**/api/ticket/arrival",async route=>{
+      if(route.request().method()!=="PATCH")return route.continue();
+      attempts.push(route.request().postDataJSON());
+      if(attempts.length===1)return route.abort();
+      return route.continue();
+    });
+    await page.goto("/ticket#"+token);
+    await page.getByRole("button",{name:"我已到店",exact:true}).click();
+    await page.getByRole("button",{name:"撤回到店回報",exact:true}).click();
+    await page.getByRole("button",{name:"確認撤回",exact:true}).click();
+    await expect(page.getByRole("alert")).toContainText("尚未收到撤回結果");
+    await page.reload();
+    const lookup=page.getByRole("button",{name:"查回撤回結果",exact:true});
+    const resend=page.getByRole("button",{name:"重送原撤回",exact:true});
+    await expect(lookup).toBeVisible();
+    await expect(resend).toHaveCount(0);
+    await lookup.click();
+    await expect(resend).toBeVisible();
+    expect(attempts).toHaveLength(1);
+    await expect(page.getByText(/已回報到店/)).toBeVisible();
+    await resend.click();
+    await expect(page.getByText("已撤回到店回報。到店後可以再次回報。")).toBeVisible();
+    expect(attempts).toEqual([attempts[0],attempts[0]]);
+    await page.reload();
+    await expect(page.getByRole("button",{name:"我已到店",exact:true})).toBeVisible();
+    await expect(lookup).toHaveCount(0);
+  }finally{
+    await page.unrouteAll({behavior:"wait"});
+    await advance("preparing","ready");
     await advance("ready","completed");
   }
 });

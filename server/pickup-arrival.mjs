@@ -7,6 +7,25 @@ export const pickupArrivalColumns=`orders.id,orders.pickup_arrived_at AS pickupA
 export const latestPickupArrivalWithdrawal=`(SELECT json_object('previousArrivedAt',previous_arrived_at,'withdrawnAt',withdrawn_at)
   FROM pickup_arrival_withdrawals WHERE order_id=orders.id ORDER BY revision DESC LIMIT 1) AS pickup_arrival_withdrawal`;
 
+function withdrawalLookup(db,token,operationId){
+  return db.prepare(`SELECT ${pickupArrivalColumns},orders.mode,(${eligible}) AS eligible,
+    CASE WHEN withdrawals.revision IS NOT NULL THEN json_object('revision',withdrawals.revision,
+      'previousArrivedAt',withdrawals.previous_arrived_at,'withdrawnAt',withdrawals.withdrawn_at) END AS saved
+    FROM orders LEFT JOIN pickup_arrival_withdrawals AS withdrawals
+    ON withdrawals.order_id=orders.id AND withdrawals.operation_id=?
+    WHERE orders.token=?`).bind(operationId,token);
+}
+
+function withdrawalState(row){
+  const {eligible,mode,saved,...arrival}=row;
+  return {...arrival,canWithdraw:Boolean(eligible&&arrival.pickupArrivedAt!==null),withdrawal:saved?JSON.parse(saved):null};
+}
+
+export async function readPickupArrivalWithdrawal(db,token,operationId){
+  const row=await withdrawalLookup(db,token,operationId).first();
+  return row?.mode==="pickup"?withdrawalState(row):null;
+}
+
 export function pickupArrivalProjection(row){
   const {pickupArrivalRevision,...details}=row;
   return pickupArrivalRevision>0?{...details,pickupArrivalRevision}:details;
@@ -22,7 +41,7 @@ export async function reportPickupArrival(db,token,revision,now){
 }
 
 export async function withdrawPickupArrival(db,token,{revision,arrivedAt,operationId},now){
-  const [,,saved,current]=await db.batch([
+  const [,,current]=await db.batch([
     db.prepare(`INSERT INTO pickup_arrival_withdrawals(order_id,revision,operation_id,previous_arrived_at,withdrawn_at)
       SELECT id,?,?,pickup_arrived_at,MAX(?,pickup_arrived_at) ${orderScope} AND ${eligible}
       AND pickup_arrival_revision=? AND pickup_arrived_at=?
@@ -31,14 +50,11 @@ export async function withdrawPickupArrival(db,token,{revision,arrivedAt,operati
       WHERE token=? AND pickup_arrival_revision=? AND pickup_arrived_at=? AND EXISTS (
         SELECT 1 FROM pickup_arrival_withdrawals WHERE order_id=orders.id AND revision=? AND operation_id=?
       )`).bind(token,revision,arrivedAt,revision+1,operationId),
-    db.prepare(`SELECT withdrawals.revision,withdrawals.previous_arrived_at AS previousArrivedAt,
-        withdrawals.withdrawn_at AS withdrawnAt
-      FROM orders JOIN pickup_arrival_withdrawals AS withdrawals ON withdrawals.order_id=orders.id
-      WHERE orders.token=? AND withdrawals.operation_id=?`).bind(token,operationId),
-    db.prepare(`SELECT ${pickupArrivalColumns} ${orderScope}`).bind(token),
+    withdrawalLookup(db,token,operationId),
   ]);
-  const row=current.results[0],withdrawal=saved.results[0];
+  const row=current.results[0];
   if(!row)return null;
+  const {canWithdraw,withdrawal,...arrival}=withdrawalState(row);
   if(withdrawal?.revision!==revision+1||withdrawal.previousArrivedAt!==arrivedAt)return false;
-  return {...row,withdrawal};
+  return {...arrival,withdrawal};
 }

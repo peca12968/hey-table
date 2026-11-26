@@ -3802,10 +3802,18 @@ test("pickup arrival withdrawal preserves old data, rejects stale devices and re
   const delegated=revision=>call("/pickup-pass/arrival",delegate,"POST",{revision});
   const first={revision:0,arrivedAt:now,operationId:crypto.randomUUID()};
   const withdraw=(operation,headers=owner)=>call("/ticket/arrival",headers,"PATCH",operation);
+  const recover=(operation,headers=owner)=>call("/ticket/arrival?operationId="+operation.operationId,headers);
   const details=async()=>await (await call("/kitchen/order-detail?id="+id,staff)).json();
   const auditCount=()=>db.sqlite.prepare("SELECT COUNT(*) AS count FROM pickup_arrival_withdrawals").get().count;
   assert.equal((await details()).pickupArrivedAt,now);
   assert.equal((await call("/ticket/pickup-pass",owner,"POST",{revision:0,pass})).status,200);
+  assert.equal((await recover(first,{"X-Ticket":pass})).status,404);
+  assert.equal((await recover(first,delegate)).status,404);
+  assert.equal((await call("/ticket/arrival?operationId="+first.operationId+"&operationId="+first.operationId,owner)).status,400);
+  const missing=await recover(first);
+  assert.equal(missing.headers.get("Cache-Control"),"no-store");
+  assert.deepEqual(await missing.json(),{id,pickupArrivedAt:now,pickupArrivalRevision:0,canWithdraw:true,withdrawal:null});
+  assert.equal(auditCount(),0);
   assert.equal((await withdraw(first,{"X-Ticket":pass})).status,404);
   assert.equal((await withdraw(first,{...owner,Origin:"https://other.example"})).status,403);
   assert.equal((await withdraw({...first,arrivedAt:now-1})).status,409);
@@ -3826,6 +3834,10 @@ test("pickup arrival withdrawal preserves old data, rejects stale devices and re
   const logged=await details();
   assert.equal(Object.hasOwn(logged,"pickupArrivedAt"),false);
   assert.deepEqual(logged.pickupArrivalWithdrawal,{previousArrivedAt:now,withdrawnAt:now});
+  assert.deepEqual(await (await recover(winningOperation)).json(),{...original,canWithdraw:false});
+  assert.deepEqual(await (await recover([rival,first][winnerIndex])).json(),{
+    ...original,canWithdraw:false,withdrawal:null,
+  });
   assert.deepEqual(await (await withdraw(winningOperation)).json(),original);
   for(const stale of [await arrive(owner,undefined),await arrive(owner,0),await delegated(0)]){
     assert.equal(stale.status,409);
@@ -3838,11 +3850,13 @@ test("pickup arrival withdrawal preserves old data, rejects stale devices and re
   assert.equal((await details()).pickupArrivedAt,now);
   const replay=await (await withdraw(winningOperation)).json();
   assert.deepEqual(replay,{...original,pickupArrivedAt:now});
+  assert.deepEqual(await (await recover(winningOperation)).json(),{...replay,canWithdraw:true});
   assert.equal(auditCount(),1);
   now+=5000;
   assert.equal((await call("/kitchen/status",staff,"PATCH",{id,from:"ready",to:"completed"})).status,200);
   assert.equal((await withdraw({...first,revision:1,operationId:crypto.randomUUID()})).status,409);
   assert.equal((await details()).pickupArrivedAt,first.arrivedAt);
+  assert.deepEqual(await (await recover(winningOperation)).json(),{...replay,canWithdraw:false});
   assert.equal(auditCount(),1);
 });
 
