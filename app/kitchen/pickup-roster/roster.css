@@ -13,6 +13,7 @@
 .rosterWindow th,.rosterWindow td{padding:8px 5px;border-bottom:1px solid var(--line);vertical-align:top}
 .rosterWindow thead{background:var(--pale)}
 .rosterWindow small{display:block;color:var(--muted);font-weight:400}
+.rosterWindow .rosterFollowUp{margin-top:3px;color:var(--ink);font-weight:650}
 @media print{
   .pickupRoster .rosterControl{display:none}
   .pickupRoster .rosterWindow{padding:6pt 0;box-shadow:none;border:0;background:white}

@@ -57,7 +57,7 @@ function kitchenFocus(search){
     (kind!=="delegate"||query.getAll(kind).length===1);
   const day=query.get("date"),slot=query.get("slot");
   const start=pickupSlotsForDay(day).find(value=>String(value)===slot)??null;
-  const roster=kind==="booking"&&businessDayRange(day)?pickupRosterPath(day,start):"/kitchen/pickup-roster";
+  const roster=kind==="booking"&&businessDayRange(day)?pickupRosterPath(day,start,query.get("review")):"/kitchen/pickup-roster";
   return {kind,number:valid?numberOf(id):"",roster,signInTarget:kind==="delegate"?"/kitchen?delegate="+numberOf(id):"/kitchen"+search};
 }
 

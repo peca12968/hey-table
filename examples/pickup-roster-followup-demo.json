@@ -1,0 +1,164 @@
+{
+  "format": "hey-table.pickup-roster-followup-demo.v1",
+  "scenes": [
+    {
+      "stage": "before",
+      "snapshot": {
+        "date": "2026-11-26",
+        "capturedAt": 1795664699999,
+        "accepting": true,
+        "totals": {
+          "bookings": 3,
+          "portions": 3,
+          "cancelled": 0
+        },
+        "windows": [
+          {
+            "start": 1795663800000,
+            "portions": 3,
+            "orders": [
+              {
+                "id": 71,
+                "source": "online",
+                "status": "ready",
+                "paymentMethod": "cash",
+                "paymentState": "unpaid",
+                "portions": 1
+              },
+              {
+                "id": 72,
+                "source": "online",
+                "status": "ready",
+                "paymentMethod": "cash",
+                "paymentState": "unpaid",
+                "portions": 1
+              },
+              {
+                "id": 73,
+                "source": "online",
+                "status": "ready",
+                "paymentMethod": "cash",
+                "paymentState": "unpaid",
+                "portions": 1
+              }
+            ]
+          }
+        ],
+        "followUp": {
+          "unreported": 0,
+          "arrived": 0
+        }
+      }
+    },
+    {
+      "stage": "due",
+      "snapshot": {
+        "date": "2026-11-26",
+        "capturedAt": 1795664700000,
+        "accepting": true,
+        "totals": {
+          "bookings": 3,
+          "portions": 3,
+          "cancelled": 0
+        },
+        "windows": [
+          {
+            "start": 1795663800000,
+            "portions": 3,
+            "orders": [
+              {
+                "id": 71,
+                "source": "online",
+                "status": "ready",
+                "paymentMethod": "cash",
+                "paymentState": "unpaid",
+                "portions": 1,
+                "followUp": {
+                  "state": "unreported",
+                  "readyAt": 1795663920000,
+                  "dueAt": 1795664700000,
+                  "arrivedAt": null
+                }
+              },
+              {
+                "id": 72,
+                "source": "online",
+                "status": "ready",
+                "paymentMethod": "cash",
+                "paymentState": "unpaid",
+                "portions": 1,
+                "followUp": {
+                  "state": "arrived",
+                  "readyAt": 1795664100000,
+                  "dueAt": 1795664700000,
+                  "arrivedAt": 1795663980000
+                }
+              },
+              {
+                "id": 73,
+                "source": "online",
+                "status": "ready",
+                "paymentMethod": "cash",
+                "paymentState": "unpaid",
+                "portions": 1
+              }
+            ]
+          }
+        ],
+        "followUp": {
+          "unreported": 1,
+          "arrived": 1
+        }
+      }
+    },
+    {
+      "stage": "resolved",
+      "snapshot": {
+        "date": "2026-11-26",
+        "capturedAt": 1795664760000,
+        "accepting": true,
+        "totals": {
+          "bookings": 3,
+          "portions": 3,
+          "cancelled": 0
+        },
+        "windows": [
+          {
+            "start": 1795663800000,
+            "portions": 3,
+            "orders": [
+              {
+                "id": 71,
+                "source": "online",
+                "status": "ready",
+                "paymentMethod": "cash",
+                "paymentState": "unpaid",
+                "portions": 1
+              },
+              {
+                "id": 72,
+                "source": "online",
+                "status": "completed",
+                "paymentMethod": "cash",
+                "paymentState": "unpaid",
+                "portions": 1
+              },
+              {
+                "id": 73,
+                "source": "online",
+                "status": "ready",
+                "paymentMethod": "cash",
+                "paymentState": "unpaid",
+                "portions": 1
+              }
+            ]
+          }
+        ],
+        "followUp": {
+          "unreported": 0,
+          "arrived": 0
+        }
+      }
+    }
+  ]
+}

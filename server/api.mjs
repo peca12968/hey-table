@@ -1011,13 +1011,15 @@ export async function api(request, env) {
     const capturedAt=Date.now(),date=url.searchParams.get("date")??businessDate(capturedAt);
     const range=businessDayRange(date);
     if(!range)return fail("請選擇有效的取餐日期。");
+    const reviews=url.searchParams.getAll("followUp"),includeFollowUp=reviews.length===1&&reviews[0]==="1";
+    if(reviews.length&&!includeFollowUp)return fail("請選擇有效的取餐追蹤選項。");
     const slot=url.searchParams.get("slot");
     if(slot!==null){
       const start=pickupSlotsForDay(date).find(value=>String(value)===slot);
       if(start===undefined)return fail("請選擇這個日期的取餐時段。");
-      return json(await pickupRoster(db,date,[start,start+1],capturedAt));
+      return json(await pickupRoster(db,date,[start,start+1],capturedAt,includeFollowUp));
     }
-    return json(await pickupRoster(db,date,range,capturedAt));
+    return json(await pickupRoster(db,date,range,capturedAt,includeFollowUp));
   }
   if(path==="/api/kitchen/return-ledger-review-history"&&method==="GET"){
     const dates=url.searchParams.getAll("date"),befores=url.searchParams.getAll("before");

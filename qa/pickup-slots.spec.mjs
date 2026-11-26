@@ -956,6 +956,55 @@ test("staff can print the selected pickup date with the same mobile roster and s
   }
 });
 
+test("mobile pickup roster follows arrivals and downloads the selected snapshot",async({page})=>{
+  const fixture=JSON.parse(await readFile(new URL("../examples/pickup-roster-followup-demo.json",import.meta.url),"utf8"));
+  const snapshot=fixture.scenes[1].snapshot,slot=snapshot.windows[0].start,date=snapshot.date;
+  const path="/kitchen/pickup-roster?date="+date+"&slot="+slot,api="/api/kitchen/pickup-roster";
+  const [unreported,arrived,recent]=snapshot.windows[0].orders;
+  let captures=0,current=snapshot;
+  await page.setViewportSize({width:360,height:780});
+  await page.addInitScript(()=>sessionStorage.setItem("he-ri-staff","local-test-kitchen"));
+  await page.route(url=>url.pathname===api,route=>{
+    expect(new URL(route.request().url()).searchParams.get("followUp")).toBe("1");
+    captures++;
+    return route.fulfill({json:current});
+  });
+  const row=id=>page.getByRole("rowheader",{name:new RegExp("#"+String(id).padStart(4,"0"))});
+  await page.goto(path);
+  await expect(row(recent.id)).toBeVisible();
+  const review=page.getByLabel("取餐追蹤");
+  await review.selectOption("unreported");
+  await expect(page).toHaveURL(path+"&review=unreported");
+  await expect(row(unreported.id)).toBeVisible();
+  await expect(row(arrived.id)).toHaveCount(0);
+  await expect(row(recent.id)).toHaveCount(0);
+  expect(captures).toBe(1);
+  const [file]=await Promise.all([page.waitForEvent("download"),page.getByRole("button",{name:"下載追蹤清單 CSV"}).click()]);
+  const csv=await readFile(await file.path(),"utf8");
+  expect(csv).toContain('"逾時未回報到店"');
+  expect(csv).toContain('"'+String(unreported.id).padStart(4,"0")+'"');
+  expect(csv).toContain(new Date(snapshot.capturedAt).toISOString());
+  expect(csv).not.toContain('"'+String(arrived.id).padStart(4,"0")+'"');
+  await review.selectOption("arrived");
+  await expect(row(arrived.id)).toBeVisible();
+  await expect(row(unreported.id)).toHaveCount(0);
+  expect(captures).toBe(1);
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBe(360);
+  const booking="/api/kitchen/pickup-booking";
+  await page.route(url=>url.pathname===booking,route=>route.fulfill({json:{...arrived,mode:"pickup",
+    created:slot-3600_000,pickupSlot:slot,total:45,items:[{id:"sencha",name:"煎茶",qty:1}]}}));
+  await row(arrived.id).getByRole("link").click();
+  await expect(page.getByRole("heading",{name:"自取預約餐單"})).toBeVisible();
+  await page.getByRole("link",{name:"返回自取預約清單"}).click();
+  await expect(page).toHaveURL(path+"&review=arrived");
+  await expect(review).toHaveValue("arrived");
+  await expect(row(arrived.id)).toBeVisible();
+  current=fixture.scenes[2].snapshot;
+  await page.getByRole("button",{name:"重新擷取"}).click();
+  await expect(page.getByText("這個時段沒有符合此追蹤條件的餐單。")).toBeVisible();
+  await expect(page.getByRole("button",{name:"下載追蹤清單 CSV"})).toBeDisabled();
+});
+
 test("a mobile pickup receipt downloads the current calendar file and its cancellation",async({page})=>{
   const token=randomUUID(),start=Date.parse("2026-11-25T12:00:00+08:00"),created=start-3_600_000;
   const order={id:233,mode:"pickup",table:null,pickupSlot:start,pickupChanges:[],canReschedulePickup:true,

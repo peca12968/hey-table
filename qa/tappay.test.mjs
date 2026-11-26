@@ -22,6 +22,7 @@ import {applyDemoMigrations} from "../scripts/apply-demo-migrations.mjs";
 import {buildReturnLedgerDemo} from "../scripts/return-ledger-demo.mjs";
 import {buildPaymentAttentionDemo} from "../scripts/payment-attention-demo.mjs";
 import {buildPickupPassHandoffDemo} from "../scripts/pickup-pass-handoff-demo.mjs";
+import {buildPickupRosterFollowUpDemo} from "../scripts/pickup-roster-followup-demo.mjs";
 import {buildCustomerPaymentRecoveryDemo} from "../scripts/customer-payment-recovery-demo.mjs";
 import {buildCartSupplyReviewDemo} from "../scripts/cart-supply-review-demo.mjs";
 import {bookablePickupSlots} from "../lib/pickup-slots.mjs";
@@ -2877,6 +2878,59 @@ test("staff payment review resolves old completed orders by Taipei creation date
   assert.deepEqual((await (await review(cash)).json()).cashReceipt,(await receipt.json()).cashReceipt);
   const report=await (await call("/daily?date="+day+"&paymentSummary=1")).json();
   assert.deepEqual(report.paymentSummary.groups.find(group=>group.method==="cash").review,[]);
+});
+
+test("pickup roster follows booked slot, kitchen readiness and customer arrival in one capture",async t=>{
+  const db=database();
+  t.after(()=>db.sqlite.close());
+  const date="2026-11-25",slot=Date.parse(date+"T11:30:00+08:00"),minute=60_000;
+  const cutoff=slot+15*minute;
+  let now=cutoff-1;
+  t.mock.method(Date,"now",()=>now);
+  const headers={Authorization:"Bearer fixture-staff"};
+  const endpoint="https://order.example/api/kitchen/pickup-roster?date="+date;
+  const call=(suffix="",access=headers)=>api(new Request(endpoint+suffix,{headers:access}),{DB:db,STAFF_KEY:"fixture-staff"});
+  const add=db.sqlite.prepare(`INSERT INTO orders(id,token,mode,status,items,note,total,created,pickup_slot,status_history,
+    pickup_arrived_at,payment_method) VALUES (?,?,'pickup',?,'[]','private note',45,?,?,?,?,?)`);
+  const seed=(id,readyAt,arrivedAt=null,status="ready",method="cash")=>add.run(id,crypto.randomUUID(),status,
+    slot-30*minute,slot,readyAt===null?null:JSON.stringify([{from:"preparing",status:"ready",at:readyAt}]),arrivedAt,method);
+  seed(1,slot+2*minute);
+  seed(2,slot+5*minute,slot+3*minute);
+  seed(3,slot+14*minute);
+  seed(4,null);
+  seed(5,slot,cutoff+1);
+  seed(6,slot,null,"ready","line_pay");
+  seed(7,slot,null,"completed");
+  seed(8,slot,null,"preparing");
+  seed(9,slot,slot+5*minute);
+  assert.equal((await call("&followUp=1",{})).status,403);
+  for(const invalid of ["&followUp=0","&followUp=1&followUp=1"])assert.equal((await call(invalid)).status,400);
+  const read=async(suffix="")=>(await (await call("&followUp=1"+suffix)).json());
+  assert.deepEqual((await read()).followUp,{unreported:0,arrived:0});
+  now=cutoff;
+  const snapshot=await read("&slot="+slot);
+  assert.deepEqual(snapshot.followUp,{unreported:1,arrived:2});
+  const flagged=snapshot.windows.flatMap(window=>window.orders).filter(order=>order.followUp);
+  assert.deepEqual(flagged.map(({id,followUp})=>[id,followUp]),[
+    [1,{state:"unreported",readyAt:slot+2*minute,dueAt:cutoff,arrivedAt:null}],
+    [2,{state:"arrived",readyAt:slot+5*minute,dueAt:cutoff,arrivedAt:slot+3*minute}],
+    [9,{state:"arrived",readyAt:slot,dueAt:cutoff,arrivedAt:slot+5*minute}],
+  ]);
+  assert.equal((await (await call()).json()).followUp,undefined);
+  assert.ok(!/private|status_history|token/.test(JSON.stringify(snapshot)));
+  assert.deepEqual((await read("&slot="+(slot+15*minute))).followUp,{unreported:0,arrived:0});
+  db.sqlite.prepare("UPDATE orders SET pickup_arrived_at=? WHERE id=1").run(cutoff);
+  db.sqlite.prepare("UPDATE orders SET status='completed' WHERE id IN (2,9)").run();
+  assert.deepEqual((await read()).followUp,{unreported:0,arrived:0});
+  now=cutoff+10*minute;
+  const last=await read();
+  assert.deepEqual(last.followUp,{unreported:1,arrived:1});
+  assert.deepEqual(last.windows[0].orders.filter(order=>order.followUp).map(order=>order.id),[1,3]);
+});
+
+test("pickup roster follow-up sample comes from the current roster service",async()=>{
+  const saved=JSON.parse(readFileSync(new URL("../examples/pickup-roster-followup-demo.json",import.meta.url),"utf8"));
+  assert.deepEqual(await buildPickupRosterFollowUpDemo(),saved);
 });
 
 test("daily pickup punctuality uses the current booked date, cutoff and recorded readiness",async t=>{
