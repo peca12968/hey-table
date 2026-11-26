@@ -43,6 +43,12 @@
 .receiptProgress li{display:flex;justify-content:space-between;align-items:baseline;flex-wrap:wrap;gap:2px 12px;padding:4px 0}
 .receiptProgress li[aria-current=step]{font-weight:700}
 .receiptProgress time,.receiptProgress small{font-size:.84rem;font-variant-numeric:tabular-nums;color:var(--muted)}
+.pickupHistory summary{padding:6px 0;color:var(--green);font-weight:700;cursor:pointer}
+.pickupHistory dl{display:grid;gap:6px;margin:8px 0 12px}
+.pickupHistory dl div,.pickupHistoryMeta,.pickupHistoryRoute{display:flex;flex-wrap:wrap;justify-content:space-between;gap:4px 12px}
+.pickupHistory dd{margin:0}.pickupHistory li{display:grid;gap:4px;padding:8px 0;border-top:1px solid var(--line)}
+.pickupHistory .pickupHistoryWindow{color:var(--ink);font-size:inherit}
+.pickupHistoryRoute{justify-content:flex-start}
 .section .kitchenCancel{align-items:end;max-width:100%}
 .section .kitchenCancel button{margin-top:0}
 .kitchenCancel label{display:grid;gap:4px}

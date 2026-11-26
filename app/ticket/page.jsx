@@ -14,6 +14,7 @@ import CancelReceipt from "./cancel-receipt";
 import ReceiptNote from "./receipt-note";
 import ReschedulePickup from "../reschedule-pickup";
 import PickupCalendar from "./pickup-calendar";
+import PickupChangeHistory from "../pickup-change-history";
 import PickupArrival from "../pickup-arrival";
 import PickupCode from "../pickup-code";
 import PickupPassShare from "./pickup-pass-share";
@@ -112,6 +113,7 @@ export default function Ticket(){
     {error&&<p role="status">{error}</p>}{order&&<><div className="receiptMeta"><Mode table={order.table} source={order.source}/><b aria-live="polite">{order.status==='pending'&&!payable&&!refundBeforeHandoff?'等待付款':labels[order.status]}</b></div>
     <PickupAppointment start={order.pickupSlot}/>
     {latestPickup&&<p className="muted" role="status">{latestPickup.actor==="staff"?"店家已將取餐時段從":"取餐時段已從"} {previousWindow} 改到 {newWindow}。</p>}
+    <PickupChangeHistory key={"pickup-history-"+route.token} order={order}/>
     {calendarStatus&&<PickupCalendar key={"pickup-calendar-"+route.token+calendarStatus} id={order.id} token={route.token}
       status={calendarStatus} onChange={refreshReceipt}/>}
     {order.pickupSlot!=null&&<ReschedulePickup key={"pickup-reschedule-"+route.token} order={order} onChange={refreshReceipt} ticket={route.token}

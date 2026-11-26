@@ -2515,11 +2515,34 @@ test("reschedule lookup finds the original transition even after later changes a
   assert.deepEqual(await (await findStaff()).json(),result);
   assert.deepEqual(await (await find({...change,to:latest})).json(),{state:"superseded",pickupSlot:latest,revision:2});
   assert.equal(JSON.parse(stored().pickup_changes).length,2);
+  const history=[{from,to,at:now},{from:to,to:latest,at:now,actor:"staff"}];
+  const bookingPath="kitchen/pickup-booking?id="+id;
+  assert.equal((await call(bookingPath)).status,403);
+  assert.equal((await call("ticket?progress=1",{"X-Ticket":crypto.randomUUID()})).status,404);
+  const staffBooking=await call(bookingPath,staff);
+  assert.equal(staffBooking.headers.get("Cache-Control"),"no-store");
+  assert.deepEqual((await staffBooking.json()).pickupChanges,history);
+  assert.deepEqual((await (await call("ticket?progress=1")).json()).pickupChanges,history);
+  const board=await (await call("kitchen",staff)).json();
+  assert.equal(board.find(order=>order.id===id).pickupChanges,undefined);
+  const document=await call("ticket/order-details");
+  assert.equal(document.headers.get("Cache-Control"),"private, no-store");
+  const details=await document.text();
+  assert.match(details,/預約取餐 11\/27 11:30～11:45/);
+  assert.match(details,/改期歷程（台灣時間）\r\n最初預約 11\/27 11:00～11:15/);
+  assert.match(details,/第 2 次 · 店員改期/);
+  assert.match(details,/第 1 次 · 顧客改期/);
+  assert.ok(details.indexOf("第 2 次")<details.indexOf("第 1 次"));
+  assert.ok(!details.includes(token));
   db.sqlite.prepare("UPDATE orders SET payment_method='line_pay',payment_due_at=? WHERE id=?").run(now,id);
   assert.deepEqual(await (await find({from:latest,to:latest+900_000,revision:2})).json(),
     {state:"superseded",pickupSlot:latest,revision:2});
   assert.equal(stored().status,"pending");
   assert.deepEqual(await (await find()).json(),result);
+  const expired=await (await call(bookingPath,staff)).json();
+  assert.equal(expired.status,"cancelled");
+  assert.deepEqual([expired.pickupSlot,expired.pickupChanges],[latest,history]);
+  assert.equal(expired.pickupUpcoming,undefined);
 });
 
 test("staff pickup rescheduling preserves receipt and payment and requires the new version to prepare",async t=>{

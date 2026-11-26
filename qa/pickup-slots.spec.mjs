@@ -1257,3 +1257,84 @@ for(const staffSide of [false,true]){
     }
   });
 }
+
+test("receipt and staff booking retain ordered cross-day pickup history through cancellation and download",async({page,request})=>{
+  const date=businessDate(Date.now()+3*86_400_000),later=businessDate(Date.now()+4*86_400_000);
+  const original=Date.parse(date+"T15:00:00+08:00"),first=original+900_000;
+  const latest=Date.parse(later+"T16:15:00+08:00"),token=randomUUID(),ticket={"X-Ticket":token};
+  const staff={Authorization:"Bearer local-test-kitchen"},operator=await page.context().newPage();
+  let booked=false;
+  try{
+    const created=await request.post("/api/orders",{data:{token,mode:"pickup",note:"私密餐單備註",pickupSlot:original,
+      paymentMethod:"cash",items:[{id:"sencha",qty:1,note:"私密餐點備註"}]}});
+    expect(created.ok()).toBe(true);
+    booked=true;
+    const {id}=await created.json();
+    const number=String(id).padStart(4,"0"),orderPath="/kitchen?booking="+number;
+    for(const browser of [page,operator])await browser.setViewportSize({width:360,height:780});
+    await operator.addInitScript(()=>sessionStorage.setItem("he-ri-staff","local-test-kitchen"));
+    await page.goto("/ticket#"+token);
+    await expect(page.locator(".pickupSlotTime time")).toHaveAttribute("datetime",new Date(original).toISOString());
+    await expect(page.getByText(/改期歷程/)).toHaveCount(0);
+
+    expect((await request.post("/api/ticket/reschedule",{headers:ticket,data:{from:original,to:first,revision:0}})).ok()).toBe(true);
+    await operator.goto("/kitchen");
+    await operator.getByRole("button",{name:"預約自取",exact:true}).click();
+    await operator.getByRole("searchbox",{name:"取餐號碼"}).fill(number);
+    const link=operator.getByRole("link",{name:"查看餐單 #"+number+" 的改期歷程"});
+    await expect(link).toHaveAttribute("href",orderPath);
+    await link.click();
+    await expect(operator).toHaveURL(new RegExp("booking="+number+"$"));
+    await page.getByRole("button",{name:"更新進度",exact:true}).click();
+
+    const summary=(browser,count)=>browser.getByText("改期歷程（"+count+" 次）",{exact:true});
+    const history=browser=>browser.locator("details.pickupHistory");
+    const entries=browser=>history(browser).getByRole("list",{name:"改期紀錄"}).getByRole("listitem");
+    for(const browser of [page,operator]){
+      await expect(summary(browser,1)).toBeVisible();
+      await expect(entries(browser)).toHaveCount(0);
+      await summary(browser,1).focus();
+      await summary(browser,1).press("Enter");
+      await expect(entries(browser)).toHaveCount(1);
+      await expect(entries(browser).first()).toContainText("第 1 次 · 顧客改期");
+    }
+
+    expect((await request.patch("/api/kitchen/pickup-reschedule",{headers:staff,
+      data:{id,from:first,to:latest,revision:1}})).ok()).toBe(true);
+    await page.getByRole("button",{name:"更新進度",exact:true}).click();
+    await operator.getByRole("button",{name:"更新",exact:true}).click();
+    for(const browser of [page,operator]){
+      await expect(summary(browser,2)).toBeVisible();
+      await expect(entries(browser)).toHaveCount(2);
+      await expect(history(browser).locator("dt")).toHaveText(["最初預約","目前預約"]);
+      await expect(history(browser).locator("dd time").last()).toHaveAttribute("datetime",new Date(latest).toISOString());
+      await expect(entries(browser).first()).toContainText("第 2 次 · 店員改期");
+      await expect(entries(browser).first().locator(".pickupHistoryRoute time").first()).toHaveAttribute("datetime",new Date(first).toISOString());
+      await expect(entries(browser).first().locator(".pickupHistoryRoute time").last()).toHaveAttribute("datetime",new Date(latest).toISOString());
+      await expect(entries(browser).first().locator(".pickupHistoryMeta time")).toHaveAttribute("datetime",/Z$/);
+      await expect(entries(browser).last()).toContainText("第 1 次 · 顧客改期");
+      expect(await browser.evaluate(()=>document.documentElement.scrollWidth)).toBe(360);
+    }
+
+    expect((await request.post("/api/ticket/cancel",{headers:ticket,data:{}})).ok()).toBe(true);
+    await page.getByRole("button",{name:"更新進度",exact:true}).click();
+    await operator.getByRole("button",{name:"更新",exact:true}).click();
+    for(const browser of [page,operator]){
+      await expect(history(browser).locator("dt")).toHaveText(["最初預約","取消前預約"]);
+      await expect(entries(browser)).toHaveCount(2);
+    }
+    const downloading=page.waitForEvent("download");
+    await page.getByRole("button",{name:"下載餐單明細",exact:true}).click();
+    const file=await downloading;
+    expect(file.suggestedFilename()).toBe("hey-table-order-"+number+".txt");
+    const text=await readFile(await file.path(),"utf8");
+    expect(text).toContain("餐單狀態 已取消");
+    expect(text).toContain("改期歷程（台灣時間）");
+    expect(text.indexOf("第 2 次 · 店員改期")).toBeLessThan(text.indexOf("第 1 次 · 顧客改期"));
+    expect(text).not.toContain(token);
+    expect(text).not.toContain("私密");
+  }finally{
+    if(booked)await request.post("/api/ticket/cancel",{headers:ticket,data:{}});
+    await operator.close();
+  }
+});

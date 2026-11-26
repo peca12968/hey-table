@@ -6,6 +6,7 @@ import {pickupChangeWindows,pickupPrepLead,pickupRosterPath,pickupSlotsForDay,pi
 import {businessDate,businessDayRange} from "../../lib/business-day.mjs";
 import {ItemNote} from "../item-notes";
 import ReschedulePickup from "../reschedule-pickup";
+import PickupChangeHistory from "../pickup-change-history";
 import {useBusinessToday} from "../use-business-today.mjs";
 import {staffCancellationReasons} from "../../lib/order-cancellation.mjs";
 import {dishes,labels,numberOf,tables,transitions} from "../../lib/menu.mjs";
@@ -183,6 +184,9 @@ function KitchenTicket({order,busy,update,movePickup,recordCash,refresh,today,st
     {waitingPickup(order)&&<p className="pickupArrived">顧客已到店 · <time dateTime={new Date(order.pickupArrivedAt).toISOString()}>
       {pickupTime(order.pickupArrivedAt)}</time></p>}
     {latestPickup&&<p className="muted" role="status">{latestPickup.actor==="staff"?"店員":"顧客"}已將取餐時段從 {previousWindow} 改到 {newWindow}。</p>}
+    <PickupChangeHistory order={order}/>
+    {latestPickup&&!order.pickupChanges&&<a className="textLink" href={"/kitchen?booking="+numberOf(id)}
+      aria-label={"查看餐單 #"+numberOf(id)+" 的改期歷程"}>查看改期歷程</a>}
     {prepAt!==null&&<p className="muted">{prepDay>today?prepDay+" ":""}{pickupTime(prepAt)} 後可接單製作。</p>}
     {showOverdue&&order.overdue&&<p className="kitchenOverdue">逾時 · {overdueStage[status]} {Math.floor(order.overdue.elapsedMs/60_000)} 分鐘</p>}
     {showDelayEstimate&&<p className={order.pickupDelay.passed?"kitchenOverdue":"muted"}>

@@ -96,17 +96,18 @@ function receipt(row) {
     ...(row.cash_payment_change ? {cashPaymentChange:JSON.parse(row.cash_payment_change)} : {}),
     paymentMethod:row.payment_method,paymentEnv:row.payment_env,paymentState:row.payment_state??'unpaid',total:row.total, status:row.status, created:row.created};
 }
-function kitchenOrder(row,capturedAt){
+function kitchenOrder(row,capturedAt,{includePickupChanges=false}={}){
   const order=receipt(row);
   const overdue=kitchenOverdue(row,order,capturedAt);
   const booked=order.status==="pending"&&order.pickupSlot!=null;
-  const changes=booked?pickupChanges(row):[];
+  const changes=booked||includePickupChanges?pickupChanges(row):[];
   const delay=row.pickup_delay&&order.status==="preparing"&&canPrepare(order)?JSON.parse(row.pickup_delay):null;
   return {...order,...(row.station_progress?{stationProgress:true}:{}),
     ...(delay?{pickupDelay:{...delay,passed:delay.readyAt!==null&&delay.readyAt<=capturedAt}}:{}),
     ...(overdue?{overdue}:{}),
     ...(booked?{pickupRevision:changes.length,...(changes.length?{latestPickupChange:changes.at(-1)}:{}),
       ...(canReschedulePickup(row,capturedAt)?{pickupUpcoming:true}:{})}:{}),
+    ...(includePickupChanges&&changes.length?{pickupChanges:changes}:{}),
     ...(row.table_moves?{tableRevision:JSON.parse(row.table_moves).length}:{})};
 }
 function statusHistory(row) {
@@ -695,6 +696,7 @@ export async function api(request, env) {
     const order=receipt(row);
     if(order.status==="cancelled")order.cancellationReason=statusHistory(row).at(-1)?.cancellationReason;
     if(row.demo_refund_receipt)order.demoRefund=JSON.parse(row.demo_refund_receipt);
+    if(order.pickupSlot!=null)order.pickupChanges=pickupChanges(row);
     return ticketTextAttachment(orderDetailsText(order,capturedAt),"order",order.id);
   }
   if (path === "/api/ticket" && method === "GET") {
@@ -1054,7 +1056,7 @@ export async function api(request, env) {
     const [,lookup]=await db.batch([expirePaymentHolds(db,capturedAt),db.prepare(`${orderColumns}${kitchenPayableAt},${pickupDelayColumn}
       FROM orders WHERE id=? AND mode='pickup' AND pickup_slot IS NOT NULL`).bind(id)]);
     const row=lookup.results[0];
-    return row?json(kitchenOrder(row,capturedAt)):fail("找不到這張預約自取餐單。",404);
+    return row?json(kitchenOrder(row,capturedAt,{includePickupChanges:true})):fail("找不到這張預約自取餐單。",404);
   }
   if(path==="/api/kitchen/order-detail"&&method==="GET"){
     const id=collectionId(url);

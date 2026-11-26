@@ -93,12 +93,15 @@ export async function buildCartSupplyReviewDemo(){
     const confirmed=await pickupRescheduleOutcome(db,at+15_000,"token",bookingToken,operation);
     assert.deepEqual(retryable,{state:"retryable",pickupSlot:booked,revision:0});
     assert.deepEqual(confirmed,{state:"confirmed",pickupSlot:later,revision:2,change:firstChange});
+    const {pickupSlot,pickupChanges:history}=await call("ticket?progress=1",{token:bookingToken});
+    assert.equal(pickupSlot,confirmed.pickupSlot);
+    assert.deepEqual(history,[firstChange,{from:operation.to,to:later,at:at+10_000,actor:"staff"}]);
     return {format:"hey-table.cart-supply-review-demo.v1",original,before:before.preview,after:after.preview,
       rejected:rejection.code,receipt:{id,table:receiptTable,paymentMethod:method,total,
         lines:items.map(({id,name,price,qty})=>({id,name,price,qty}))},
       pickupAlternatives:{fromSlot,count:pickupItems[0].qty,closed,initial,refreshed},
       rescheduleAlternatives:{fromSlot:booked,count:bookingLines[0].qty,closed:blocked,initial:beforeChoices,
-        refreshed:afterChoices,keptOriginal:true},rescheduleRecovery:{operation,retryable,confirmed}};
+        refreshed:afterChoices,keptOriginal:true},rescheduleRecovery:{operation,retryable,confirmed,history}};
   }finally{
     sqlite.close();
   }

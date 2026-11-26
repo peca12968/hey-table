@@ -1,13 +1,13 @@
 import {labels,numberOf,tables} from "../lib/menu.mjs";
 import {environmentLabel,methods,paymentStates} from "../lib/payments.mjs";
-import {datedPickupWindow} from "../lib/pickup-slots.mjs";
+import {datedPickupWindow,pickupChangeActor} from "../lib/pickup-slots.mjs";
 import {staffCancellationReasons} from "../lib/order-cancellation.mjs";
 
 const taipeiTime=new Intl.DateTimeFormat("zh-TW",{timeZone:"Asia/Taipei",dateStyle:"medium",timeStyle:"medium"});
 const amount=value=>"NT$ "+value;
 
 export function orderDetailsText(order,capturedAt){
-  const {id,mode,table,status,created,pickupSlot,items,total,paymentMethod,paymentState,paymentEnv,cashReceipt,cashPaymentChange,demoRefund,combo}=order;
+  const {id,mode,table,status,created,pickupSlot,pickupChanges,items,total,paymentMethod,paymentState,paymentEnv,cashReceipt,cashPaymentChange,demoRefund,combo}=order;
   const payment=paymentMethod==="cash"?(cashReceipt?"已登記現金收款":"未登記現金收款"):
     paymentStates[paymentState]??"未記錄";
   const environment=environmentLabel(paymentEnv);
@@ -31,6 +31,14 @@ export function orderDetailsText(order,capturedAt){
     `收款時間（台灣） ${taipeiTime.format(cashReceipt.collectedAt)}`);
   if(demoRefund)lines.push(`示範退款金額 ${amount(demoRefund.amount)}`,
     `退款時間（台灣） ${demoRefund.refundedAt===null?"未記錄":taipeiTime.format(demoRefund.refundedAt)}`);
+  if(pickupSlot!=null&&pickupChanges?.length){
+    lines.push("","改期歷程（台灣時間）",`最初預約 ${datedPickupWindow(pickupChanges[0].from)}`);
+    for(let index=pickupChanges.length-1;index>=0;index--){
+      const change=pickupChanges[index],at=change.at==null?"時間未記錄":taipeiTime.format(change.at);
+      lines.push(`第 ${index+1} 次 · ${pickupChangeActor(change)}改期 · ${at}`,
+        `從 ${datedPickupWindow(change.from)} 改到 ${datedPickupWindow(change.to)}`);
+    }
+  }
   return [...lines,""].join("\r\n");
 }
 
