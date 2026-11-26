@@ -14,9 +14,10 @@ import {expirePaymentHolds,noBlockingPayment,paymentHoldMs} from "./payment-hold
 import {arrivalTiming,arrivalTimingRows,dailyTiming,dailyTimingRows,pickupPunctuality,pickupPunctualityRows} from "./daily-timing.mjs";
 import {dailyPaymentRows,dailyPaymentSummary} from "./daily-payment-summary.mjs";
 import {kitchenOverdue} from "./kitchen-overdue.mjs";
-import {bookedPickupDate,pickupBookingDays,pickupCalendarStatus,pickupPrepLead,pickupSlotCapacity,pickupSlotsForDay} from "../lib/pickup-slots.mjs";
+import {bookedPickupDate,pickupBookingDays,pickupCalendarStatus,pickupPrepLead,pickupSlotCapacity,pickupSlotsForDay,
+  validPickupChange} from "../lib/pickup-slots.mjs";
 import {canReschedulePickup,capacityAtPickupSlot,editablePickupSlots,orderPortions,pickupChanges,pickupSlotLimits,
-  pickupDayPaused,pickupDaySettings,pickupLimitEvent,pickupLimitHistory,pickupSlotOptions,pickupSlotUsage,pickupSlots,savePickupDay,
+  pickupDayPaused,pickupDaySettings,pickupLimitEvent,pickupLimitHistory,pickupRescheduleOutcome,pickupSlotOptions,pickupSlotUsage,pickupSlots,savePickupDay,
   savePickupSlotLimits,suggestCartPickupAlternatives,suggestCartPickupSlot,
   suggestPickupAlternatives,suggestPickupSlot,usedAtPickupSlot} from "./pickup-slots.mjs";
 import {pickupCalendar} from "./pickup-calendar.mjs";
@@ -744,6 +745,18 @@ export async function api(request, env) {
     return json(saved);
   }
   const staffReschedule=path==="/api/kitchen/pickup-reschedule"&&method==="PATCH";
+  if(method==="GET"&&["/api/ticket/reschedule","/api/kitchen/pickup-reschedule"].includes(path)){
+    const staff=path.startsWith("/api/kitchen/");
+    const ref=staff?positiveQueryId(url,"id"):request.headers.get("X-Ticket");
+    if(staff?!ref:!uuid.test(ref))return fail("找不到訂單",404);
+    const change=Object.fromEntries(["from","to","revision"].map(key=>{
+      const values=url.searchParams.getAll(key);
+      return [key,values.length===1&&/^\d+$/.test(values[0])?Number(values[0]):null];
+    }));
+    if(!validPickupChange(change))return fail("請核對原改期時段與版次。");
+    const result=await pickupRescheduleOutcome(db,Date.now(),staff?"id":"token",ref,change);
+    return result?json(result):fail("找不到訂單",404);
+  }
   if(["/api/ticket/reschedule-options","/api/kitchen/pickup-reschedule-options"].includes(path)&&method==="GET"){
     const staff=path.startsWith("/api/kitchen/");
     const ref=staff?collectionId(url):request.headers.get("X-Ticket");
@@ -783,8 +796,7 @@ export async function api(request, env) {
       if(!Number.isSafeInteger(orderRef)||orderRef<1)return fail("請輸入有效的取餐號碼");
     }else if(!uuid.test(orderRef))return fail("找不到訂單",404);
     const {from,to,revision}=input;
-    if(!Number.isSafeInteger(from)||from<1||!Number.isSafeInteger(to)||to<1||from===to||
-      !Number.isSafeInteger(revision)||revision<0||revision>=Number.MAX_SAFE_INTEGER)
+    if(!validPickupChange(input))
       return fail("請選擇另一個有效的預約時段。");
     const now=Date.now(),date=bookedPickupDate(now,to);
     const range=businessDayRange(date??businessDate(now));

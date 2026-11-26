@@ -6,7 +6,7 @@ import {businessDate} from "../lib/business-day.mjs";
 import {dishes} from "../lib/menu.mjs";
 import {planSupplyReview,supplyReviewRows} from "../lib/supply-review.mjs";
 import {api} from "../server/api.mjs";
-import {suggestCartPickupAlternatives,suggestPickupAlternatives} from "../server/pickup-slots.mjs";
+import {pickupRescheduleOutcome,suggestCartPickupAlternatives,suggestPickupAlternatives} from "../server/pickup-slots.mjs";
 import {applyDemoMigrations} from "./apply-demo-migrations.mjs";
 import {sqliteD1} from "./sqlite-d1.mjs";
 
@@ -84,12 +84,21 @@ export async function buildCartSupplyReviewDemo(){
     assert.equal(afterChoices.suggestions[0].start,booked+1_800_000);
     assert.deepEqual([beforeReschedule.pickup_slot,beforeReschedule.status,beforeReschedule.pickup_changes],[booked,"pending",null]);
     assert.deepEqual(afterReschedule,beforeReschedule);
+    const operation={from:booked,to:afterChoices.suggestions[0].start,revision:0};
+    const retryable=await pickupRescheduleOutcome(db,at,"token",bookingToken,operation);
+    const later=operation.to+900_000,firstChange={from:booked,to:operation.to,at:at+5_000};
+    sqlite.prepare("UPDATE orders SET pickup_slot=?,pickup_changes=? WHERE token=?").run(later,JSON.stringify([
+      firstChange,{from:operation.to,to:later,at:at+10_000,actor:"staff"},
+    ]),bookingToken);
+    const confirmed=await pickupRescheduleOutcome(db,at+15_000,"token",bookingToken,operation);
+    assert.deepEqual(retryable,{state:"retryable",pickupSlot:booked,revision:0});
+    assert.deepEqual(confirmed,{state:"confirmed",pickupSlot:later,revision:2,change:firstChange});
     return {format:"hey-table.cart-supply-review-demo.v1",original,before:before.preview,after:after.preview,
       rejected:rejection.code,receipt:{id,table:receiptTable,paymentMethod:method,total,
         lines:items.map(({id,name,price,qty})=>({id,name,price,qty}))},
       pickupAlternatives:{fromSlot,count:pickupItems[0].qty,closed,initial,refreshed},
       rescheduleAlternatives:{fromSlot:booked,count:bookingLines[0].qty,closed:blocked,initial:beforeChoices,
-        refreshed:afterChoices,keptOriginal:true}};
+        refreshed:afterChoices,keptOriginal:true},rescheduleRecovery:{operation,retryable,confirmed}};
   }finally{
     sqlite.close();
   }

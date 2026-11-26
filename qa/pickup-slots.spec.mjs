@@ -1181,3 +1181,79 @@ test("mobile receipts and staff compare reschedule windows without releasing the
     await operator.close();
   }
 });
+
+for(const staffSide of [false,true]){
+  test(`${staffSide?"staff":"guest"} reloads and checks one lost pickup reschedule before sending any retry`,async({page,request})=>{
+    const date=businessDate(Date.now()+3*86_400_000),from=Date.parse(date+"T14:30:00+08:00");
+    const to=from+900_000,later=to+900_000,token=randomUUID();
+    const staff={Authorization:"Bearer local-test-kitchen"},ticket={"X-Ticket":token};
+    const receipt=async()=>(await (await request.get("/api/ticket?progress=1",{headers:ticket})).json());
+    const created=await request.post("/api/orders",{data:{token,mode:"pickup",note:"斷線測試",pickupSlot:from,
+      paymentMethod:"cash",items:[{id:"sencha",qty:1}]}});
+    expect(created.ok()).toBe(true);
+    const {id}=await created.json();
+    const endpoint=staffSide?"/api/kitchen/pickup-reschedule":"/api/ticket/reschedule";
+    const method=staffSide?"PATCH":"POST",change={from,to,revision:0};
+    let lookups=0,writes=0;
+    try{
+      await page.setViewportSize({width:360,height:780});
+      if(staffSide)await page.addInitScript(()=>sessionStorage.setItem("he-ri-staff","local-test-kitchen"));
+      await page.route(url=>url.pathname===endpoint,async route=>{
+        const req=route.request();
+        expect(req.headers()[staffSide?"authorization":"x-ticket"]).toBe(staffSide?staff.Authorization:token);
+        if(req.method()==="GET"){
+          lookups++;
+          expect(Object.fromEntries(new URL(req.url()).searchParams)).toEqual({
+            from:String(from),to:String(to),revision:"0",...(staffSide?{id:String(id)}:{}),
+          });
+          return route.continue();
+        }
+        expect(req.method()).toBe(method);
+        expect(req.postDataJSON()).toEqual(staffSide?{id,...change}:change);
+        writes++;
+        if(writes>1)return route.continue();
+        if(!staffSide)expect((await route.fetch()).ok()).toBe(true);
+        return route.abort("connectionreset");
+      });
+      await page.goto(staffSide?"/kitchen?booking="+id:"/ticket#"+token);
+      await page.getByRole("button",{name:"更改取餐時段"}).click();
+      await page.getByLabel("新的取餐時段").selectOption(String(to));
+      await page.getByRole("button",{name:"確認改期"}).click();
+      await expect(page.getByRole("button",{name:"查回改期結果"})).toBeVisible();
+      expect(writes).toBe(1);
+      if(!staffSide){
+        const changed=await request.patch("/api/kitchen/pickup-reschedule",{headers:staff,data:{id,from:to,to:later,revision:1}});
+        expect(changed.ok()).toBe(true);
+      }
+      await page.reload();
+      const recovery=page.getByRole("region",{name:"待查回的改期"}),resend=recovery.getByRole("button",{name:"重送原改期"});
+      await expect(recovery).toBeVisible();
+      await expect(resend).toHaveCount(0);
+      expect([writes,lookups]).toEqual([1,0]);
+      await recovery.getByRole("button",{name:"查回改期結果"}).click();
+      if(staffSide){
+        await expect(recovery.getByRole("status")).toHaveText("目前查無此筆改期紀錄，重送時會再次核對供應。");
+        expect((await receipt()).pickupSlot).toBe(from);
+        expect([writes,lookups]).toEqual([1,1]);
+        await resend.click();
+      }else{
+        await expect(page.getByText(/已查回改期紀錄/)).toBeVisible();
+        await expect(resend).toHaveCount(0);
+      }
+      await expect(recovery).toHaveCount(0);
+      const expected=staffSide?to:later;
+      await expect(page.locator(".pickupSlotTime time")).toHaveAttribute("datetime",new Date(expected).toISOString());
+      const saved=await receipt();
+      expect([saved.pickupSlot,saved.pickupChanges.length,saved.paymentMethod,saved.note])
+        .toEqual([expected,staffSide?1:2,"cash","斷線測試"]);
+      expect([writes,lookups]).toEqual([staffSide?2:1,1]);
+      expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBe(360);
+      await page.reload();
+      await expect(page.getByRole("button",{name:"更改取餐時段"})).toBeVisible();
+      await expect(recovery).toHaveCount(0);
+    }finally{
+      await page.unrouteAll({behavior:"wait"});
+      await request.post("/api/ticket/cancel",{headers:ticket,data:{}});
+    }
+  });
+}

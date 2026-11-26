@@ -1,7 +1,7 @@
 import {businessDate,businessDayRange} from "../lib/business-day.mjs";
-import {bookablePickupSlots,pickupBookingDays,pickupPrepLead,pickupSlotCapacity,pickupSlotDuration,pickupSlotsForDay} from "../lib/pickup-slots.mjs";
+import {bookablePickupSlots,bookedPickupDate,pickupBookingDays,pickupPrepLead,pickupSlotCapacity,pickupSlotDuration,pickupSlotsForDay} from "../lib/pickup-slots.mjs";
 import {exceededOrderPortions,exceededPortions} from "./daily-limits.mjs";
-import {expirePaymentHolds} from "./payment-holds.mjs";
+import {expirePaymentHolds,noBlockingPayment} from "./payment-holds.mjs";
 
 const portions="SUM(json_extract(line.value,'$.qty'))";
 const activeSlots="FROM orders JOIN json_each(orders.items) AS line WHERE status<>'cancelled'";
@@ -15,6 +15,20 @@ export const pickupDayPaused="EXISTS (SELECT 1 FROM pickup_day_intake WHERE date
 export const orderPortions=`(SELECT ${portions} FROM json_each(orders.items) AS line)`;
 export const pickupChanges=row=>JSON.parse(row.pickup_changes??"[]");
 export const canReschedulePickup=(row,now)=>row.mode==="pickup"&&row.status==="pending"&&row.pickup_slot>now+pickupPrepLead;
+
+export async function pickupRescheduleOutcome(db,now,orderKey,ref,change){
+  const row=await db.prepare(`SELECT mode,status,pickup_slot,pickup_changes,
+    (payment_method<>'cash' AND payment_due_at<=? AND ${noBlockingPayment}) AS hold_expired
+    FROM orders WHERE ${orderKey}=? AND mode='pickup' AND pickup_slot IS NOT NULL`).bind(now,ref).first();
+  if(!row)return null;
+  const changes=pickupChanges(row),saved=changes[change.revision];
+  const current={pickupSlot:row.pickup_slot,revision:changes.length};
+  if(saved?.from===change.from&&saved.to===change.to)return {state:"confirmed",...current,change:saved};
+  const retryable=changes.length===change.revision&&row.pickup_slot===change.from&&!row.hold_expired&&
+    canReschedulePickup(row,now)&&bookedPickupDate(now,change.to);
+  return {state:retryable?"retryable":"superseded",...current};
+}
+
 export function editablePickupSlots(date,now){
   const today=businessDate(now);
   if(date>today)return pickupSlotsForDay(date);

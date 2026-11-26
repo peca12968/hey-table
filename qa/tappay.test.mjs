@@ -2481,6 +2481,47 @@ test("pickup slots reserve portions atomically, release expired payments and gat
   const handoff=await (await call("/api/kitchen/handoff?id="+accepted.id,{headers:staff})).json();
   assert.equal(handoff.pickupSlot,pickupSlot);
 });
+test("reschedule lookup finds the original transition even after later changes and never writes a booking",async t=>{
+  const db=database(),now=Date.parse("2026-11-26T10:00:00+08:00");
+  t.after(()=>db.sqlite.close());
+  t.mock.method(Date,"now",()=>now);
+  const from=Date.parse("2026-11-27T11:00:00+08:00"),to=from+900_000,latest=to+900_000;
+  const change={from,to,revision:0},token=crypto.randomUUID(),guest={"X-Ticket":token};
+  const staff={Authorization:"Bearer fixture-staff"},env={DB:db,STAFF_KEY:"fixture-staff",TAPPAY_MODE:"demo"};
+  const call=(path,headers=guest,method="GET",data)=>api(new Request("https://order.example/api/"+path,{
+    method,headers:{"Content-Type":"application/json",...headers},body:data===undefined?undefined:JSON.stringify(data),
+  }),env);
+  const booked=await call("orders",{},"POST",{mode:"pickup",token,pickupSlot:from,note:"",items:[{id:"sencha",qty:2}]});
+  assert.equal(booked.status,200);
+  const {id}=await booked.json();
+  const find=(operation=change,headers=guest)=>call("ticket/reschedule?"+new URLSearchParams(operation),headers);
+  const findStaff=(headers=staff)=>call("kitchen/pickup-reschedule?"+new URLSearchParams({id,...change}),headers);
+  assert.equal((await find(change,{})).status,404);
+  assert.equal((await find(change,{"X-Ticket":crypto.randomUUID()})).status,404);
+  assert.equal((await findStaff({})).status,403);
+  assert.equal((await find({...change,revision:-1})).status,400);
+  assert.equal((await find({...change,to:from})).status,400);
+  assert.equal((await call("ticket/reschedule?"+new URLSearchParams(change)+"&revision=1")).status,400);
+  const original=await find();
+  assert.equal(original.headers.get("Cache-Control"),"no-store");
+  assert.deepEqual(await original.json(),{state:"retryable",pickupSlot:from,revision:0});
+  assert.deepEqual(await (await findStaff()).json(),{state:"retryable",pickupSlot:from,revision:0});
+  const stored=()=>db.sqlite.prepare("SELECT status,pickup_slot,pickup_changes FROM orders WHERE id=?").get(id);
+  assert.deepEqual({...stored()},{status:"pending",pickup_slot:from,pickup_changes:null});
+  assert.equal((await call("ticket/reschedule",guest,"POST",change)).status,200);
+  assert.equal((await call("kitchen/pickup-reschedule",staff,"PATCH",{id,from:to,to:latest,revision:1})).status,200);
+  const result={state:"confirmed",pickupSlot:latest,revision:2,change:{from,to,at:now}};
+  assert.deepEqual(await (await find()).json(),result);
+  assert.deepEqual(await (await findStaff()).json(),result);
+  assert.deepEqual(await (await find({...change,to:latest})).json(),{state:"superseded",pickupSlot:latest,revision:2});
+  assert.equal(JSON.parse(stored().pickup_changes).length,2);
+  db.sqlite.prepare("UPDATE orders SET payment_method='line_pay',payment_due_at=? WHERE id=?").run(now,id);
+  assert.deepEqual(await (await find({from:latest,to:latest+900_000,revision:2})).json(),
+    {state:"superseded",pickupSlot:latest,revision:2});
+  assert.equal(stored().status,"pending");
+  assert.deepEqual(await (await find()).json(),result);
+});
+
 test("staff pickup rescheduling preserves receipt and payment and requires the new version to prepare",async t=>{
   const db=database();
   t.after(()=>db.sqlite.close());

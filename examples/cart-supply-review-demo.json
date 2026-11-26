@@ -251,5 +251,27 @@
       ]
     },
     "keptOriginal": true
+  },
+  "rescheduleRecovery": {
+    "operation": {
+      "from": 1795834800000,
+      "to": 1795836600000,
+      "revision": 0
+    },
+    "retryable": {
+      "state": "retryable",
+      "pickupSlot": 1795834800000,
+      "revision": 0
+    },
+    "confirmed": {
+      "state": "confirmed",
+      "pickupSlot": 1795837500000,
+      "revision": 2,
+      "change": {
+        "from": 1795834800000,
+        "to": 1795836600000,
+        "at": 1795658405000
+      }
+    }
   }
 }
