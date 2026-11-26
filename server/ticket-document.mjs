@@ -1,6 +1,7 @@
 import {labels,numberOf,tables} from "../lib/menu.mjs";
 import {environmentLabel,methods,paymentStates} from "../lib/payments.mjs";
 import {datedPickupWindow} from "../lib/pickup-slots.mjs";
+import {staffCancellationReasons} from "../lib/order-cancellation.mjs";
 
 const taipeiTime=new Intl.DateTimeFormat("zh-TW",{timeZone:"Asia/Taipei",dateStyle:"medium",timeStyle:"medium"});
 const amount=value=>"NT$ "+value;
@@ -13,6 +14,8 @@ export function orderDetailsText(order,capturedAt){
   const dining=mode==="table"?(tables.includes(table)?table+" 桌內用":"內用"):"自取";
   const lines=["禾日食堂｜餐單明細",`取餐號碼 ${numberOf(id)}`,`成立時間（台灣） ${taipeiTime.format(created)}`,
     `擷取時間（台灣） ${taipeiTime.format(capturedAt)}`,`餐單狀態 ${labels[status]??"未記錄"}`,
+    ...(status==="cancelled"&&Object.hasOwn(staffCancellationReasons,order.cancellationReason)?
+      ["取消原因 "+staffCancellationReasons[order.cancellationReason]]:[]),
     `用餐方式 ${dining}`,
     ...(pickupSlot==null?[]:[`預約取餐 ${datedPickupWindow(pickupSlot)}`]),
     `付款方式 ${methods[paymentMethod]??"未記錄"}`,`付款狀態 ${payment}`,

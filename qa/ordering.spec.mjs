@@ -1439,6 +1439,54 @@ test("mobile receipt follows committed kitchen progress for its own order",async
   expect((await ticket("")).status()).toBe(404);
 });
 
+test("a staff cancellation reason survives a lost response and is visible to the customer and staff",async({page,request})=>{
+  const token=randomUUID(),staff={Authorization:"Bearer local-test-kitchen"};
+  const response=await request.post("/api/orders",{data:{token,mode:"pickup",note:"",items:[{id:"sencha",qty:1}]}});
+  expect(response.ok()).toBe(true);
+  const {id}=await response.json(),number=String(id).padStart(4,"0");
+  const sample=JSON.parse(await readFile(new URL("../examples/receipt-progress.json",import.meta.url),"utf8"));
+  const reason=sample.find(row=>row.scenario==="pickup").statusHistory.at(-1).cancellationReason;
+  await page.setViewportSize({width:360,height:780});
+  await page.addInitScript(()=>sessionStorage.setItem("he-ri-staff","local-test-kitchen"));
+  await page.goto("/kitchen");
+  const card=page.locator(".kitchenTicket").filter({has:page.getByRole("heading",{name:"#"+number,exact:true})});
+  await card.getByRole("button",{name:"取消餐單",exact:true}).click();
+  const cancel=card.getByRole("form",{name:"取消餐單"});
+  const confirm=cancel.getByRole("button",{name:"確認取消餐單"});
+  await expect(confirm).toBeDisabled();
+  await cancel.getByLabel("取消原因").selectOption(reason);
+  let recorded;
+  const attempts=[];
+  await page.route(url=>url.pathname==="/api/kitchen/status",async route=>{
+    const payload=route.request().postDataJSON();
+    attempts.push(payload);
+    expect(payload.id).toBe(id);
+    const result=await route.fetch();
+    expect(result.status()).toBe(200);
+    const receipt=await result.json();
+    if(attempts.length===1){
+      recorded=receipt;
+      return route.abort("connectionreset");
+    }
+    expect(receipt).toEqual(recorded);
+    await route.fulfill({response:result});
+  });
+  await confirm.click();
+  await expect(page.getByText("餐單 "+number+" 已取消 · 品項售完。",{exact:true})).toBeVisible();
+  expect(attempts).toHaveLength(2);
+  expect(attempts[0]).toEqual(attempts[1]);
+  expect(attempts[0].cancellationReason).toBe(reason);
+  await page.goto("/ticket#"+token);
+  const cancelled=page.getByRole("region",{name:"餐單進度"}).getByRole("listitem").filter({hasText:"店家已取消"});
+  await expect(cancelled).toContainText("品項售完");
+  await expect(cancelled.locator("time")).toHaveAttribute("datetime",new Date(recorded.cancelledAt).toISOString());
+  const document=await request.get("/api/ticket/order-details",{headers:{"X-Ticket":token}});
+  expect(await document.text()).toContain("取消原因 品項售完");
+  await page.goto("/kitchen/order-detail?id="+number);
+  await expect(cancelled).toContainText("品項售完");
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBe(360);
+});
+
 test("reopen a lost A03 receipt after the kitchen committed, without resubmitting",async({context,page,request})=>{
   await page.setViewportSize({width:390,height:844});
   const attempts=[];

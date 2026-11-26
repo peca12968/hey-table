@@ -12,7 +12,7 @@
     "scenario": "pickup",
     "statusHistory": [
       {"status": "pending", "at": 1795492800000},
-      {"status": "cancelled", "at": 1795492920000}
+      {"status": "cancelled", "at": 1795492920000, "actor": "staff", "cancellationReason": "sold_out"}
     ]
   },
   {

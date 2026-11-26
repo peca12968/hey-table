@@ -98,7 +98,8 @@ export default function Ticket(){
   const latestPickup=order?.pickupChanges?.at(-1);
   const [previousWindow,newWindow]=latestPickup?pickupChangeWindows(latestPickup):[];
   const calendarStatus=order&&pickupCalendarStatus(order);
-  const closedBeforePayment=Object.hasOwn(cancellationMessages,cancellationActor);
+  const closedBeforePayment=Object.hasOwn(cancellationMessages,cancellationActor)||
+    (cancellationActor==="staff"&&order.paymentState!=="refunded");
   const showHold=order?.paymentDueAt&&order.paymentMethod!=="cash"&&canCustomerCancel(order);
   const payable=order&&canPrepare(order);
   const refundBeforeHandoff=order?.paymentState==="refunded"&&!["completed","cancelled"].includes(order.status);

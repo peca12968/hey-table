@@ -7,6 +7,7 @@ import {businessDate,businessDayRange} from "../../lib/business-day.mjs";
 import {ItemNote} from "../item-notes";
 import ReschedulePickup from "../reschedule-pickup";
 import {useBusinessToday} from "../use-business-today.mjs";
+import {staffCancellationReasons} from "../../lib/order-cancellation.mjs";
 import {dishes,labels,numberOf,tables,transitions} from "../../lib/menu.mjs";
 import {downloadJson} from "../../lib/download-json.mjs";
 import Timing from "./timing";
@@ -16,7 +17,7 @@ import Intake from "./intake";
 import CashCollection from "./cash-collection";
 import PickupDelayEditor from "./pickup-delay-editor";
 import {methods,paymentStates,environmentLabel,canPrepare,canCancel,paymentCheckMessage} from "../../lib/payments.mjs";
-const action={preparing:"接單製作",ready:"完成製作",completed:"完成交餐",cancelled:"取消訂單"};
+const action={preparing:"接單製作",ready:"完成製作",completed:"完成交餐"};
 const overdueStage={pending:"待接單",preparing:"製作中",ready:"待交餐"};
 const browserSearch=()=>window.location.search;
 const browserPickupPass=()=>window.location.hash.slice(1);
@@ -109,6 +110,24 @@ function TableHandoff({table,orders,busy,update}){
   </section>;
 }
 
+function CancelOrder({disabled,submit}){
+  const [open,setOpen]=useState(false),[reason,setReason]=useState("");
+  if(!open)return <button type="button" className="outline" disabled={disabled} onClick={()=>setOpen(true)}>
+    取消餐單
+  </button>;
+  return <form className="actions kitchenCancel" aria-label="取消餐單" onSubmit={event=>{
+    event.preventDefault();
+    if(!disabled&&Object.hasOwn(staffCancellationReasons,reason))void submit(reason);
+  }}>
+    <label>取消原因<select required value={reason} disabled={disabled} onChange={event=>setReason(event.target.value)}>
+      <option value="">請選擇</option>
+      {Object.entries(staffCancellationReasons).map(([value,label])=><option key={value} value={value}>{label}</option>)}
+    </select></label>
+    <button className="outline" disabled={disabled||!reason}>確認取消餐單</button>
+    <button type="button" className="outline" disabled={disabled} onClick={()=>{setOpen(false);setReason("");}}>返回</button>
+  </form>;
+}
+
 function KitchenTicket({order,busy,update,movePickup,recordCash,refresh,today,staffKey,showOverdue=false,
   showDelayEstimate=false,handoffOnly=false,delegated=false,paymentReview=false,paymentCheck}){
   const {id,status,table,created,items,note,paymentMethod,paymentEnv,paymentState,total}=order;
@@ -159,11 +178,12 @@ function KitchenTicket({order,busy,update,movePickup,recordCash,refresh,today,st
         if(window.confirm("確認模擬全額退款 NT$ "+total+"？"+effect))
           update("demo-refund",{id,expectedTotal:total,expectedStatus:status});
       }}>模擬全額退款</button>}
-      {!workingByStation&&actions.map(next=><button disabled={busy||(next==="preparing"&&order.pickupUpcoming)||
-        (next==="cancelled"?!canCancel(order):!canPrepare(order))} className={next==="cancelled"?"outline":"primary"} key={next}
-        onClick={()=>{if(next!=="cancelled"||window.confirm("取消這張訂單？"))
-          update("status",{id,from:status,to:next,...(table&&next==="completed"?{tableRevision}:{}),
-            ...(next==="preparing"&&order.pickupSlot!=null?{pickupRevision:order.pickupRevision??0}:{})});}}>{action[next]}</button>)}
+      {!workingByStation&&actions.map(next=>next==="cancelled"?
+        <CancelOrder key={next} disabled={busy||!canCancel(order)} submit={cancellationReason=>
+          update("status",{id,from:status,to:next,cancellationReason,cancellationOperation:crypto.randomUUID()})}/>:
+        <button disabled={busy||(next==="preparing"&&order.pickupUpcoming)||!canPrepare(order)} className="primary" key={next}
+          onClick={()=>update("status",{id,from:status,to:next,...(table&&next==="completed"?{tableRevision}:{}),
+            ...(next==="preparing"&&order.pickupSlot!=null?{pickupRevision:order.pickupRevision??0}:{})})}>{action[next]}</button>)}
     </div>
     {canCheckPayment&&paymentCheck?.message&&<p role="status">{paymentCheck.message}</p>}
     {table&&["pending","preparing","ready"].includes(status)&&<TableMove
@@ -243,18 +263,27 @@ export default function Kitchen(){
     setBusy(true);setError("");setActionMessage("");
     const checkingPayment=endpoint==="payment";
     const completingPass=delegated&&endpoint==="status";
+    const cancelling=endpoint==="status"&&body.cancellationOperation!==undefined;
     const target=completingPass?"pickup-pass-handoff?"+new URLSearchParams({id:focus.number}):endpoint;
     if(checkingPayment)setPaymentCheck({id:body.id,checking:true});
     try{
-      const result=await request("/api/kitchen/"+target,{method:"PATCH",headers:{"Content-Type":"application/json",
+      const send=()=>request("/api/kitchen/"+target,{method:"PATCH",headers:{"Content-Type":"application/json",
         ...(key?{Authorization:"Bearer "+key}:{}),...(completingPass?{"X-Pickup-Pass":pickupPass}:{})},
-        body:JSON.stringify(body),...(checkingPayment?{signal:AbortSignal.timeout(30000)}:{})});
+        body:JSON.stringify(body),...(checkingPayment||cancelling?{signal:AbortSignal.timeout(checkingPayment?30_000:10_000)}:{})});
+      const result=await send().catch(error=>{
+        if(!cancelling||(error.status&&error.status<500))throw error;
+        return send();
+      });
       if(checkingPayment){
         setPaymentCheck({id:body.id,message:paymentCheckMessage(result)});
       }
       if(focused&&endpoint==="status"){
         setRows(null);
         setActionMessage(handoffOnly?"已完成交餐。":"餐單已更新為「"+labels[body.to]+"」。");
+      }
+      if(cancelling){
+        setRows(rows=>rows?.map(order=>order.id===body.id?{...order,status:"cancelled",overdue:undefined}:order)??null);
+        setActionMessage("餐單 "+numberOf(body.id)+" 已取消 · "+staffCancellationReasons[result.cancellationReason]+"。");
       }
       if(endpoint==="table")setActionMessage("餐單 "+numberOf(body.id)+" 已換到 "+body.to+" 桌。");
       if(endpoint==="demo-refund"){
@@ -277,7 +306,7 @@ export default function Kitchen(){
         setActionMessage(e.status===409&&!completingPass?"餐單狀態已更新，請核對最新狀態。":e.message);
         setRows(null);
         setRevision(v=>v+1);
-      }else if(endpoint==="table"||endpoint==="table-handoff"||endpoint==="demo-refund"||body.tableRevision!==undefined||body.pickupRevision!==undefined){
+      }else if(cancelling||endpoint==="table"||endpoint==="table-handoff"||endpoint==="demo-refund"||body.tableRevision!==undefined||body.pickupRevision!==undefined){
         setActionMessage(e.message);
         setRevision(v=>v+1);
       }else setError(e.message);

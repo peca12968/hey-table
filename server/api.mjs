@@ -3,6 +3,7 @@ import {comboVersion,priceCombos} from "../lib/combo-pricing.mjs";
 import qrcode from "qrcode-generator";
 import {dishes, itemNoteLimit, numberOf, tables, transitions} from "../lib/menu.mjs";
 import {intakeLabels,intakeNotice} from "../lib/order-intake.mjs";
+import {staffCancellationReasons} from "../lib/order-cancellation.mjs";
 import {businessDate,businessDayRange} from "../lib/business-day.mjs";
 import {changePortionLimit,copyPortionLimits,dailyLimits,exceededOrderPortions,exceededPortions,portionLimitHistory,
   readRemaining,restockHistory,restockPortions,restorePortionLimit,supplyTime} from "./daily-limits.mjs";
@@ -102,9 +103,12 @@ function kitchenOrder(row,capturedAt){
 }
 function statusHistory(row) {
   const history = [{status:"pending",at:row.created}];
-  for (const {from,status,at,actor,pickupPassRevision} of JSON.parse(row.status_history ?? "[]")) {
+  for (const {from,status,at,actor,pickupPassRevision,cancellationReason} of JSON.parse(row.status_history ?? "[]")) {
     if (history.at(-1).status !== from) history.push({status:from,at:null});
+    const staffReason=status==="cancelled"&&actor==="staff"&&typeof cancellationReason==="string"&&
+      Object.hasOwn(staffCancellationReasons,cancellationReason);
     history.push({status,at,...(status==="cancelled"&&["customer","payment_expiry","demo_refund"].includes(actor)?{actor}:{}),
+      ...(staffReason?{actor:"staff",cancellationReason}:{}),
       ...(status==="completed"&&Number.isSafeInteger(pickupPassRevision)&&pickupPassRevision>0?{handoff:"pickup-pass"}:{})});
   }
   if (history.at(-1).status !== row.status) history.push({status:row.status,at:null});
@@ -666,6 +670,7 @@ export async function api(request, env) {
     const row=lookup.results[0];
     if(!row)return fail("找不到訂單",404);
     const order=receipt(row);
+    if(order.status==="cancelled")order.cancellationReason=statusHistory(row).at(-1)?.cancellationReason;
     if(row.demo_refund_receipt)order.demoRefund=JSON.parse(row.demo_refund_receipt);
     return ticketTextAttachment(orderDetailsText(order,capturedAt),"order",order.id);
   }
@@ -1181,6 +1186,11 @@ export async function api(request, env) {
   if (path === "/api/kitchen/status" && method === "PATCH") {
     if (!Number.isSafeInteger(input.id) || !Object.hasOwn(transitions,input.from) ||
         !transitions[input.from].includes(input.to)) return fail("無效的訂單狀態轉換");
+    const {cancellationReason,cancellationOperation}=input;
+    const reasoned=cancellationReason!==undefined||cancellationOperation!==undefined;
+    if(reasoned&&(input.to!=="cancelled"||typeof cancellationReason!=="string"||
+      !Object.hasOwn(staffCancellationReasons,cancellationReason)||typeof cancellationOperation!=="string"||!uuid.test(cancellationOperation)))
+      return fail("請選擇有效的店家取消原因。");
     const expectedTable=input.tableRevision;
     if(expectedTable!==undefined&&(input.to!=="completed"||!Number.isSafeInteger(expectedTable)||expectedTable<0))
       return fail("桌號版本無效");
@@ -1192,12 +1202,25 @@ export async function api(request, env) {
     const now=Date.now();
     const prepGuard=input.to==="preparing"?` AND (pickup_slot IS NULL OR
       (pickup_slot<=? AND COALESCE(json_array_length(pickup_changes),0)=?))`:"";
-    const {meta} = await db.prepare(`UPDATE orders SET status=?,
-      status_history=json_insert(COALESCE(status_history,'[]'),'$[#]',json_object('from',status,'status',?,'at',?))
+    const operation=reasoned?cancellationOperation.toLowerCase():null;
+    const staffEvent=reasoned?",'actor','staff','cancellationReason',?,'cancelOp',?":"";
+    const change=db.prepare(`UPDATE orders SET status=?,
+      status_history=json_insert(COALESCE(status_history,'[]'),'$[#]',json_object('from',status,'status',?,'at',?${staffEvent}))
       WHERE id=? AND status=? AND `+(input.to==="cancelled" ?
       "(payment_method='cash' OR COALESCE("+latestState+",'unpaid') IN ('unpaid','failed','cancelled','refunded'))" : payableForKitchen)+readyGuard+tableGuard+prepGuard)
-      .bind(input.to,input.to,now,input.id,input.from,...(expectedTable===undefined?[]:[expectedTable]),
-        ...(prepGuard?[now+pickupPrepLead,expectedPickup??0]:[])).run();
+      .bind(input.to,input.to,now,...(reasoned?[cancellationReason,operation]:[]),input.id,input.from,
+        ...(expectedTable===undefined?[]:[expectedTable]),...(prepGuard?[now+pickupPrepLead,expectedPickup??0]:[]));
+    if(reasoned){
+      const [,confirmation]=await db.batch([change,
+        db.prepare(`SELECT id,json_extract(status_history,'$[#-1].at') AS cancelledAt FROM orders
+          WHERE id=? AND status='cancelled' AND json_extract(status_history,'$[#-1].actor')='staff'
+          AND json_extract(status_history,'$[#-1].cancellationReason')=?
+          AND json_extract(status_history,'$[#-1].cancelOp')=?`).bind(input.id,cancellationReason,operation),
+      ]);
+      const saved=confirmation.results[0];
+      return saved?json({ok:true,...saved,cancellationReason}):fail("餐單或付款狀態已變更，請重新核對。",409);
+    }
+    const {meta}=await change.run();
     return meta.changes ? json({ok:true}) : fail(input.to==="ready"?"訂單已更新，請重新整理或開啟分站看板":
       expectedPickup!==undefined?"取餐時段或餐單狀態已更新，請核對後再接單。":"訂單已更新，請重新整理",409);
   }

@@ -3054,6 +3054,56 @@ test("shift handoff demo recomputes opening and resolved snapshots",async()=>{
   assert.deepEqual(await buildShiftHandoffDemo(),saved);
 });
 
+test("staff cancellation keeps one reason and recovers the original result without bypassing payment state",async t=>{
+  const db=database();
+  t.after(()=>db.sqlite.close());
+  let now=1795492920000;
+  t.mock.method(Date,"now",()=>now);
+  const staff={Authorization:"Bearer fixture-staff"};
+  const add=db.sqlite.prepare(`INSERT INTO orders(id,token,mode,status,items,note,total,created,payment_method,payment_env)
+    VALUES (?,?,'pickup','pending','[]','',45,?,?,?)`);
+  const receiptToken=crypto.randomUUID(),paidToken=crypto.randomUUID(),legacyToken=crypto.randomUUID();
+  add.run(1,receiptToken,now-120_000,"cash","cash");
+  add.run(2,paidToken,now-120_000,"line_pay","sandbox");
+  add.run(3,legacyToken,now-120_000,"cash","cash");
+  db.sqlite.prepare(`INSERT INTO payment_attempts(order_id,reference,merchant,state,created)
+    VALUES (2,'authorized-test','fixture','authorized',?)`).run(now-1000);
+  const call=(path,options)=>api(new Request("https://order.example/api"+path,options),{DB:db,STAFF_KEY:"fixture-staff"});
+  const change=(body,headers=staff)=>call("/kitchen/status",{method:"PATCH",
+    headers:{...headers,"Content-Type":"application/json"},body:JSON.stringify({from:"pending",to:"cancelled",...body})});
+  const reason={cancellationReason:"sold_out",cancellationOperation:crypto.randomUUID()};
+  const other={cancellationReason:"capacity",cancellationOperation:crypto.randomUUID()};
+  assert.equal((await change({id:1,...reason},{})).status,403);
+  for(const invalid of [{...reason,cancellationReason:"自由輸入"},{cancellationReason:"sold_out"},
+    {...reason,cancellationOperation:"broken"},{...reason,to:"preparing"}])
+    assert.equal((await change({id:1,...invalid})).status,400);
+  assert.equal((await change({id:2,...reason})).status,409);
+  assert.equal(db.sqlite.prepare("SELECT status FROM orders WHERE id=2").get().status,"pending");
+  const choices=[reason,other];
+  const attempts=await Promise.all(choices.map(candidate=>change({id:1,...candidate})));
+  assert.deepEqual(attempts.map(result=>result.status).sort(),[200,409]);
+  const index=attempts.findIndex(result=>result.status===200),winner=choices[index];
+  const saved=await attempts[index].json();
+  assert.deepEqual(saved,{ok:true,id:1,cancelledAt:now,cancellationReason:winner.cancellationReason});
+  now+=1000;
+  assert.deepEqual(await (await change({id:1,...winner})).json(),saved);
+  assert.equal((await change({id:1,...winner,cancellationReason:choices[1-index].cancellationReason})).status,409);
+  const ticket=async token=>(await (await call("/ticket?progress=1",{headers:{"X-Ticket":token}})).json());
+  const publicEvent={status:"cancelled",at:saved.cancelledAt,actor:"staff",cancellationReason:saved.cancellationReason};
+  const order=await ticket(receiptToken);
+  assert.deepEqual(order.statusHistory.slice(1),[publicEvent]);
+  assert.ok(!JSON.stringify(order).includes(winner.cancellationOperation));
+  const detail=await (await call("/kitchen/order-detail?id=1",{headers:staff})).json();
+  assert.deepEqual(detail.statusHistory.slice(1),[publicEvent]);
+  assert.ok(!JSON.stringify(detail).includes(winner.cancellationOperation));
+  const file=await (await call("/ticket/order-details",{headers:{"X-Ticket":receiptToken}})).text();
+  assert.match(file,winner===reason?/取消原因 品項售完/:/取消原因 店家暫時無法接單/);
+  assert.ok(!file.includes(winner.cancellationOperation));
+
+  assert.deepEqual(await (await change({id:3})).json(),{ok:true});
+  assert.deepEqual((await ticket(legacyToken)).statusHistory.at(-1),{status:"cancelled",at:now});
+});
+
 test("daily pickup punctuality uses the current booked date, cutoff and recorded readiness",async t=>{
   const db=database();
   t.after(()=>db.sqlite.close());
