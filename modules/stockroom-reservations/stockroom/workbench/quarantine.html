@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>隔離品複驗｜Stockroom</title>
+  <link rel="stylesheet" href="/workbench/assets/quarantine.css">
+  <script type="module" src="/workbench/assets/quarantine.mjs"></script>
+</head>
+<body>
+  <header>
+    <div class="shell">
+      <span>Stockroom</span>
+      <h1>隔離品複驗</h1>
+    </div>
+  </header>
+  <main class="shell">
+    <section class="panel" aria-labelledby="batch-heading">
+      <h2 id="batch-heading">查詢驗收批</h2>
+      <form class="actions" id="batch-form">
+        <label>驗收批號<input id="batch" required maxlength="80" pattern="[A-Za-z0-9_\-]+" autocomplete="off"></label>
+        <button>查詢隔離品</button>
+      </form>
+    </section>
+    <p id="status" role="status" hidden></p>
+    <p id="error" role="alert" hidden></p>
+    <section class="panel" id="balances" aria-labelledby="balance-heading" hidden>
+      <h2 id="balance-heading">隔離箱件</h2>
+      <p id="balance-summary"></p>
+      <form id="decision-form">
+        <div id="box-list"></div>
+        <div class="actions" id="draft-actions">
+          <button id="review">核對複驗內容</button>
+        </div>
+      </form>
+    </section>
+    <section class="panel" id="review-panel" aria-labelledby="review-heading" hidden>
+      <h2 id="review-heading">確認複驗內容</h2>
+      <p id="operation"></p>
+      <ul id="review-list"></ul>
+      <div class="actions">
+        <button id="submit">確認登記</button>
+        <button id="edit" type="button" class="outline">返回修改</button>
+      </div>
+    </section>
+    <section class="panel" id="receipt-panel" aria-labelledby="receipt-heading" hidden>
+      <h2 id="receipt-heading">複驗收據</h2>
+      <p id="receipt-id"></p>
+      <ul id="receipt-list"></ul>
+      <button class="outline" id="download">下載複驗收據 JSON</button>
+    </section>
+    <section class="panel" aria-labelledby="lookup-heading">
+      <h2 id="lookup-heading">查詢原收據</h2>
+      <form class="actions" id="receipt-form">
+        <label>收據驗收批號<input id="lookup-batch" required maxlength="80" pattern="[A-Za-z0-9_\-]+" autocomplete="off"></label>
+        <label>複驗單號<input id="lookup-id" required maxlength="80" pattern="[A-Za-z0-9_\-]+" autocomplete="off"></label>
+        <button class="outline">查詢收據</button>
+      </form>
+    </section>
+  </main>
+</body>
+</html>

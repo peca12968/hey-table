@@ -173,6 +173,17 @@ curl http://127.0.0.1:8000/return-inspections/dock/dispositions/review-1
 
 若其間有其他人處理同一箱，任何一箱餘額改變都會拒絕整批，須重新查餘額。複驗合格才增加可販售庫存。箱別查詢的 `quarantined` 是仍待處理的件數，`discarded` 是累計報廢，`restocked` 含初驗回庫和複驗回庫。原退貨驗收收據保留初驗資料，複驗收據保存原因和當時餘額。相同複驗單號與內容可安全重送，且可在 SQLite 快照對帳中分別核對回庫與報廢。[升級、重試與並行複驗測試](tests/test_quarantine_dispositions.py)
 
+### 用瀏覽器處理隔離品複驗
+
+從本模組目錄安裝 `requirements.txt` 並啟動 Stockroom。開啟 `http://127.0.0.1:8000/workbench/quarantine`，輸入已有隔離品的驗收批號。
+
+```sh
+python -m pip install -r requirements.txt
+python -m uvicorn stockroom.api:app --host 127.0.0.1 --port 8000
+```
+
+填寫各箱的回庫、報廢件數與原因，先按「核對複驗內容」，確認後再登記。其他人先改了餘額時，畫面會重新讀取各箱並請店員核對。若連線斷在送出後，原複驗單會暫存在同一分頁，重新整理後仍可用原單號重試。可憑驗收批號和複驗單號查原收據、下載 JSON。工作台使用同一個 Stockroom 服務與既有 API。[手機端對端測試](../../qa/stockroom-quarantine.spec.mjs) · [私人試玩](https://peca-github-demo.peca12968.chatgpt.site/?demo=quarantineDisposition#demos)
+
 ## 兩次盤點都是 20 件，期間進出了多少貨？
 
 以同一倉庫的期初 SQLite 備份與期末資料庫執行下列指令，即可依商品核對每一筆數量異動。期初檔應來自 SQLite 線上備份，例如在班前以 SQLite CLI 執行 `sqlite3 data/stockroom.db ".backup 'opening.db'"`，並使用新的備份檔名。請將資料庫路徑換成服務實際使用的檔案。

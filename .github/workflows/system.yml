@@ -20,6 +20,7 @@ jobs:
     - run: node --test qa/tappay.test.mjs
     - run: npm run build
     - run: npm ci --prefix qa
+    - run: python -m pip install -r modules/stockroom-reservations/requirements.txt
     - run: npx playwright install --with-deps chromium
       working-directory: qa
     - run: npx playwright test

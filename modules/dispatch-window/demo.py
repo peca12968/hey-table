@@ -84,6 +84,11 @@ def condition_demo(client, request):
 def disposition_demo(client):
     batch, operation = "dock-conditions", "quality-review"
     path = "/return-inspections/" + batch
+    workbench_url = "/workbench/quarantine"
+    workbench = client.get(workbench_url)
+    assert workbench.status_code == 200
+    assert workbench.headers["Cache-Control"] == "no-store"
+    assert 'id="decision-form"' in workbench.text
     stock_before = client.get("/inventory").json()[0]
     original = client.get(path).json()
     waiting = client.get(path + "/quarantine").json()
@@ -113,7 +118,8 @@ def disposition_demo(client):
     stock_after = client.get("/inventory").json()[0]
     assert stock_after["available"] == stock_before["available"] + 1
     assert stock_after["capacity"] == stock_before["capacity"] + 1
-    return {"format": "dispatch-window.quarantine-disposition-demo.v1", "waiting": waiting, "decisions": decisions,
+    return {"format": "dispatch-window.quarantine-disposition-demo.v1", "workbench": workbench_url,
+            "waiting": waiting, "decisions": decisions,
             "stale_status": stale.status_code, "created_status": confirmed.status_code, "replay_status": replay.status_code,
             "receipt": replay.json(), "final": final, "inventory_before": stock_before, "inventory_after": stock_after}
 

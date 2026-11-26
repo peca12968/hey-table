@@ -7,7 +7,7 @@ import time
 from typing import Annotated, Literal
 
 from fastapi import FastAPI, Header, HTTPException, Query, Response
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, field_validator, model_validator
 from prometheus_client import CollectorRegistry, Counter, generate_latest, CONTENT_TYPE_LATEST
 
@@ -624,6 +624,23 @@ def create_app(path: Path, *, ttl_seconds=900, clock=time.time):
         yield
 
     app = FastAPI(title="Stockroom Reservations", version="1.7", lifespan=lifespan)
+    workbench = Path(__file__).resolve().parent / "workbench"
+
+    @app.get("/workbench/assets/{name}", include_in_schema=False)
+    def quarantine_asset(name: str):
+        media_type = {"quarantine.mjs": "text/javascript", "quarantine.css": "text/css"}.get(name)
+        if media_type is None:
+            raise HTTPException(status_code=404)
+        return FileResponse(workbench / "assets" / name, media_type=media_type, headers={"X-Content-Type-Options": "nosniff"})
+
+    @app.get("/workbench/quarantine", include_in_schema=False)
+    def quarantine_workbench():
+        return FileResponse(workbench / "quarantine.html", media_type="text/html", headers={
+            "Cache-Control": "no-store",
+            "Content-Security-Policy": "default-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'",
+            "Referrer-Policy": "no-referrer",
+            "X-Content-Type-Options": "nosniff",
+        })
     registry = CollectorRegistry()
     requests = Counter("http_requests_total", "Application requests by HTTP response status.", ["status"], registry=registry)
     for status in ("200", "201", "404", "409", "422", "500"):

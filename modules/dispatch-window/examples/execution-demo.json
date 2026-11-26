@@ -901,6 +901,7 @@
   },
   "quarantine_disposition": {
     "format": "dispatch-window.quarantine-disposition-demo.v1",
+    "workbench": "/workbench/quarantine",
     "waiting": {
       "batch_id": "dock-conditions",
       "boxes": [

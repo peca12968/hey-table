@@ -24,6 +24,8 @@ Stockroom 支援在一筆交易內保留多個 SKU。若其中一項缺貨，該
 
 隔離品複驗可一次登記各箱回庫、報廢與原因，寫入時核對店員擷取的待處理件數，並保存獨立收據供交班查核。[隔離品複驗](modules/stockroom-reservations/README.md#複驗隔離品並登記回庫或報廢)
 
+Stockroom 服務提供隔離品複驗工作台，可在手機瀏覽器查批號、先核對再登記，並下載原收據。[隔離品工作台](modules/stockroom-reservations/README.md#用瀏覽器處理隔離品複驗)
+
 交班可按 SKU 查已到期的保留單，核對部分出貨或減量後的釋回件數，以及實際回收時間。[到期回收紀錄](modules/stockroom-reservations/README.md#查閱已到期的庫存回收)
 
 倉庫可按實點結果調整庫存，保留已占用件數與調整前後紀錄。盤點期間若出貨或入庫改變庫存版次，須重新核對。[實點調整與稽核](modules/stockroom-reservations/README.md#核對實點後調整庫存)
