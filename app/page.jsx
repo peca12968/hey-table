@@ -1,7 +1,7 @@
 "use client";
 import {useCallback,useEffect,useRef,useState} from "react";
 import {Plus,Minus,ShoppingBag,X,Utensils,Check} from "lucide-react";
-import {dishes,itemNoteLimit,tables,withItemNotes} from "../lib/menu.mjs";
+import {dishes,itemNoteLimit,orderNoteLimit,tables,withItemNotes} from "../lib/menu.mjs";
 import {Header,Footer,Mode,request} from "./shared";
 import {cartKey,claimCart,dispatchCart,openReceipt,persistCart,read,readCart,sameCheckout,settleCart} from "../lib/order-storage.mjs";
 import {comboVersion,priceCombos} from "../lib/combo-pricing.mjs";
@@ -392,7 +392,7 @@ export default function Menu(){
       <CartAddOn key={addOnBody+JSON.stringify(unavailableForAddOn)} body={addOnBody} sold={unavailableForAddOn} onAdd={id=>change(id,1)}/>}
     {count>0&&<ItemNotesEditor dishes={lines} notes={lineNotes} disabled={!!draft||busy} onChange={(id,value)=>
       setSelection(current=>({...current,lineNotes:{...current.lineNotes,[id]:value}}))}/>}
-    {count>0&&<label className="note">訂單備註 <small>選填</small><textarea placeholder="例如：餐具數量" value={note} maxLength={160} disabled={!!draft||busy} onChange={e=>setNote(e.target.value)}/></label>}
+    {count>0&&<label className="note">訂單備註 <small>選填</small><textarea placeholder="例如：餐具數量" value={note} maxLength={orderNoteLimit} disabled={!!draft||busy} onChange={e=>setNote(e.target.value)}/></label>}
     {count>0&&scope&&mode==="pickup"&&<PickupSlots selected={pickupSlot} count={count} day={bookingDay} disabled={!!draft||busy||paused}
       onChange={value=>{setPickupSlot(value);setError("");}} availability={pickupAvailability}/>}
     {count>0&&scope&&mode==="pickup"&&suggestPickup&&<PickupSuggestion key={JSON.stringify([supplyDay,items])}

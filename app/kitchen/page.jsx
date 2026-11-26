@@ -154,7 +154,8 @@ function KitchenTicket({order,busy,update,movePickup,recordCash,refresh,today,st
     {showDelayEstimate&&<p className={order.pickupDelay.passed?"kitchenOverdue":"muted"}>
       {order.pickupDelay.passed?"已過預計備妥時間":"預計備妥時間"} <PickupDelayTime at={order.pickupDelay.readyAt}/></p>}
     <ul className="orderLines">{items.map(dish=><li key={dish.id}><div>{dish.name}<ItemNote note={dish.note}/></div><b>×{dish.qty}</b></li>)}</ul>
-    {note&&<p>備註　{note}</p>}
+    {note&&<p className="orderNoteText">備註　{note}</p>}
+    {order.noteRevision>0&&<p className="muted">{note?"顧客已更新餐單備註":"顧客已清除餐單備註"} · <PickupDelayTime at={order.noteUpdatedAt}/></p>}
     <p>{Object.hasOwn(methods,paymentMethod)?methods[paymentMethod]:"付款方式未記錄"} {paymentMethod!=="cash"&&
       [environmentLabel(paymentEnv)||"環境未記錄",Object.hasOwn(paymentStates,paymentState)?paymentStates[paymentState]:"付款狀態未記錄"].join(" · ")}</p>
     {paymentReview&&paymentMethod==="cash"&&!order.cashReceipt&&<p>未登記現金</p>}
@@ -183,6 +184,7 @@ function KitchenTicket({order,busy,update,movePickup,recordCash,refresh,today,st
           update("status",{id,from:status,to:next,cancellationReason,cancellationOperation:crypto.randomUUID()})}/>:
         <button disabled={busy||(next==="preparing"&&order.pickupUpcoming)||!canPrepare(order)} className="primary" key={next}
           onClick={()=>update("status",{id,from:status,to:next,...(table&&next==="completed"?{tableRevision}:{}),
+            ...(next==="preparing"?{noteRevision:order.noteRevision??0}:{}),
             ...(next==="preparing"&&order.pickupSlot!=null?{pickupRevision:order.pickupRevision??0}:{})})}>{action[next]}</button>)}
     </div>
     {canCheckPayment&&paymentCheck?.message&&<p role="status">{paymentCheck.message}</p>}
@@ -303,10 +305,11 @@ export default function Kitchen(){
         setPaymentCheck({id:body.id,message:"無法查詢金流，請稍後再查。"});
         setRevision(v=>v+1);
       }else if(focused){
-        setActionMessage(e.status===409&&!completingPass?"餐單狀態已更新，請核對最新狀態。":e.message);
+        setActionMessage(e.status===409&&!completingPass&&e.code!=="note_changed"?"餐單狀態已更新，請核對最新狀態。":e.message);
         setRows(null);
         setRevision(v=>v+1);
-      }else if(cancelling||endpoint==="table"||endpoint==="table-handoff"||endpoint==="demo-refund"||body.tableRevision!==undefined||body.pickupRevision!==undefined){
+      }else if(cancelling||endpoint==="table"||endpoint==="table-handoff"||endpoint==="demo-refund"||
+        body.tableRevision!==undefined||body.pickupRevision!==undefined||body.noteRevision!==undefined){
         setActionMessage(e.message);
         setRevision(v=>v+1);
       }else setError(e.message);

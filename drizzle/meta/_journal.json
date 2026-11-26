@@ -351,6 +351,13 @@
       "when": 1795650729867,
       "tag": "0049_payment_follow_up",
       "breakpoints": true
+    },
+    {
+      "idx": 50,
+      "version": "6",
+      "when": 1795665000000,
+      "tag": "0050_order_note_update",
+      "breakpoints": true
     }
   ]
 }

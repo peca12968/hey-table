@@ -22,6 +22,7 @@ import {applyDemoMigrations} from "../scripts/apply-demo-migrations.mjs";
 import {buildReturnLedgerDemo} from "../scripts/return-ledger-demo.mjs";
 import {buildPaymentAttentionDemo} from "../scripts/payment-attention-demo.mjs";
 import {buildPickupPassHandoffDemo} from "../scripts/pickup-pass-handoff-demo.mjs";
+import {buildReceiptNoteDemo} from "../scripts/receipt-note-demo.mjs";
 import {buildPickupRosterFollowUpDemo} from "../scripts/pickup-roster-followup-demo.mjs";
 import {buildCashCloseComparisonDemo} from "../scripts/cash-close-comparison-demo.mjs";
 import {buildShiftHandoffDemo} from "../scripts/shift-handoff-demo.mjs";
@@ -1182,6 +1183,55 @@ test("upgrade old receipt progress without making up transition times",async t=>
   const milestones=history=>history.map(({status,at})=>[status,at===null]);
   assert.deepEqual(milestones(statusHistory),milestones(sample.find(row=>row.scenario==="legacy").statusHistory));
 });
+test("the receipt note demonstration matches actual D1 workflow results",async()=>{
+  const sample=JSON.parse(readFileSync(new URL("../examples/receipt-progress.json",import.meta.url),"utf8"));
+  assert.deepEqual(await buildReceiptNoteDemo(),sample.find(row=>row.scenario==="table").noteUpdate);
+});
+
+test("ticket notes reject other receipts, simultaneous stale edits, and edits after kitchen acceptance",async t=>{
+  const DB=database(),env={DB,STAFF_KEY:"local-test-key"};
+  t.after(()=>DB.sqlite.close());
+  const staff={Authorization:"Bearer local-test-key"};
+  const token=crypto.randomUUID(),other=crypto.randomUUID(),ticket={"X-Ticket":token};
+  const call=(path,headers={},data,method=data?"PATCH":"GET")=>api(new Request("https://order.example/api"+path,{
+    method,headers:{...headers,...(data?{"Content-Type":"application/json"}:{})},body:data?JSON.stringify(data):undefined,
+  }),env);
+  const payload={token,mode:"pickup",note:"原備註",items:[{id:"sencha",qty:1}]};
+  const response=await call("/orders",{},payload,"POST");
+  assert.equal(response.status,200);
+  const first=await response.json(),{id}=first;
+  const notePath="/ticket/note";
+  const patch=(note,expectedRevision,headers=ticket)=>call(notePath,headers,{note,expectedRevision});
+  assert.equal((await patch("一份餐具",0)).status,200);
+  // A well-formed token for an unrelated or missing receipt cannot modify this order.
+  assert.equal((await patch("其他餐單",1,{"X-Ticket":other})).status,404);
+  assert.equal((await patch("缺少憑證",1,{})).status,404);
+  assert.equal((await patch("食".repeat(161),1)).status,400);
+  assert.equal((await patch("無效版本",true)).status,400);
+  const edits=await Promise.all([patch("兩份餐具",1),patch("三份餐具",1)]);
+  assert.deepEqual(edits.map(r=>r.status).sort(),[200,409]);
+  const saved=await edits.find(r=>r.ok).json();
+  assert.equal(saved.noteRevision,2);
+  assert.equal((await edits.find(r=>!r.ok).json()).code,"note_changed");
+  const clear=await patch(" ",2);
+  assert.equal(clear.status,200);
+  assert.equal((await clear.json()).note,"");
+  assert.equal(DB.sqlite.prepare("SELECT note FROM orders WHERE id=?").get(id).note,"原備註");
+  const read=async()=> (await call("/ticket",ticket)).json();
+  const {total,items,paymentMethod,note,noteRevision}=await read();
+  assert.deepEqual({total,items,paymentMethod,note,noteRevision},{
+    total:first.total,items:first.items,paymentMethod:first.paymentMethod,note:"",noteRevision:3,
+  });
+  const legacy=await call("/kitchen/status",staff,{id,from:"pending",to:"preparing"});
+  assert.equal(legacy.status,409);
+  assert.equal((await legacy.json()).code,"note_changed");
+  assert.equal((await call("/kitchen/status",staff,{id,from:"pending",to:"preparing",noteRevision:3})).status,200);
+  assert.equal((await patch("來不及修改",3)).status,409);
+  assert.equal((await patch(" ",2)).status,200);
+  assert.equal((await read()).note,"");
+  assert.equal((await call("/orders",{},payload,"POST")).status,200);
+});
+
 test("daily operations uses Taipei midnight and aggregates completed purchase snapshots",async t=>{
   const db=database();
   t.after(()=>db.sqlite.close());

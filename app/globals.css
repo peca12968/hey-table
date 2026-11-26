@@ -94,9 +94,10 @@
 .receiptHistory li a{color:var(--green);font-weight:700}
 .receiptHistory li small{display:block;color:var(--muted)}
 .receiptHistory li button{min-height:40px;flex:none}
-.cancelReceipt{margin-block:12px}
-.cancelReceipt p{margin:0 0 8px}
-.cancelReceipt button{min-height:40px}
+.cancelReceipt,.receiptNote{margin-block:12px}
+:is(.cancelReceipt,.receiptNote) p{margin:0 0 8px}
+:is(.cancelReceipt,.receiptNote) button{min-height:40px}
+.orderNoteText{overflow-wrap:anywhere;white-space:pre-wrap}
 .section .tableMove{margin:12px 0 0}
 .tableMove summary{cursor:pointer;color:var(--green);font-weight:650}
 .tableMove form{align-items:end;gap:8px}

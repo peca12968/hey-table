@@ -1,9 +1,10 @@
 import {addOnFor} from "./add-ons.mjs";
 import {comboVersion,priceCombos} from "../lib/combo-pricing.mjs";
 import qrcode from "qrcode-generator";
-import {dishes, itemNoteLimit, numberOf, tables, transitions} from "../lib/menu.mjs";
+import {dishes, itemNoteLimit, numberOf, orderNoteLimit, tables, transitions} from "../lib/menu.mjs";
 import {intakeLabels,intakeNotice} from "../lib/order-intake.mjs";
 import {staffCancellationReasons} from "../lib/order-cancellation.mjs";
+import {orderNote,orderNoteRevision,updateOrderNote} from "./order-note.mjs";
 import {businessDate,businessDayRange} from "../lib/business-day.mjs";
 import {changePortionLimit,copyPortionLimits,dailyLimits,exceededOrderPortions,exceededPortions,portionLimitHistory,
   readRemaining,restockHistory,restockPortions,restorePortionLimit,supplyTime} from "./daily-limits.mjs";
@@ -79,7 +80,7 @@ function positiveQueryId(url,name){
   return values.length===1&&/^[1-9]\d{0,15}$/.test(value)&&Number.isSafeInteger(id)?id:null;
 }
 function receipt(row) {
-  return {id:row.id, mode:row.mode, table:row.table_no, note:row.note, items:JSON.parse(row.items),
+  return {id:row.id, mode:row.mode, table:row.table_no, ...orderNote(row), items:JSON.parse(row.items),
     ...(row.source === "staff" ? {source:row.source} : {}),
     ...(row.pickup_slot!=null ? {pickupSlot:row.pickup_slot} : {}),
     ...(row.mode==="pickup"&&row.pickup_arrived_at!=null ? {pickupArrivedAt:row.pickup_arrived_at} : {}),
@@ -150,7 +151,7 @@ function prepare(input) {
   if (typeof input.token!=="string" || !uuid.test(input.token) || typeof input.mode!=="string" || !Object.hasOwn(intakeLabels,input.mode) ||
       (input.mode === "table" ? !tables.includes(input.table) : input.table != null) ||
       (pickupSlot!==null&&(input.mode!=="pickup"||!Number.isSafeInteger(pickupSlot)||pickupSlot<1)) ||
-      typeof input.note !== "string" || input.note.length > 160) return null;
+      typeof input.note !== "string" || input.note.length > orderNoteLimit) return null;
   const items = menuItems(input.items,true);
   if (!items) return null;
   return {token:input.token,mode:input.mode,table:input.table??null,pickupSlot,note:input.note.trim(),items,
@@ -812,6 +813,20 @@ export async function api(request, env) {
     return row.pickup_arrived_at==null?fail("目前無法回報到店，請核對餐單與付款狀態。",409):
       json({id:row.id,pickupArrivedAt:row.pickup_arrived_at});
   }
+  if (path === "/api/ticket/note" && method === "PATCH") {
+    const token=request.headers.get("X-Ticket");
+    if(!uuid.test(token))return fail("找不到訂單",404);
+    const {note,expectedRevision}=input;
+    if(typeof note!=="string"||note.length>orderNoteLimit||!Number.isSafeInteger(expectedRevision)||
+      expectedRevision<0||expectedRevision>=Number.MAX_SAFE_INTEGER)
+      return fail("請確認備註及版本，備註最多 160 字。");
+    const result=await updateOrderNote(db,token,note.trim(),expectedRevision,Date.now());
+    if(result.state==="saved")return json(result.receipt);
+    if(result.state==="missing")return fail("找不到訂單",404);
+    return result.state==="conflict"?
+      json({error:"備註已有新版，請核對收據後再修改。",code:"note_changed"},409):
+      json({error:"餐單已開始處理或已結束，可在收據查看最後保存的備註。",code:"note_closed"},409);
+  }
   if (path === "/api/ticket/cancel" && method === "POST") {
     const token=request.headers.get("X-Ticket");
     if(!uuid.test(token))return fail("找不到訂單",404);
@@ -992,10 +1007,10 @@ export async function api(request, env) {
     if(id===null||url.searchParams.getAll("id").length!==1)return fail("請輸入有效的餐號。");
     const row=await db.prepare(`${orderColumns},${demoRefundReceiptColumn} FROM orders WHERE id=?`).bind(id).first();
     if(!row)return fail("找不到這張餐單。",404);
-    const {mode,table,source,pickupSlot,pickupArrivedAt,note,items,total,created,status,
+    const {mode,table,source,pickupSlot,pickupArrivedAt,note,noteUpdatedAt,items,total,created,status,
       paymentMethod,paymentEnv,paymentState,cashReceipt,combo}=receipt(row);
     const demoRefund=row.demo_refund_receipt?JSON.parse(row.demo_refund_receipt):undefined;
-    return json({id,mode,table,source,pickupSlot,pickupArrivedAt,note,total,created,status,
+    return json({id,mode,table,source,pickupSlot,pickupArrivedAt,note,noteUpdatedAt,total,created,status,
       items:items.map(({id,name,qty,price,note})=>({id,name,qty,price,note})),
       paymentMethod,paymentEnv,paymentState,cashReceipt,demoRefund,
       pricing:combo?{subtotal:combo.quote.subtotal,discount:combo.quote.discount}:undefined,
@@ -1197,10 +1212,13 @@ export async function api(request, env) {
     const expectedPickup=input.pickupRevision;
     if(expectedPickup!==undefined&&(input.to!=="preparing"||!Number.isSafeInteger(expectedPickup)||expectedPickup<0))
       return fail("預約版本無效");
+    const expectedNote=input.noteRevision;
+    if(expectedNote!==undefined&&(input.to!=="preparing"||!Number.isSafeInteger(expectedNote)||expectedNote<0))
+      return fail("備註版本無效");
     const readyGuard=input.to==="ready"?" AND station_progress IS NULL":"";
     const tableGuard=expectedTable===undefined?"":" AND COALESCE(json_array_length(table_moves),0)=?";
     const now=Date.now();
-    const prepGuard=input.to==="preparing"?` AND (pickup_slot IS NULL OR
+    const prepGuard=input.to==="preparing"?` AND ${orderNoteRevision}=? AND (pickup_slot IS NULL OR
       (pickup_slot<=? AND COALESCE(json_array_length(pickup_changes),0)=?))`:"";
     const operation=reasoned?cancellationOperation.toLowerCase():null;
     const staffEvent=reasoned?",'actor','staff','cancellationReason',?,'cancelOp',?":"";
@@ -1209,7 +1227,7 @@ export async function api(request, env) {
       WHERE id=? AND status=? AND `+(input.to==="cancelled" ?
       "(payment_method='cash' OR COALESCE("+latestState+",'unpaid') IN ('unpaid','failed','cancelled','refunded'))" : payableForKitchen)+readyGuard+tableGuard+prepGuard)
       .bind(input.to,input.to,now,...(reasoned?[cancellationReason,operation]:[]),input.id,input.from,
-        ...(expectedTable===undefined?[]:[expectedTable]),...(prepGuard?[now+pickupPrepLead,expectedPickup??0]:[]));
+        ...(expectedTable===undefined?[]:[expectedTable]),...(prepGuard?[expectedNote??0,now+pickupPrepLead,expectedPickup??0]:[]));
     if(reasoned){
       const [,confirmation]=await db.batch([change,
         db.prepare(`SELECT id,json_extract(status_history,'$[#-1].at') AS cancelledAt FROM orders
@@ -1221,7 +1239,13 @@ export async function api(request, env) {
       return saved?json({ok:true,...saved,cancellationReason}):fail("餐單或付款狀態已變更，請重新核對。",409);
     }
     const {meta}=await change.run();
-    return meta.changes ? json({ok:true}) : fail(input.to==="ready"?"訂單已更新，請重新整理或開啟分站看板":
+    if(meta.changes)return json({ok:true});
+    if(prepGuard){
+      const current=await db.prepare(`SELECT status,${orderNoteRevision} AS revision FROM orders WHERE id=?`).bind(input.id).first();
+      if(current?.status==="pending"&&current.revision!==(expectedNote??0))
+        return json({error:"顧客已更新餐單備註，請核對後再接單。",code:"note_changed"},409);
+    }
+    return fail(input.to==="ready"?"訂單已更新，請重新整理或開啟分站看板":
       expectedPickup!==undefined?"取餐時段或餐單狀態已更新，請核對後再接單。":"訂單已更新，請重新整理",409);
   }
   if (path === "/api/kitchen/availability" && method === "PATCH") {

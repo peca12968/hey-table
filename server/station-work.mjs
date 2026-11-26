@@ -1,5 +1,6 @@
 import {demoKitchen,stationLabels,stationReview,stationReviewDigest} from "../lib/kitchen-timing.mjs";
 import {payableForKitchen} from "./payment-api.mjs";
+import {currentOrderNote} from "./order-note.mjs";
 
 function stationProgress(row) {
   if(row.station_progress)return JSON.parse(row.station_progress);
@@ -45,7 +46,7 @@ export function preparationByStation(rows,orders) {
 }
 
 export async function stationQueue(db,station) {
-  const {results}=await db.prepare(`SELECT id,table_no,source,note,created,items,station_progress,pickup_slot
+  const {results}=await db.prepare(`SELECT id,table_no,source,${currentOrderNote} AS note,created,items,station_progress,pickup_slot
     FROM orders WHERE status='preparing' AND ${payableForKitchen} ORDER BY created,id`).all();
   return results.flatMap(row=>{
     const {groups,done}=stationProgress(row);
@@ -114,7 +115,7 @@ export async function finishStationBatch(db,station,orders,operationId) {
   const reviews=new Map(reviewed),ids=JSON.stringify([...reviews.keys()]);
   const fingerprint=await stationReviewDigest(JSON.stringify([station,reviewed]));
   const key=operationId??crypto.randomUUID(),writeId=crypto.randomUUID();
-  const {results}=await db.prepare(`SELECT id,table_no,pickup_slot,note,items,station_progress
+  const {results}=await db.prepare(`SELECT id,table_no,pickup_slot,${currentOrderNote} AS note,items,station_progress
     FROM orders WHERE id IN (SELECT value FROM json_each(?))`).bind(ids).all();
   const expected=[];
   for(const row of results){
@@ -136,7 +137,7 @@ export async function finishStationBatch(db,station,orders,operationId) {
         FROM orders JOIN expected ON orders.id=json_extract(snapshot,'$.id')
         WHERE status='preparing' AND ${payableForKitchen}
           AND table_no IS json_extract(snapshot,'$.table') AND pickup_slot IS json_extract(snapshot,'$.slot')
-          AND note IS json_extract(snapshot,'$.note') AND items=json_extract(snapshot,'$.items')
+          AND ${currentOrderNote} IS json_extract(snapshot,'$.note') AND items=json_extract(snapshot,'$.items')
           AND json_extract(COALESCE(station_progress,json_extract(snapshot,'$.initial')),?)=json(json_extract(snapshot,'$.group'))
           AND json_type(station_progress,?) IS NULL)=?
       ON CONFLICT(operation_id) DO NOTHING`)

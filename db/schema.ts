@@ -12,6 +12,7 @@ export const orders = sqliteTable("orders", {
   tableNo: text("table_no"),
   tableMoves: text("table_moves"),
   note: text("note").notNull(),
+  noteUpdate: text("note_update"),
   items: text("items").notNull(),
   paymentMethod: text("payment_method").notNull().default("cash"),
   paymentEnv: text("payment_env").notNull().default("cash"),

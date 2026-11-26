@@ -1439,6 +1439,73 @@ test("mobile receipt follows committed kitchen progress for its own order",async
   expect((await ticket("")).status()).toBe(404);
 });
 
+test("a pending receipt note survives a lost reply and the kitchen has to accept its latest revision",async({context,page,request})=>{
+  const token=randomUUID(),ticket={"X-Ticket":token},staff={Authorization:"Bearer local-test-kitchen"};
+  const payload={token,mode:"table",table:"A03",note:"需要餐具",items:[{id:"sencha",qty:1}]};
+  const created=await request.post("/api/orders",{data:payload});
+  expect(created.status()).toBe(200);
+  const original=await created.json(),number=String(original.id).padStart(4,"0");
+  const lookup=()=>request.get("/api/ticket",{headers:ticket}).then(reply=>reply.json());
+  await page.setViewportSize({width:360,height:780});
+  await context.addInitScript(()=>sessionStorage.setItem("he-ri-staff","local-test-kitchen"));
+  const kitchen=await context.newPage();
+  const oldQueue=await (await request.get("/api/kitchen",{headers:staff})).json();
+  let stale=true;
+  await kitchen.route(url=>url.pathname==="/api/kitchen",async route=>{
+    if(stale)await route.fulfill({json:oldQueue});
+    else await route.continue();
+  });
+  await kitchen.goto("/kitchen");
+  const card=kitchen.locator(".kitchenTicket").filter({has:kitchen.getByRole("heading",{name:"#"+number,exact:true})});
+  await expect(card.getByText("備註　需要餐具")).toBeVisible();
+  const attempts=[];
+  await kitchen.route(url=>url.pathname==="/api/kitchen/status",async route=>{
+    attempts.push(route.request().postDataJSON().noteRevision);
+    const reply=await route.fetch();
+    if(attempts.length===1){
+      expect(reply.status()).toBe(409);
+      expect((await reply.json()).code).toBe("note_changed");
+      stale=false;
+    }
+    await route.fulfill({response:reply});
+  });
+
+  await page.goto("/ticket#"+token);
+  const notes=page.getByRole("region",{name:"餐單備註"});
+  await notes.getByRole("button",{name:"修改餐單備註"}).click();
+  await notes.getByRole("textbox",{name:/編輯餐單備註/}).fill("需要兩副餐具");
+  let sends=0;
+  await page.route(url=>url.pathname==="/api/ticket/note",async route=>{
+    sends++;
+    const reply=await route.fetch();
+    expect(reply.status()).toBe(200);
+    expect((await reply.json()).noteRevision).toBe(1);
+    await route.abort("connectionreset");
+  });
+  await notes.getByRole("button",{name:"儲存備註"}).click();
+  await expect(notes.getByRole("status")).toHaveText("餐單備註已更新。");
+  await notes.getByRole("button",{name:"完成",exact:true}).click();
+  expect((await lookup()).noteRevision).toBe(1);
+  expect(sends).toBe(1);
+  expect((await request.post("/api/orders",{data:payload})).status()).toBe(200);
+  expect((await request.get("/api/ticket/order-details",{headers:ticket})).status()).toBe(200);
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBe(360);
+  await card.getByRole("button",{name:"接單製作"}).click();
+  await expect(kitchen.getByText("顧客已更新餐單備註，請核對後再接單。")).toBeVisible();
+  await expect(card.getByText("備註　需要兩副餐具")).toBeVisible();
+  expect((await lookup()).status).toBe("pending");
+  await card.getByRole("button",{name:"接單製作"}).click();
+  await expect.poll(async()=> (await lookup()).status).toBe("preparing");
+  expect(attempts).toEqual([0,1]);
+  await page.getByRole("button",{name:"更新進度"}).click();
+  await expect(notes.getByRole("button",{name:"修改餐單備註"})).toHaveCount(0);
+  await expect(notes.getByText("備註　需要兩副餐具")).toBeVisible();
+  const late=await request.patch("/api/ticket/note",{headers:ticket,data:{note:"需要三副餐具",expectedRevision:1}});
+  expect(late.status()).toBe(409);
+  expect((await late.json()).code).toBe("note_closed");
+  await kitchen.close();
+});
+
 test("a staff cancellation reason survives a lost response and is visible to the customer and staff",async({page,request})=>{
   const token=randomUUID(),staff={Authorization:"Bearer local-test-kitchen"};
   const response=await request.post("/api/orders",{data:{token,mode:"pickup",note:"",items:[{id:"sencha",qty:1}]}});

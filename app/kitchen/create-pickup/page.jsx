@@ -1,7 +1,7 @@
 "use client";
 import {useEffect,useState} from "react";
 import {Header,Footer,PickupAppointment,request} from "../../shared";
-import {dishes,numberOf,withItemNotes} from "../../../lib/menu.mjs";
+import {dishes,numberOf,orderNoteLimit,withItemNotes} from "../../../lib/menu.mjs";
 import {ItemNotesEditor} from "../../item-notes";
 import PickupSlots,{PickupDate,usePickupSlotAvailability} from "../../pickup-slots";
 import PickupSuggestion from "../../pickup-suggestion";
@@ -154,7 +154,7 @@ export default function CreatePickup(){
       </li>)}</ul>
       {lines.length>0&&<ItemNotesEditor dishes={lines} notes={lineNotes} disabled={locked}
         onChange={(id,value)=>setDraft({...draft,lineNotes:{...lineNotes,[id]:value}})}/>}
-      <label className="note">訂單備註<textarea maxLength={160} value={note} disabled={locked}
+      <label className="note">訂單備註<textarea maxLength={orderNoteLimit} value={note} disabled={locked}
         placeholder="例如：不要餐具" onChange={event=>setDraft({...draft,note:event.target.value})}/></label>
       {count>0&&<PickupSlots selected={selected} count={count} day={bookingDay} disabled={locked}
         availability={pickupAvailability} onChange={value=>{setError("");setDraft({...draft,pickupSlot:value});}}/>}

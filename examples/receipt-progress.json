@@ -6,7 +6,29 @@
       {"status": "preparing", "at": 1795492860000},
       {"status": "ready", "at": 1795493340000},
       {"status": "completed", "at": 1795493400000}
-    ]
+    ],
+    "noteUpdate": {
+      "initial": "需要餐具",
+      "updated": {
+        "note": "需要兩副餐具",
+        "revision": 1,
+        "at": 1795492830000
+      },
+      "replayRevision": 1,
+      "staleAcceptance": {
+        "status": 409,
+        "code": "note_changed",
+        "orderStatus": "pending"
+      },
+      "accepted": {
+        "status": 200,
+        "orderStatus": "preparing"
+      },
+      "closedEdit": {
+        "status": 409,
+        "code": "note_closed"
+      }
+    }
   },
   {
     "scenario": "pickup",

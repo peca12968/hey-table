@@ -67,7 +67,8 @@ function OrderDetails({order,query}){
     <ul className="orderLines">{order.items.map(({id,name,qty,price,note})=><li key={id}>
       <div>{name} × {qty}<ItemNote note={note}/></div><b>{currency(price*qty)}</b>
     </li>)}</ul>
-    {order.note&&<p>餐單備註　{order.note}</p>}
+    {(order.note||order.noteUpdatedAt!=null)&&<p className="orderNoteText">餐單備註　{order.note||"已清除"}</p>}
+    {order.noteUpdatedAt!=null&&<p className="muted">顧客更新備註 · <ProgressTime at={order.noteUpdatedAt}/></p>}
     {order.pricing?.discount>0&&<p>餐點原價 {currency(order.pricing.subtotal)} · 套餐折抵 {currency(order.pricing.discount)}</p>}
     <div className="total"><span>原單合計</span><b>{currency(order.total)}</b></div>
     <p>{methods[order.paymentMethod]??"付款方式未記錄"} · {payment}{paymentEnvironment?" · "+paymentEnvironment:""}</p>
