@@ -91,13 +91,13 @@ export default function ShiftHandoff(){
   return <><Header/><main className="shell section shiftHandoff">
     <a className="textLink" href="/kitchen">返回店家接單台</a>
     <h1>交班待辦</h1>
-    <form action={pagePath} className="actions shiftHandoffFilters" key={date}>
+    {selection&&today&&<form action={pagePath} className="actions shiftHandoffFilters" key={date}>
       <label>交班日期<input type="date" name="date" required defaultValue={businessDayRange(date)?date:today}/></label>
       <button type="submit" className="outline">套用日期</button>
       <button type="button" className="outline" disabled={!valid||!current}
         onClick={()=>setRevision(value=>value+1)}>重新擷取</button>
-    </form>
-    {selection&&!valid&&<p className="error" role="alert">請選擇有效的交班日期。</p>}
+    </form>}
+    {selection&&today&&!valid&&<p className="error" role="alert">請選擇有效的交班日期。</p>}
     {valid&&!current&&<p role="status">正在擷取交班待辦…</p>}
     {current?.error&&<p className="error" role="alert">{current.error}</p>}
     {current?.denied&&<a className="primary" href={"/signin-with-chatgpt?return_to="+encodeURIComponent(datePath(date))} target="_top">
