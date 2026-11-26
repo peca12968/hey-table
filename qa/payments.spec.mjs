@@ -2,17 +2,15 @@ import {test,expect} from "@playwright/test";
 import {randomUUID} from "node:crypto";
 import {readFile} from "node:fs/promises";
 import {businessDate} from "../lib/business-day.mjs";
+import {handoffCashFixture} from "./shift-handoff-fixture.mjs";
 const staff={Authorization:"Bearer local-test-kitchen"};
 
 test("mobile shift handoff opens cash review and removes the order after collection",async({page,request})=>{
-  const created=await request.post("/api/orders",{data:{token:randomUUID(),mode:"pickup",note:"交班頁不顯示餐單細節",
-    items:[{id:"sencha",qty:1}]}});
-  expect(created.ok()).toBe(true);
-  const {id,created:createdAt}=await created.json();
-  const number=String(id).padStart(4,"0"),date=businessDate(createdAt);
-  for(const [from,to] of [["pending","preparing"],["preparing","ready"],["ready","completed"]]){
-    expect((await request.patch("/api/kitchen/status",{headers:staff,data:{id,from,to}})).ok()).toBe(true);
-  }
+  const {date,token,note}=handoffCashFixture;
+  const ticket=await request.get("/api/ticket",{headers:{"X-Ticket":token}});
+  expect(ticket.ok()).toBe(true);
+  const {id}=await ticket.json();
+  const number=String(id).padStart(4,"0");
   await page.setViewportSize({width:360,height:780});
   await page.addInitScript(()=>sessionStorage.setItem("he-ri-staff","local-test-kitchen"));
   await page.goto("/kitchen");
@@ -30,7 +28,7 @@ test("mobile shift handoff opens cash review and removes the order after collect
   await expect(payments.getByText(/跨日/)).toBeVisible();
   await expect(payments.getByRole("link",{name:"開啟付款核對"})).toHaveAttribute("href","/kitchen/payment-attention");
   await expect(cash.getByRole("link",{name:"開啟日結核對"})).toHaveAttribute("href","/kitchen/daily?date="+date);
-  await expect(cash.getByText("交班頁不顯示餐單細節")).toHaveCount(0);
+  await expect(cash.getByText(note)).toHaveCount(0);
   expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBe(360);
   await cash.getByRole("link",{name:"餐單 #"+number}).click();
   await expect(page.getByRole("heading",{name:"交班付款核對"})).toBeVisible();
