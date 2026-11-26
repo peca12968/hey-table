@@ -43,6 +43,9 @@ python -m uvicorn stockroom.api:app
 | GET /return-batches/{batch_id} | 依驗收批號查詢原始收據 |
 | POST /return-inspections | 以驗收批號一次登記各箱合格入庫與受損隔離的件數 |
 | GET /return-inspections/{batch_id} | 查詢各箱的原始驗收明細 |
+| GET /return-inspections/{batch_id}/quarantine | 查詢每箱隔離原件數、已回庫、已報廢及還待處理的件數 |
+| POST /return-inspections/{batch_id}/dispositions | 用同一個複驗單號登記多箱回庫與報廢 |
+| GET /return-inspections/{batch_id}/dispositions/{disposition_id} | 查原複驗收據與處理原因 |
 | GET /reservations/{key}/fulfillments/{box} | 查詢該箱實際寄出的 dispatched、已重新入庫的 restocked，以及尚可退回的 returnable |
 | GET /reservations/{key}/fulfillments | 一次查詢保留狀態、各箱出貨與退貨明細，以及全單已重新入庫和仍可退回的件數 |
 | POST /packing-snapshots | 一次查詢多張訂單，從同一時點取得各單的箱單和對應商品庫存 |
@@ -153,6 +156,22 @@ SQLite 會核對每個 SKU 的原入帳後版次，並嘗試恢復原批次調�
 送出 `POST /return-inspections` 時，用 `Idempotency-Key` 指定驗收批號。每箱帶原保留編號、箱號、`sellable` 和 `quarantined`。例如 `{"boxes":[{"reservation_id":"east","shipment_id":"box","sellable":1,"quarantined":2}]}` 會登記收到 3 件，將其中 1 件加回可販售庫存，另外 2 件記錄為隔離。箱別明細和整單快照會顯示已有隔離的件數，供倉庫核對實物。
 
 每批最多 100 箱，合格與隔離加總須在各箱可退量內。任何一箱不符時，整批都會回滾。舊的單箱退貨、整批退貨和新版驗收共用同一個剩餘可退量。用原批號重送相同箱件與條件可查回原收據。SQLite 快照對帳會分列合格入庫與新增隔離，只有合格入庫影響可販售盤點。[舊資料、回滾與並行驗收測試](tests/test_return_inspections.py)
+
+### 複驗隔離品並登記回庫或報廢
+
+先用 `GET /return-inspections/{batch_id}/quarantine` 查原驗收批的待處理件數。複驗後把當時查到的 `remaining` 放進每箱的 `expected_remaining`，並記錄回庫、報廢及原因。依同一驗收批一次送 1 至 100 箱。以下 `decision.json` 將 2 件中的 1 件回庫、1 件報廢。
+
+```json
+{"boxes":[{"reservation_id":"east","shipment_id":"box","expected_remaining":2,"restock":1,"discard":1,"reason":"重新檢查外觀與包裝"}]}
+```
+
+```sh
+curl http://127.0.0.1:8000/return-inspections/dock/quarantine
+curl -X POST http://127.0.0.1:8000/return-inspections/dock/dispositions -H "Content-Type: application/json" -H "Idempotency-Key: review-1" --data-binary @decision.json
+curl http://127.0.0.1:8000/return-inspections/dock/dispositions/review-1
+```
+
+若其間有其他人處理同一箱，任何一箱餘額改變都會拒絕整批，須重新查餘額。複驗合格才增加可販售庫存。箱別查詢的 `quarantined` 是仍待處理的件數，`discarded` 是累計報廢，`restocked` 含初驗回庫和複驗回庫。原退貨驗收收據保留初驗資料，複驗收據保存原因和當時餘額。相同複驗單號與內容可安全重送，且可在 SQLite 快照對帳中分別核對回庫與報廢。[升級、重試與並行複驗測試](tests/test_quarantine_dispositions.py)
 
 ## 兩次盤點都是 20 件，期間進出了多少貨？
 

@@ -366,6 +366,7 @@ class ShipmentBalance(BaseModel):
     restocked: int
     returnable: int
     quarantined: int = 0
+    discarded: int = 0
 
 
 class ReturnReceipt(BaseModel):
@@ -414,12 +415,70 @@ class ReturnInspectionReceipt(BaseModel):
     boxes: list[ReturnInspectedBox]
 
 
+class QuarantineStatusBox(BaseModel):
+    reservation_id: BoxKey
+    shipment_id: BoxKey
+    sku: str
+    quarantined: int
+    restocked: int
+    discarded: int
+    remaining: int
+
+
+class QuarantineStatus(BaseModel):
+    batch_id: str
+    boxes: list[QuarantineStatusBox]
+
+
+class QuarantineDecision(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    reservation_id: BoxKey
+    shipment_id: BoxKey
+    restock: int = Field(strict=True, ge=0, le=1_000_000)
+    discard: int = Field(strict=True, ge=0, le=1_000_000)
+    expected_remaining: int = Field(strict=True, ge=1, le=1_000_000)
+    reason: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=160)]
+
+    @model_validator(mode="after")
+    def quantities(self):
+        if not 1 <= self.restock + self.discard <= self.expected_remaining:
+            raise ValueError("Disposition must use a positive quantity within the reviewed balance")
+        return self
+
+
+class QuarantineDisposition(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    boxes: list[QuarantineDecision] = Field(min_length=1, max_length=100)
+
+    @field_validator("boxes")
+    @classmethod
+    def distinct_boxes(cls, boxes):
+        return DispatchBatch.distinct_boxes(boxes)
+
+
+class QuarantineDispositionBox(BaseModel):
+    reservation_id: BoxKey
+    shipment_id: BoxKey
+    restock: int
+    discard: int
+    reason: str
+    remaining_after: int
+    recorded_at_ms: int
+
+
+class QuarantineDispositionReceipt(BaseModel):
+    batch_id: str
+    disposition_id: str
+    boxes: list[QuarantineDispositionBox]
+
+
 class PackingStatement(BaseModel):
     reservation: Progress
     boxes: list[ShipmentBalance]
     restocked: int
     returnable: int
     quarantined: int = 0
+    discarded: int = 0
 
 
 class PackingScope(BaseModel):
@@ -772,6 +831,27 @@ def create_app(path: Path, *, ttl_seconds=900, clock=time.time):
     def return_inspection_receipt(batch_id: BoxKey, response: Response):
         response.headers["Cache-Control"] = "no-store"
         return store.return_inspection_receipt(batch_id)
+
+    @app.get("/return-inspections/{batch_id}/quarantine", response_model=QuarantineStatus)
+    def quarantine_status(batch_id: BoxKey, response: Response):
+        response.headers["Cache-Control"] = "no-store"
+        return store.quarantine_status(batch_id)
+
+    @app.post("/return-inspections/{batch_id}/dispositions", response_model=QuarantineDispositionReceipt, status_code=201,
+              responses={200: {"model": QuarantineDispositionReceipt, "description": "Original disposition receipt"}})
+    def dispose_quarantine(batch_id: BoxKey, decision: QuarantineDisposition, response: Response, idempotency_key: RequestKey):
+        boxes = [(box.reservation_id, box.shipment_id, box.restock, box.discard, box.expected_remaining, box.reason)
+                 for box in decision.boxes]
+        receipt, created = store.dispose_quarantine(batch_id, idempotency_key, boxes)
+        response.headers["Cache-Control"] = "no-store"
+        if not created:
+            response.status_code = 200
+        return receipt
+
+    @app.get("/return-inspections/{batch_id}/dispositions/{disposition_id}", response_model=QuarantineDispositionReceipt)
+    def quarantine_receipt(batch_id: BoxKey, disposition_id: BoxKey, response: Response):
+        response.headers["Cache-Control"] = "no-store"
+        return store.quarantine_receipt(batch_id, disposition_id)
 
     @app.post("/reservation-batches", response_model=ReservationBatchReceipt, status_code=201,
               responses={200: {"model": ReservationBatchReceipt, "description": "Original reservation batch receipt"}})

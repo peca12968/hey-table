@@ -79,7 +79,8 @@ def inspection_rows(entries, snapshot):
         dispatched = integer(box["dispatched"], "dispatched", 1, MAX_QUANTITY)
         restocked = integer(box["restocked"], "restocked", high=dispatched)
         quarantined = integer(box.get("quarantined", 0), "quarantined", high=dispatched - restocked)
-        returnable = dispatched - restocked - quarantined
+        discarded = integer(box.get("discarded", 0), "discarded", high=dispatched - restocked - quarantined)
+        returnable = dispatched - restocked - quarantined - discarded
         if integer(box["returnable"], "returnable") != returnable:
             raise ValueError("packing snapshot has inconsistent returnable units")
         if entry["label_quantity"] != dispatched:

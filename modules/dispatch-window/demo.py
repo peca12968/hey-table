@@ -81,6 +81,43 @@ def condition_demo(client, request):
             "inventory_before": before, "inventory_after": after}
 
 
+def disposition_demo(client):
+    batch, operation = "dock-conditions", "quality-review"
+    path = "/return-inspections/" + batch
+    stock_before = client.get("/inventory").json()[0]
+    original = client.get(path).json()
+    waiting = client.get(path + "/quarantine").json()
+    decisions = [
+        {"reservation_id": "C", "shipment_id": "C1", "restock": 1, "discard": 0,
+         "expected_remaining": 1, "reason": "外箱更換後複驗合格"},
+        {"reservation_id": "D", "shipment_id": "D1", "restock": 0, "discard": 1,
+         "expected_remaining": 1, "reason": "商品破損，無法再販售"},
+    ]
+    assert [row["remaining"] for row in waiting["boxes"]] == [1, 1]
+
+    def submit(boxes):
+        return client.post(path + "/dispositions", headers={"Idempotency-Key": operation}, json={"boxes": boxes})
+
+    stale = submit([decisions[0], dict(decisions[1], expected_remaining=2)])
+    assert stale.status_code == 409
+    assert client.get(path + "/quarantine").json() == waiting
+    assert client.get("/inventory").json()[0] == stock_before
+    confirmed = submit(decisions)
+    assert confirmed.status_code == 201
+    replay = submit(decisions[::-1])
+    assert replay.status_code == 200 and replay.json() == confirmed.json()
+    assert client.get(path + "/dispositions/" + operation).json() == replay.json()
+    final = client.get(path + "/quarantine").json()
+    assert [(box["restocked"], box["discarded"], box["remaining"]) for box in final["boxes"]] == [(1, 0, 0), (0, 1, 0)]
+    assert client.get(path).json() == original
+    stock_after = client.get("/inventory").json()[0]
+    assert stock_after["available"] == stock_before["available"] + 1
+    assert stock_after["capacity"] == stock_before["capacity"] + 1
+    return {"format": "dispatch-window.quarantine-disposition-demo.v1", "waiting": waiting, "decisions": decisions,
+            "stale_status": stale.status_code, "created_status": confirmed.status_code, "replay_status": replay.status_code,
+            "receipt": replay.json(), "final": final, "inventory_before": stock_before, "inventory_after": stock_after}
+
+
 def execution_demo(client, clock, report, manifest):
     attempts = []
 
@@ -194,6 +231,7 @@ def execution_demo(client, clock, report, manifest):
     assert client.get("/inventory").json() == [{"sku": "KIT-01", "capacity": 12, "available": 12}]
     returns = receiving_demo(client, request)
     conditions = condition_demo(client, request)
+    disposition = disposition_demo(client)
     return {"format": "dispatch-window.execution-demo.v1", "start_ms": report["start_ms"],
             "stages": stages, "attempts": first_attempts, "inventory_after": with_inventory[0],
             "next_truck": {"plan": next_plan, "execution": sent, "first_truck_review": old_plan,
@@ -203,6 +241,7 @@ def execution_demo(client, clock, report, manifest):
                           "accepted": ready_scan, "receipt": receipt},
             "return_receiving": returns,
             "return_conditions": conditions,
+            "quarantine_disposition": disposition,
             "audit": {"format": "dispatch-window.audit-demo.v1", "before": before_audit, "after": after_audit,
                       "plan_conflict": plan_conflict, "stock_conflict": stock_conflict,
                       "after_returns": after_returns, "differences": {"movement": movement, "corrected": corrected,

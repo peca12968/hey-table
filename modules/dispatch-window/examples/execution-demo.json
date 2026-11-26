@@ -899,6 +899,110 @@
       "available": 15
     }
   },
+  "quarantine_disposition": {
+    "format": "dispatch-window.quarantine-disposition-demo.v1",
+    "waiting": {
+      "batch_id": "dock-conditions",
+      "boxes": [
+        {
+          "reservation_id": "C",
+          "shipment_id": "C1",
+          "sku": "KIT-01",
+          "quarantined": 1,
+          "restocked": 0,
+          "discarded": 0,
+          "remaining": 1
+        },
+        {
+          "reservation_id": "D",
+          "shipment_id": "D1",
+          "sku": "KIT-01",
+          "quarantined": 1,
+          "restocked": 0,
+          "discarded": 0,
+          "remaining": 1
+        }
+      ]
+    },
+    "decisions": [
+      {
+        "reservation_id": "C",
+        "shipment_id": "C1",
+        "restock": 1,
+        "discard": 0,
+        "expected_remaining": 1,
+        "reason": "\u5916\u7bb1\u66f4\u63db\u5f8c\u8907\u9a57\u5408\u683c"
+      },
+      {
+        "reservation_id": "D",
+        "shipment_id": "D1",
+        "restock": 0,
+        "discard": 1,
+        "expected_remaining": 1,
+        "reason": "\u5546\u54c1\u7834\u640d\uff0c\u7121\u6cd5\u518d\u8ca9\u552e"
+      }
+    ],
+    "stale_status": 409,
+    "created_status": 201,
+    "replay_status": 200,
+    "receipt": {
+      "batch_id": "dock-conditions",
+      "disposition_id": "quality-review",
+      "boxes": [
+        {
+          "reservation_id": "C",
+          "shipment_id": "C1",
+          "restock": 1,
+          "discard": 0,
+          "reason": "\u5916\u7bb1\u66f4\u63db\u5f8c\u8907\u9a57\u5408\u683c",
+          "remaining_after": 0,
+          "recorded_at_ms": 114000
+        },
+        {
+          "reservation_id": "D",
+          "shipment_id": "D1",
+          "restock": 0,
+          "discard": 1,
+          "reason": "\u5546\u54c1\u7834\u640d\uff0c\u7121\u6cd5\u518d\u8ca9\u552e",
+          "remaining_after": 0,
+          "recorded_at_ms": 114000
+        }
+      ]
+    },
+    "final": {
+      "batch_id": "dock-conditions",
+      "boxes": [
+        {
+          "reservation_id": "C",
+          "shipment_id": "C1",
+          "sku": "KIT-01",
+          "quarantined": 1,
+          "restocked": 1,
+          "discarded": 0,
+          "remaining": 0
+        },
+        {
+          "reservation_id": "D",
+          "shipment_id": "D1",
+          "sku": "KIT-01",
+          "quarantined": 1,
+          "restocked": 0,
+          "discarded": 1,
+          "remaining": 0
+        }
+      ]
+    },
+    "inventory_before": {
+      "sku": "KIT-01",
+      "capacity": 15,
+      "available": 15
+    },
+    "inventory_after": {
+      "sku": "KIT-01",
+      "capacity": 16,
+      "available": 16
+    }
+  },
   "audit": {
     "format": "dispatch-window.audit-demo.v1",
     "before": {

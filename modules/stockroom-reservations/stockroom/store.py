@@ -181,6 +181,23 @@ CREATE TABLE IF NOT EXISTS return_inspection_boxes (
 );
 CREATE INDEX IF NOT EXISTS return_inspection_by_batch
     ON return_inspection_boxes(batch_id, reservation_id, shipment_id);
+CREATE TABLE IF NOT EXISTS return_quarantine_dispositions (
+    batch_id TEXT NOT NULL,
+    disposition_id TEXT NOT NULL,
+    reservation_id TEXT NOT NULL,
+    shipment_id TEXT NOT NULL,
+    restock INTEGER NOT NULL CHECK (restock >= 0),
+    discard INTEGER NOT NULL CHECK (discard >= 0),
+    remaining_after INTEGER NOT NULL CHECK (remaining_after >= 0),
+    reason TEXT NOT NULL CHECK (length(reason) BETWEEN 1 AND 160),
+    recorded_at_ms INTEGER NOT NULL,
+    CHECK (restock + discard BETWEEN 1 AND 1000000),
+    PRIMARY KEY (batch_id, disposition_id, reservation_id, shipment_id),
+    FOREIGN KEY (reservation_id, shipment_id, batch_id)
+        REFERENCES return_inspection_boxes(reservation_id, shipment_id, batch_id)
+);
+CREATE INDEX IF NOT EXISTS quarantine_disposition_by_shipment
+    ON return_quarantine_dispositions(reservation_id, shipment_id, batch_id);
 """
 
 
@@ -1077,7 +1094,11 @@ class Store:
                        AS restocked,
                    COALESCE((SELECT SUM(i.quarantined) FROM return_inspection_boxes i
                              WHERE i.reservation_id=f.reservation_id AND i.shipment_id=f.shipment_id), 0)
-                       AS quarantined
+                       AS received_in_quarantine,
+                   COALESCE((SELECT SUM(d.restock) FROM return_quarantine_dispositions d
+                             WHERE d.reservation_id=f.reservation_id AND d.shipment_id=f.shipment_id), 0) AS restored,
+                   COALESCE((SELECT SUM(d.discard) FROM return_quarantine_dispositions d
+                             WHERE d.reservation_id=f.reservation_id AND d.shipment_id=f.shipment_id), 0) AS discarded
             FROM fulfillments f JOIN reservations r ON r.id=f.reservation_id
         """
         query += " WHERE f.reservation_id IN (" + ",".join("?" for _ in keys) + ")"
@@ -1087,10 +1108,15 @@ class Store:
             parameters.append(shipment_id)
         for row in conn.execute(query + " ORDER BY f.reservation_id, f.shipment_id", parameters):
             box = dict(row)
-            quarantined = box.pop("quarantined")
+            restored, discarded = box.pop("restored"), box.pop("discarded")
+            received = box.pop("received_in_quarantine")
+            quarantined = received - restored - discarded
+            box["restocked"] += restored
             if quarantined:
                 box["quarantined"] = quarantined
-            yield box | {"returnable": row["dispatched"] - row["restocked"] - quarantined}
+            if discarded:
+                box["discarded"] = discarded
+            yield box | {"returnable": row["dispatched"] - row["restocked"] - received}
 
     def shipment_balance(self, conn, key, shipment_id):
         balance = next(self.shipment_balances(conn, (key,), shipment_id), None)
@@ -1108,9 +1134,10 @@ class Store:
         report = {"reservation": self.progress_row(reservation), "boxes": boxes,
                   "restocked": sum(box["restocked"] for box in boxes),
                   "returnable": sum(box["returnable"] for box in boxes)}
-        quarantined = sum(box.get("quarantined", 0) for box in boxes)
-        if quarantined:
-            report["quarantined"] = quarantined
+        for field in ("quarantined", "discarded"):
+            units = sum(box.get(field, 0) for box in boxes)
+            if units:
+                report[field] = units
         return report
 
     @staticmethod
@@ -1219,6 +1246,67 @@ class Store:
             if not boxes:
                 raise Missing("Unknown return inspection")
             return {"batch_id": batch_id, "boxes": boxes}
+
+    @staticmethod
+    def quarantine_balances(conn, batch_id):
+        rows = conn.execute("""SELECT i.reservation_id,i.shipment_id,r.sku,i.quarantined,
+                COALESCE(SUM(d.restock),0) AS restocked,COALESCE(SUM(d.discard),0) AS discarded
+            FROM return_inspection_boxes i JOIN reservations r ON r.id=i.reservation_id
+            LEFT JOIN return_quarantine_dispositions d ON d.batch_id=i.batch_id
+                AND d.reservation_id=i.reservation_id AND d.shipment_id=i.shipment_id
+            WHERE i.batch_id=? AND i.quarantined>0
+            GROUP BY i.reservation_id,i.shipment_id,r.sku,i.quarantined
+            ORDER BY i.reservation_id,i.shipment_id""", (batch_id,))
+        return [dict(row, remaining=row["quarantined"] - row["restocked"] - row["discarded"]) for row in rows]
+
+    def quarantine_status(self, batch_id):
+        with closing(self.connect()) as conn:
+            conn.execute("BEGIN")
+            if not conn.execute("SELECT 1 FROM return_inspection_boxes WHERE batch_id=?", (batch_id,)).fetchone():
+                raise Missing("Unknown return inspection")
+            return {"batch_id": batch_id, "boxes": self.quarantine_balances(conn, batch_id)}
+
+    @staticmethod
+    def quarantine_receipt_rows(conn, batch_id, disposition_id):
+        rows = conn.execute("""SELECT reservation_id,shipment_id,restock,discard,reason,remaining_after,recorded_at_ms
+            FROM return_quarantine_dispositions WHERE batch_id=? AND disposition_id=? ORDER BY reservation_id,shipment_id""",
+                            (batch_id, disposition_id))
+        return [dict(row) for row in rows]
+
+    def dispose_quarantine(self, batch_id, disposition_id, boxes):
+        ordered = sorted(boxes)
+        with self.current_inventory() as (conn, now):
+            receipts = self.quarantine_receipt_rows(conn, batch_id, disposition_id)
+            if receipts:
+                prior = [(row["reservation_id"], row["shipment_id"], row["restock"], row["discard"],
+                          row["restock"] + row["discard"] + row["remaining_after"], row["reason"]) for row in receipts]
+                if prior != ordered:
+                    raise Conflict("Disposition key already used with a different review")
+                return {"batch_id": batch_id, "disposition_id": disposition_id, "boxes": receipts}, False
+            balances = {(row["reservation_id"], row["shipment_id"]): row for row in self.quarantine_balances(conn, batch_id)}
+            for reservation, shipment, restock, discard, expected, reason in ordered:
+                balance = balances.get((reservation, shipment))
+                if not balance:
+                    raise Missing(f"{reservation}/{shipment}: no quarantined units in this inspection")
+                if balance["remaining"] != expected or restock + discard > expected:
+                    raise Conflict(f"{reservation}/{shipment}: quarantine balance changed or is insufficient")
+                if restock:
+                    self.restock_product(conn, balance["sku"], restock)
+                remaining = expected - restock - discard
+                conn.execute("""INSERT INTO return_quarantine_dispositions
+                    (batch_id,disposition_id,reservation_id,shipment_id,restock,discard,reason,remaining_after,recorded_at_ms)
+                    VALUES (?,?,?,?,?,?,?,?,?)""",
+                             (batch_id, disposition_id, reservation, shipment, restock, discard, reason, remaining, now))
+                receipts.append({"reservation_id": reservation, "shipment_id": shipment, "restock": restock,
+                                 "discard": discard, "reason": reason, "remaining_after": remaining, "recorded_at_ms": now})
+            return {"batch_id": batch_id, "disposition_id": disposition_id, "boxes": receipts}, True
+
+    def quarantine_receipt(self, batch_id, disposition_id):
+        with closing(self.connect()) as conn:
+            boxes = self.quarantine_receipt_rows(conn, batch_id, disposition_id)
+            if not boxes:
+                raise Missing("Unknown quarantine disposition")
+            return {"batch_id": batch_id, "disposition_id": disposition_id, "boxes": boxes}
 
     @staticmethod
     def return_batch_rows(conn, batch_id):
