@@ -158,9 +158,11 @@ export default function CreatePickup(){
         placeholder="例如：不要餐具" onChange={event=>setDraft({...draft,note:event.target.value})}/></label>
       {count>0&&<PickupSlots selected={selected} count={count} day={bookingDay} disabled={locked}
         availability={pickupAvailability} onChange={value=>{setError("");setDraft({...draft,pickupSlot:value});}}/>}
-      {count>0&&canSuggest&&<PickupSuggestion key={JSON.stringify([bookingDay||today,items])}
-        date={bookingDay||today} items={items} endpoint="/api/kitchen/pickup-suggestion" staffHeaders={staffHeaders}
-        onChoose={({date,start})=>{setError("");setDraft({...draft,pickupDate:date,pickupSlot:start});}}/>}
+      {count>0&&canSuggest&&<PickupSuggestion key={JSON.stringify([bookingDay||today,selected,items])}
+        date={bookingDay||today} items={items} fromSlot={selected} endpoint="/api/kitchen/pickup-suggestion" staffHeaders={staffHeaders}
+        onChoose={({date,start})=>{
+          setError("");setMenu(null);setDraft({...draft,pickupDate:date,pickupSlot:start});setRevision(value=>value+1);
+        }}/>}
       <div className="total"><span>合計</span><b>NT$ {attempt?.expectedTotal??total}</b></div>
       {error&&<p className="error" role="alert">{error}</p>}
       {attempt&&!busy&&!error&&<p role="status">這張餐單的送單結果尚待確認。</p>}

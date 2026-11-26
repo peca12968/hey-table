@@ -42,6 +42,51 @@ const attempt={reference:ref,created:Date.now(),merchant:"fixture",trade_id:"kno
 const data={bank_transaction_id:ref,rec_trade_id:"known",merchant_id:"fixture",payment_method:"px_pay_plus",original_amount:190};
 const order={total:190,payment_method:"px_pay_plus"};
 const reply=record=>async()=>Response.json({status:0,trade_records:[record]});
+test("pickup alternatives prefer nearby same-day times and include later dates from one snapshot",async t=>{
+  const db=database();
+  t.after(()=>db.sqlite.close());
+  const now=Date.parse("2026-11-26T10:00:00+08:00"),date="2026-11-27",next="2026-11-28",last="2026-12-02";
+  t.mock.method(Date,"now",()=>now);
+  const start=(day,time)=>Date.parse(day+"T"+time+":00+08:00"),fromSlot=start(date,"11:30");
+  const staff={Authorization:"Bearer fixture-staff"},items=[{id:"sencha",qty:2}];
+  const request=(path,data,headers={})=>api(new Request("https://order.example/api/"+path,{method:"POST",
+    headers:{"Content-Type":"application/json",...headers},body:JSON.stringify(data)}),{DB:db,STAFF_KEY:"fixture-staff"});
+  const input={afterDate:date,fromSlot,alternatives:true,items};
+  const find=(data=input)=>request("pickup-suggestion",data);
+  db.sqlite.prepare("INSERT INTO pickup_slot_limits(start,capacity,revision) VALUES (?,1,1)").run(start(date,"11:45"));
+  const first=await find();
+  assert.equal(first.headers.get("Cache-Control"),"no-store");
+  const preview=await first.json();
+  assert.equal(preview.capturedAt,now);
+  assert.equal(preview.suggestions.length,6);
+  assert.deepEqual(preview.suggestions.slice(0,2),["11:15","12:00"].map(time=>{
+    const at=start(date,time);
+    return {date,start:at,end:at+900_000,remaining:12};
+  }));
+  assert.deepEqual(preview.suggestions.slice(2,4).map(row=>[row.date,row.start]),
+    [[next,start(next,"11:00")],[next,start(next,"11:15")]]);
+  assert.ok(preview.suggestions.every(row=>row.start!==fromSlot));
+  assert.equal((await find({...input,fromSlot:start(next,"11:00")})).status,400);
+  assert.equal((await find({...input,fromSlot:String(fromSlot)})).status,400);
+  assert.equal((await request("kitchen/pickup-suggestion",input)).status,403);
+  assert.deepEqual(await (await request("kitchen/pickup-suggestion",input,staff)).json(),preview);
+  assert.deepEqual(await (await find({afterDate:date,items})).json(),{suggestion:{date:next,start:start(next,"11:00")}});
+  const booked=await request("orders",{mode:"pickup",token:crypto.randomUUID(),pickupSlot:start(date,"11:15"),note:"",
+    items:[{id:"sencha",qty:12}]});
+  assert.equal(booked.status,200);
+  const after=await (await find()).json();
+  assert.deepEqual(after.suggestions.slice(0,2).map(row=>row.start),[start(date,"12:00"),start(date,"11:00")]);
+  db.sqlite.prepare("INSERT INTO pickup_day_intake(date,accepting,revision) VALUES (?,0,1)").run(date);
+  const paused=await (await find()).json();
+  assert.ok(paused.suggestions.every(row=>row.date>date));
+  const end=await (await find({...input,afterDate:last,fromSlot:null})).json();
+  assert.deepEqual(end.suggestions.map(row=>row.date),[last,last]);
+  db.sqlite.prepare(`INSERT INTO order_intake(mode,accepting,revision) VALUES ('pickup',0,1)
+    ON CONFLICT(mode) DO UPDATE SET accepting=0`).run();
+  assert.deepEqual((await (await find()).json()).suggestions,[]);
+  assert.deepEqual(await (await request("kitchen/pickup-suggestion",input,staff)).json(),paused);
+});
+
 test("shared carts encode only item IDs and quantities and reject malformed or oversized links",()=>{
   const sample=[{id:"sencha",qty:2,note:"private item note",price:45},{id:"retired-dessert",qty:20,table:"A03"}];
   const url=new URL(cartShareLink("https://order.example",sample));

@@ -395,9 +395,12 @@ export default function Menu(){
     {count>0&&<label className="note">訂單備註 <small>選填</small><textarea placeholder="例如：餐具數量" value={note} maxLength={orderNoteLimit} disabled={!!draft||busy} onChange={e=>setNote(e.target.value)}/></label>}
     {count>0&&scope&&mode==="pickup"&&<PickupSlots selected={pickupSlot} count={count} day={bookingDay} disabled={!!draft||busy||paused}
       onChange={value=>{setPickupSlot(value);setError("");}} availability={pickupAvailability}/>}
-    {count>0&&scope&&mode==="pickup"&&suggestPickup&&<PickupSuggestion key={JSON.stringify([supplyDay,items])}
-      date={supplyDay} items={items} onChoose={({date,start})=>{
-        selectPickupDate(date,start);setAnnouncement("已帶入新的預約時段，請核對餐單後再送出。");
+    {count>0&&scope&&mode==="pickup"&&suggestPickup&&<PickupSuggestion key={JSON.stringify([supplyDay,pickupSlot,items])}
+      date={supplyDay} items={items} fromSlot={pickupSlot} onChoose={({date,start})=>{
+        selectPickupDate(date,start);
+        setSlotRevision(value=>value+1);
+        if(date===supplyDay){setAvailability({date,status:"loading"});void refreshMenu(true);}
+        setAnnouncement("已帶入新的預約時段，請核對餐單後再送出。");
       }}/>}
     {count>0&&<div className="payChoice">
       <label htmlFor="order-payment">付款方式</label>

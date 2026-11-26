@@ -60,19 +60,38 @@ function firstSuggestion(days,options){
   return index===-1?null:{date:days[index],start:options[index].results[0].start};
 }
 
+async function cartSlotSuggestions(db,now,days,items,staff,perDay,nearDay=null,nearSlot=null){
+  if(!days.length)return [];
+  const lines=JSON.stringify(items),count=items.reduce((sum,item)=>sum+item.qty,0);
+  const searches=days.map(day=>{
+    const preference=day===nearDay?nearSlot:null;
+    return db.prepare(`WITH options AS MATERIALIZED (
+      SELECT candidate.value AS start,${capacityAt("candidate.value")}-${usedAt("candidate.value")} AS remaining
+      FROM json_each(?) AS candidate WHERE (? IS NULL OR candidate.value<>?)
+        AND NOT ${pickupDayPaused}
+        AND (? OR NOT EXISTS(SELECT 1 FROM order_intake WHERE mode='pickup' AND accepting=0))
+        AND NOT EXISTS(SELECT 1 FROM unavailable JOIN json_each(?) AS chosen
+          ON unavailable.dish=json_extract(chosen.value,'$.id'))
+        AND NOT EXISTS (${exceededPortions})
+    ) SELECT start,remaining FROM options WHERE remaining>=?
+    ORDER BY ABS(start-COALESCE(?,start)),start<COALESCE(?,start),start LIMIT ?`)
+      .bind(JSON.stringify(bookablePickupSlots(now,day)),preference,preference,day,Number(staff),lines,
+        lines,day,...businessDayRange(day),count,preference,preference,perDay);
+  });
+  const [, ...options]=await db.batch([expirePaymentHolds(db,now),...searches]);
+  return options.flatMap((option,index)=>option.results.map(row=>({date:days[index],...row})));
+}
+
 export async function suggestCartPickupSlot(db,now,after,items,staff){
   const days=pickupBookingDays(now).filter(day=>day>after);
-  if(!days.length)return null;
-  const lines=JSON.stringify(items),count=items.reduce((sum,item)=>sum+item.qty,0);
-  const searches=days.map(day=>db.prepare(`SELECT (${firstFittingSlot("?")}) AS start
-    WHERE NOT ${pickupDayPaused}
-    AND (? OR NOT EXISTS(SELECT 1 FROM order_intake WHERE mode='pickup' AND accepting=0))
-    AND NOT EXISTS(SELECT 1 FROM unavailable JOIN json_each(?) AS chosen
-      ON unavailable.dish=json_extract(chosen.value,'$.id'))
-    AND NOT EXISTS (${exceededPortions})`)
-    .bind(JSON.stringify(bookablePickupSlots(now,day)),count,day,Number(staff),lines,lines,day,...businessDayRange(day)));
-  const [, ...options]=await db.batch([expirePaymentHolds(db,now),...searches]);
-  return firstSuggestion(days,options);
+  const [match]=await cartSlotSuggestions(db,now,days,items,staff,1);
+  return match?{date:match.date,start:match.start}:null;
+}
+
+export async function suggestCartPickupAlternatives(db,now,day,items,staff,fromSlot){
+  const days=pickupBookingDays(now).filter(value=>value>=day);
+  const choices=await cartSlotSuggestions(db,now,days,items,staff,2,day,fromSlot);
+  return {capturedAt:now,suggestions:choices.slice(0,6).map(choice=>({...choice,end:choice.start+pickupSlotDuration}))};
 }
 
 export async function suggestPickupSlot(db,now,after,orderKey,ref){

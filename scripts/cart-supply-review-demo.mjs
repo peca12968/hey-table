@@ -6,6 +6,7 @@ import {businessDate} from "../lib/business-day.mjs";
 import {dishes} from "../lib/menu.mjs";
 import {planSupplyReview,supplyReviewRows} from "../lib/supply-review.mjs";
 import {api} from "../server/api.mjs";
+import {suggestCartPickupAlternatives} from "../server/pickup-slots.mjs";
 import {applyDemoMigrations} from "./apply-demo-migrations.mjs";
 import {sqliteD1} from "./sqlite-d1.mjs";
 
@@ -61,9 +62,20 @@ export async function buildCartSupplyReviewDemo(){
     const {id,items,total,table:receiptTable,paymentMethod:method}=await call("ticket",{token});
     assert.deepEqual(items.map(({id,name,price,qty})=>({id,name,price,qty})),linesFor(selected));
     assert.deepEqual([receiptTable,method,total],[table,paymentMethod,subtotal(items)]);
+    const at=Date.parse("2026-11-26T10:00:00+08:00"),pickupDay="2026-11-27";
+    const fromSlot=Date.parse(pickupDay+"T11:00:00+08:00"),pickupItems=[{id:"sencha",qty:2}];
+    const closeSlot=sqlite.prepare("INSERT INTO pickup_slot_limits(start,capacity,revision) VALUES (?,1,1)");
+    closeSlot.run(fromSlot);
+    const initial=await suggestCartPickupAlternatives(db,at,pickupDay,pickupItems,false,fromSlot);
+    const closed=initial.suggestions[0].start;
+    assert.equal(closed,fromSlot+900_000);
+    closeSlot.run(closed);
+    const refreshed=await suggestCartPickupAlternatives(db,at+5_000,pickupDay,pickupItems,false,fromSlot);
+    assert.equal(refreshed.suggestions[0].start,fromSlot+1_800_000);
     return {format:"hey-table.cart-supply-review-demo.v1",original,before:before.preview,after:after.preview,
       rejected:rejection.code,receipt:{id,table:receiptTable,paymentMethod:method,total,
-        lines:items.map(({id,name,price,qty})=>({id,name,price,qty}))}};
+        lines:items.map(({id,name,price,qty})=>({id,name,price,qty}))},
+      pickupAlternatives:{fromSlot,count:pickupItems[0].qty,closed,initial,refreshed}};
   }finally{
     sqlite.close();
   }

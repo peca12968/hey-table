@@ -129,6 +129,8 @@
 .pickupSlots label,.pickupDate{display:block;font-weight:700}.pickupSlots select,.pickupDate select{display:block;width:100%;margin-top:5px;min-height:40px;border:1px solid #c7cdbf;border-radius:7px;padding:6px;color:inherit;background:#fffefa;font:inherit}
 .pickupDate{max-width:20rem;margin:0 0 12px}.pickupSlots .pickupDate{max-width:none}
 .pickupSlots p{margin:6px 0 0}.pickupSlotTime{color:var(--green);font-weight:700}
+.pickupSuggestions{list-style:none;padding:0;margin:8px 0 0;display:grid;gap:8px}
+.pickupSuggestions li{display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px;padding-top:8px;border-top:1px solid var(--line)}
 .pickupReschedule .actions{margin-top:10px;gap:8px}.pickupReschedule button{min-height:40px}
 .pickupCalendar{margin:8px 0}.pickupCalendar button{min-height:40px}
 .cashCollection,.cashReceipt{margin:12px 0;padding:10px 12px;border:1px solid var(--line);border-radius:8px;background:var(--pale)}

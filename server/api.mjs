@@ -17,7 +17,7 @@ import {kitchenOverdue} from "./kitchen-overdue.mjs";
 import {bookedPickupDate,pickupBookingDays,pickupCalendarStatus,pickupPrepLead,pickupSlotCapacity,pickupSlotsForDay} from "../lib/pickup-slots.mjs";
 import {canReschedulePickup,capacityAtPickupSlot,editablePickupSlots,orderPortions,pickupChanges,pickupSlotLimits,
   pickupDayPaused,pickupDaySettings,pickupLimitEvent,pickupLimitHistory,pickupSlotOptions,pickupSlotUsage,pickupSlots,savePickupDay,
-  savePickupSlotLimits,suggestCartPickupSlot,
+  savePickupSlotLimits,suggestCartPickupAlternatives,suggestCartPickupSlot,
   suggestPickupSlot,usedAtPickupSlot} from "./pickup-slots.mjs";
 import {pickupCalendar} from "./pickup-calendar.mjs";
 import {orderDetailsText,ticketTextAttachment} from "./ticket-document.mjs";
@@ -507,7 +507,13 @@ export async function api(request, env) {
     if(!items)return fail("請確認餐點與數量。");
     const now=Date.now(),date=input.afterDate??businessDate(now);
     if(!pickupBookingDays(now).includes(date))return fail("請選擇七天內的取餐日期。");
-    return json({suggestion:await suggestCartPickupSlot(db,now,date,items,path.startsWith("/api/kitchen/"))});
+    const staff=path.startsWith("/api/kitchen/");
+    if(input.alternatives===true){
+      const fromSlot=input.fromSlot??null;
+      if(fromSlot!==null&&!pickupSlotsForDay(date).includes(fromSlot))return fail("請核對原預約時段。");
+      return json(await suggestCartPickupAlternatives(db,now,date,items,staff,fromSlot));
+    }
+    return json({suggestion:await suggestCartPickupSlot(db,now,date,items,staff)});
   }
   if ((path === "/api/menu" || staffPickup) && method === "GET") {
     const now=Date.now(),date=url.searchParams.get("date")??businessDate(now);
