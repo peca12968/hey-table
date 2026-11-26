@@ -1,5 +1,5 @@
 "use client";
-import {useEffect,useMemo,useState,useSyncExternalStore} from "react";
+import {useEffect,useMemo,useRef,useState,useSyncExternalStore} from "react";
 import {RefreshCw} from "lucide-react";
 import {Header,Footer,Mode,PickupAppointment,PickupDelayTime,request} from "../shared";
 import {pickupChangeWindows,pickupPrepLead,pickupRosterPath,pickupSlotsForDay,pickupTime} from "../../lib/pickup-slots.mjs";
@@ -10,6 +10,8 @@ import {useBusinessToday} from "../use-business-today.mjs";
 import {staffCancellationReasons} from "../../lib/order-cancellation.mjs";
 import {dishes,labels,numberOf,tables,transitions} from "../../lib/menu.mjs";
 import {downloadJson} from "../../lib/download-json.mjs";
+import {tableHandoffReview,validTableHandoffId} from "../../lib/table-handoff.mjs";
+import {ProgressTime} from "../order-progress";
 import Timing from "./timing";
 import ReturnReceipt from "./return-receipt";
 import PaymentSnapshot from "./payment-snapshot";
@@ -79,7 +81,23 @@ function TableMove({id,table,revision,busy,update}){
   </details>;
 }
 
-function TableHandoff({table,orders,busy,update}){
+const tableHandoffKey="he-ri-table-handoff.v1";
+const tableHandoffPath="/api/kitchen/table-handoff";
+function rememberTableHandoff(pending){
+  try{
+    if(pending)sessionStorage.setItem(tableHandoffKey,JSON.stringify(pending));
+    else sessionStorage.removeItem(tableHandoffKey);
+    return true;
+  }catch{return false;}
+}
+function pendingTableHandoff(){
+  try{
+    const pending=JSON.parse(sessionStorage.getItem(tableHandoffKey));
+    const orders=pending&&tableHandoffReview(pending.table,pending.orders);
+    return orders&&validTableHandoffId(pending.operationId)?{...pending,orders}:null;
+  }catch{return null;}
+}
+function TableHandoff({table,orders,busy,submit}){
   const [review,setReview]=useState(null);
   const eligible=orders.length>=2&&orders.every(canPrepare);
   const current=eligible&&review?.length===orders.length&&review.every((order,index)=>
@@ -100,13 +118,27 @@ function TableHandoff({table,orders,busy,update}){
       {!current&&<p role="status">這桌的待交餐餐單已更新，請重新核對。</p>}
       <div className="actions">
         <button className="primary" disabled={busy||!current} onClick={async()=>{
-          const confirmed=await update("table-handoff",{table,orders:review.map(order=>({id:order.id,tableRevision:order.tableRevision??0}))});
+          const confirmed=await submit(table,review.map(order=>({id:order.id,tableRevision:order.tableRevision??0})));
           if(confirmed)setReview(null);
         }}>確認交餐 {review.length} 張餐單</button>
         {!current&&eligible&&<button className="outline" disabled={busy} onClick={()=>setReview(orders)}>重新核對這桌</button>}
         <button className="outline" disabled={busy} onClick={()=>setReview(null)}>關閉核對</button>
       </div>
     </>}
+  </section>;
+}
+
+function TableHandoffReceipt({receipt,onClose}){
+  return <section className="sheet tableHandoff" aria-label="同桌交餐收據">
+    <h2>{receipt.table} 桌交餐收據</h2>
+    <p>{receipt.completed} 張餐單 · <ProgressTime at={receipt.completedAt}/></p>
+    <p className="muted orderNoteText">收據編號 {receipt.operationId}</p>
+    <ul className="actions">{receipt.orderIds.map(id=><li key={id}>
+      <a href={"/kitchen/order-detail?id="+numberOf(id)}>#{numberOf(id)}</a></li>)}</ul>
+    <div className="actions">
+      <button className="outline" onClick={()=>downloadJson("hey-table-handoff-",receipt.completedAt,receipt)}>下載交餐收據 JSON</button>
+      <button className="outline" onClick={onClose}>關閉收據</button>
+    </div>
   </section>;
 }
 
@@ -202,6 +234,8 @@ export default function Kitchen(){
   const [scope,setScope]=useState("all"),[search,setSearch]=useState("");
   const [queueAvailable,setQueueAvailable]=useState(false);
   const [actionMessage,setActionMessage]=useState("");
+  const [handoffPending,setHandoffPending]=useState(null),[handoffReceipt,setHandoffReceipt]=useState(null);
+  const handoffInFlight=useRef(false);
   const [paymentCheck,setPaymentCheck]=useState(null);
   const [reviewedPass,setReviewedPass]=useState(null);
   const today=useBusinessToday();
@@ -216,6 +250,7 @@ export default function Kitchen(){
   const filter=delayLink?"pickup-delay":boardFilter;
   const paymentReview=focus?.kind==="payment-review";
   const title=paymentReview?"交班付款核對":delegated?"親友代取交餐":handoffOnly?"自取交餐":focused?"自取預約餐單":"店家接單台";
+  useEffect(()=>{setHandoffPending(pendingTableHandoff());},[]);
   useEffect(()=>{
     if(!passStorageKey||pickupPass)return;
     const saved=sessionStorage.getItem(passStorageKey);
@@ -293,11 +328,6 @@ export default function Kitchen(){
           pickupUpcoming:false,overdue:undefined}:order)??null);
         setActionMessage("餐單 "+numberOf(result.id)+" 已模擬全額退款 NT$ "+result.total+"。");
       }
-      if(endpoint==="table-handoff"){
-        const ids=new Set(body.orders.map(order=>order.id));
-        setRows(rows=>rows?.map(order=>ids.has(order.id)?{...order,status:"completed",overdue:undefined}:order)??null);
-        setActionMessage(result.table+" 桌已完成 "+result.completed+" 張餐單的交餐。");
-      }
       setRevision(v=>v+1);
       return true;
     }catch(e){
@@ -308,13 +338,53 @@ export default function Kitchen(){
         setActionMessage(e.status===409&&!completingPass&&e.code!=="note_changed"?"餐單狀態已更新，請核對最新狀態。":e.message);
         setRows(null);
         setRevision(v=>v+1);
-      }else if(cancelling||endpoint==="table"||endpoint==="table-handoff"||endpoint==="demo-refund"||
+      }else if(cancelling||endpoint==="table"||endpoint==="demo-refund"||
         body.tableRevision!==undefined||body.pickupRevision!==undefined||body.noteRevision!==undefined){
         setActionMessage(e.message);
         setRevision(v=>v+1);
       }else setError(e.message);
       return false;
     }finally{setBusy(false);}
+  }
+  async function completeTable(table,review){
+    if(handoffInFlight.current||busy)return false;
+    const retry=Boolean(handoffPending);
+    const pending=handoffPending??{operationId:crypto.randomUUID(),table,orders:tableHandoffReview(table,review)};
+    if(!pending.orders)return false;
+    handoffInFlight.current=true;
+    setBusy(true);setError("");setActionMessage("");setHandoffPending(pending);setHandoffReceipt(null);
+    const kept=rememberTableHandoff(pending);
+    const headers=key?{Authorization:"Bearer "+key}:{};
+    try{
+      let result;
+      if(retry){
+        try{result=await request(tableHandoffPath+"?"+new URLSearchParams({operationId:pending.operationId}),{
+          headers,signal:AbortSignal.timeout(10_000),
+        });}catch(error){if(error.status!==404)throw error;}
+      }
+      if(!result)result=await request(tableHandoffPath,{method:"PATCH",
+        headers:{...headers,"Content-Type":"application/json"},body:JSON.stringify(pending),signal:AbortSignal.timeout(10_000)});
+      const orderIds=pending.orders.map(({id})=>id);
+      if(result.operationId!==pending.operationId||result.table!==pending.table||result.completed!==orderIds.length||
+        !Number.isSafeInteger(result.completedAt)||JSON.stringify(result.orderIds)!==JSON.stringify(orderIds))
+        throw new Error("收據內容與原交餐批次不同。");
+      setHandoffReceipt(result);setHandoffPending(null);rememberTableHandoff(null);
+      const ids=new Set(orderIds);
+      setRows(rows=>rows?.map(order=>ids.has(order.id)?{...order,status:"completed",overdue:undefined}:order)??null);
+      setActionMessage(retry?"已取回 "+result.table+" 桌的原交餐收據。":
+        result.table+" 桌已完成 "+result.completed+" 張餐單的交餐。");
+      setRevision(value=>value+1);
+      return true;
+    }catch(error){
+      if([400,409].includes(error.status)){
+        setHandoffPending(null);rememberTableHandoff(null);
+        setActionMessage(error.message);
+        setRevision(value=>value+1);
+      }else{
+        setActionMessage("暫時無法確認交餐結果，請查詢並重試原批次。"+(kept?"":"此分頁無法暫存，請保持開啟。"));
+      }
+      return false;
+    }finally{handoffInFlight.current=false;setBusy(false);}
   }
   function movePickup(id,change,signal){
     return request("/api/kitchen/pickup-reschedule",{method:"PATCH",headers:{"Content-Type":"application/json",
@@ -421,11 +491,19 @@ export default function Kitchen(){
       !validNumber?"請輸入完整的取餐號碼。":filtered.length?"符合條件 "+filtered.length+" 張餐單":
       filter==="pickup-delay"&&scope==="all"&&!exactNumber?"目前沒有待確認的延誤通知。":"目前沒有符合條件的訂單。"}</p>
     {actionMessage&&<p role="status">{actionMessage}</p>}
+    {handoffPending&&<section className="sheet tableHandoff" aria-label="待確認同桌交餐">
+      <h2>{handoffPending.table} 桌待確認交餐</h2>
+      <p>{handoffPending.orders.length} 張餐單，餐號 {handoffPending.orders.map(({id})=>numberOf(id)).join("、")}</p>
+      <button className="outline" disabled={busy} onClick={()=>void completeTable()}>取回或重送原交餐批次</button>
+    </section>}
+    {handoffReceipt&&<TableHandoffReceipt receipt={handoffReceipt} onClose={()=>setHandoffReceipt(null)}/>}
     {showTableHandoff&&["all","table"].includes(scope)&&<div className="actions">
       {tables.map(table=>[table,readyAt(table).length]).filter(([,count])=>count>=2).map(([table,count])=>
         <button className="outline" key={table} onClick={()=>setScope(table)}>{table} 桌 · {count} 張待交餐</button>)}
     </div>}
-    {showTableHandoff&&tables.includes(scope)&&<TableHandoff key={scope} table={scope} orders={readyAt(scope)} busy={busy} update={update}/>}
+    {showTableHandoff&&tables.includes(scope)&&<TableHandoff
+      key={scope+":"+(handoffReceipt?.table===scope?handoffReceipt.operationId:"")} table={scope}
+      orders={readyAt(scope)} busy={busy||Boolean(handoffPending)} submit={completeTable}/>}
     <div className="kGrid">{filtered.map(order=><KitchenTicket key={order.id} order={order} busy={busy} update={update} today={today}
       movePickup={movePickup} recordCash={recordCash} refresh={refresh} staffKey={key} showOverdue={queueAvailable}
       showDelayEstimate={filter==="pickup-delay"}

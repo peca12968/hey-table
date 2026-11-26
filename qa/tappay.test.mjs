@@ -23,6 +23,7 @@ import {buildReturnLedgerDemo} from "../scripts/return-ledger-demo.mjs";
 import {buildPaymentAttentionDemo} from "../scripts/payment-attention-demo.mjs";
 import {buildPickupPassHandoffDemo} from "../scripts/pickup-pass-handoff-demo.mjs";
 import {buildReceiptNoteDemo} from "../scripts/receipt-note-demo.mjs";
+import {buildTableHandoffDemo} from "../scripts/table-handoff-demo.mjs";
 import {buildPickupRosterFollowUpDemo} from "../scripts/pickup-roster-followup-demo.mjs";
 import {buildCashCloseComparisonDemo} from "../scripts/cash-close-comparison-demo.mjs";
 import {buildShiftHandoffDemo} from "../scripts/shift-handoff-demo.mjs";
@@ -2003,6 +2004,51 @@ test("a payment refund blocks the entire reviewed table handoff",async t=>{
   assert.equal((await handoff()).status,200);
   assert.deepEqual(statuses(),["completed","completed"]);
 });
+test("a table handoff claims one durable receipt and rolls it back when an order write fails",async t=>{
+  const DB=database(),env={DB,STAFF_KEY:"local-test-key"};
+  t.after(()=>DB.sqlite.close());
+  const auth={Authorization:"Bearer local-test-key"},path="https://order.example/api/kitchen/table-handoff";
+  const key=crypto.randomUUID(),other=crypto.randomUUID();
+  const insert=DB.sqlite.prepare(`INSERT INTO orders(token,mode,table_no,note,items,total,created,status)
+    VALUES (?,'table','A03','','[]',45,1,'ready')`);
+  const ids=[insert.run(crypto.randomUUID()).lastInsertRowid,insert.run(crypto.randomUUID()).lastInsertRowid];
+  const orders=ids.map(id=>({id,tableRevision:0}));
+  const submit=(rows=orders,operationId=key)=>api(new Request(path,{method:"PATCH",
+    headers:{...auth,"Content-Type":"application/json"},body:JSON.stringify({table:"A03",orders:rows,operationId}),
+  }),env);
+  const find=(id=key,headers=auth)=>api(new Request(path+"?"+new URLSearchParams({operationId:id}),{headers}),env);
+  assert.equal((await find(key,{})).status,403);
+  assert.equal((await find("bad-key")).status,400);
+  assert.equal((await find()).status,404);
+  DB.sqlite.exec(`CREATE TRIGGER interrupted_handoff BEFORE UPDATE OF status ON orders
+    WHEN OLD.id=${ids[1]} AND NEW.status='completed' BEGIN SELECT RAISE(ABORT,'handoff write interrupted'); END;`);
+  await assert.rejects(submit(),/handoff write interrupted/);
+  assert.equal((await find()).status,404);
+  const history=()=>DB.sqlite.prepare("SELECT status,status_history FROM orders ORDER BY id").all();
+  assert.deepEqual(history().map(row=>[row.status,row.status_history]),[["ready",null],["ready",null]]);
+  DB.sqlite.exec("DROP TRIGGER interrupted_handoff");
+  const replies=await Promise.all([submit(orders),submit([...orders].reverse())]);
+  assert.deepEqual(replies.map(reply=>reply.status),[200,200]);
+  const copies=await Promise.all(replies.map(reply=>reply.json()));
+  assert.deepEqual(copies[0],copies[1]);
+  const saved=copies[0];
+  assert.deepEqual(saved,{operationId:key,table:"A03",orderIds:ids,completed:2,completedAt:saved.completedAt});
+  assert.ok(Number.isSafeInteger(saved.completedAt));
+  assert.deepEqual(await (await find(key.toUpperCase())).json(),saved);
+  assert.deepEqual(history().map(row=>[row.status,JSON.parse(row.status_history)]),ids.map(()=>[
+    "completed",[{from:"ready",status:"completed",at:saved.completedAt}],
+  ]));
+  assert.equal((await submit([{...orders[0],tableRevision:1},orders[1]])).status,409);
+  assert.equal((await submit(orders,other)).status,409);
+  assert.equal((await find(other)).status,404);
+  assert.equal(DB.sqlite.prepare("SELECT COUNT(*) n FROM table_handoff_receipts").get().n,1);
+});
+
+test("the table handoff demonstration matches the committed receipt and both customer receipts",async()=>{
+  const sample=JSON.parse(readFileSync(new URL("../examples/receipt-progress.json",import.meta.url),"utf8"));
+  assert.deepEqual(await buildTableHandoffDemo(),sample.find(row=>row.scenario==="table").tableHandoff);
+});
+
 test("same-day pickup slots use Taipei opening, notice and closing boundaries",()=>{
   const taipei=time=>Date.parse("2026-11-25T"+time+"+08:00");
   const early=bookablePickupSlots(taipei("10:30:00"));

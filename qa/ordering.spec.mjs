@@ -114,6 +114,72 @@ test("staff recheck a changed table and complete its reviewed orders together",a
   await advance(pending,"pending","cancelled");
 });
 
+for(const reached of [true,false])test("mobile whole-table handoff recovers after reload when the first request "+
+  (reached?"commits":"never arrives"),async({page,request})=>{
+  const staff={Authorization:"Bearer local-test-kitchen"},table=reached?"A06":"A05",path="/api/kitchen/table-handoff";
+  const orders=[];
+  for(const dish of ["sencha","edamame"]){
+    const token=randomUUID();
+    const response=await request.post("/api/orders",{data:{token,mode:"table",table,note:"",items:[{id:dish,qty:1}]}});
+    expect(response.status()).toBe(200);
+    const {id}=await response.json();
+    orders.push({id,token});
+    for(const [from,to] of [["pending","preparing"],["preparing","ready"]]){
+      expect((await request.patch("/api/kitchen/status",{headers:staff,data:{id,from,to}})).status()).toBe(200);
+    }
+  }
+  await page.setViewportSize({width:360,height:780});
+  await page.addInitScript(()=>sessionStorage.setItem("he-ri-staff","local-test-kitchen"));
+  await page.goto("/kitchen");
+  await page.getByRole("button",{name:"待交餐",exact:true}).click();
+  await page.getByRole("combobox",{name:"管道或桌號"}).selectOption(table);
+  const review=page.getByRole("region",{name:table+" 桌同桌交餐"});
+  await review.getByRole("button",{name:"核對 2 張待交餐餐單"}).click();
+  const attempts=[],lookups=[];
+  let original;
+  await page.route(url=>url.pathname===path,async route=>{
+    if(route.request().method()==="GET"){
+      lookups.push(new URL(route.request().url()).searchParams.get("operationId"));
+      return route.continue();
+    }
+    attempts.push(route.request().postDataJSON());
+    if(attempts.length===1){
+      if(reached){
+        const result=await route.fetch();
+        expect(result.status()).toBe(200);
+        original=await result.json();
+      }
+      return route.abort("connectionreset");
+    }
+    const result=await route.fetch();
+    expect(result.status()).toBe(200);
+    original=await result.json();
+    await route.fulfill({response:result});
+  });
+  await review.getByRole("button",{name:"確認交餐 2 張餐單"}).click();
+  await expect(page.getByText("暫時無法確認交餐結果，請查詢並重試原批次。")).toBeVisible();
+  await page.reload();
+  const pending=page.getByRole("region",{name:"待確認同桌交餐"});
+  await expect(pending).toContainText(table+" 桌待確認交餐");
+  await pending.getByRole("button",{name:"取回或重送原交餐批次"}).click();
+  const receipt=page.getByRole("region",{name:"同桌交餐收據"});
+  await expect(receipt).toContainText(original?.operationId??attempts[0].operationId);
+  await expect(pending).toHaveCount(0);
+  expect(attempts).toHaveLength(reached?1:2);
+  expect(lookups).toEqual([attempts[0].operationId]);
+  if(!reached)expect(attempts[1]).toEqual(attempts[0]);
+  const exported=page.waitForEvent("download");
+  await receipt.getByRole("button",{name:"下載交餐收據 JSON"}).click();
+  const file=await exported;
+  expect(JSON.parse(await readFile(await file.path(),"utf8"))).toEqual(original);
+  expect(original.orderIds).toEqual(orders.map(order=>order.id));
+  for(const order of orders){
+    const progress=await (await request.get("/api/ticket?progress=1",{headers:{"X-Ticket":order.token}})).json();
+    expect(progress.statusHistory.filter(event=>event.status==="completed")).toEqual([{status:"completed",at:original.completedAt}]);
+  }
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBe(360);
+});
+
 test("table moves keep the original order retry and guard stale handoff and printing",async({page,browser,request})=>{
   const headers={Authorization:"Bearer local-test-kitchen"};
   const input={token:randomUUID(),mode:"table",table:"A03",note:"換桌測試備註",items:[{id:"oyakodon",qty:1}]};

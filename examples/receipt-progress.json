@@ -28,6 +28,34 @@
         "status": 409,
         "code": "note_closed"
       }
+    },
+    "tableHandoff": {
+      "table": "A03",
+      "missingStatus": 404,
+      "writeStatus": 200,
+      "lookupStatus": 200,
+      "replayStatus": 200,
+      "receipt": {
+        "table": "A03",
+        "orderIds": [
+          1,
+          2
+        ],
+        "completed": 2,
+        "completedAt": 1795493400000
+      },
+      "orders": [
+        {
+          "id": 1,
+          "handoffCount": 1,
+          "completedAt": 1795493400000
+        },
+        {
+          "id": 2,
+          "handoffCount": 1,
+          "completedAt": 1795493400000
+        }
+      ]
     }
   },
   {
