@@ -694,3 +694,64 @@ with sqlite3.connect(sys.argv[1]) as db:
   await expect(receipt).toContainText(oldest);
   expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBe(360);
 });
+
+test("mobile stock count reversal refreshes changed reservations and retries the original operation after reload",async({page,request})=>{
+  const py = `import sqlite3, sys
+with sqlite3.connect(sys.argv[1]) as db:
+    db.executemany("INSERT INTO products VALUES (?, ?, ?)", [("REV-KIT", 9, 9), ("REV-WRAP", 5, 5)])
+`;
+  execFileSync(python,["-c",py,join(directory,"stockroom.sqlite")],{windowsHide:true});
+  const batch="reversal-original",endpoint="/stock-count-batches/"+batch+"/reversal";
+  const posted=await request.post(origin+"/stock-count-batches",{
+    headers:{"Idempotency-Key":batch},data:{count_session:"交班盤點",reason:"覆盤",items:[
+      {sku:"REV-KIT",expected_revision:0,counted:10},{sku:"REV-WRAP",expected_revision:0,counted:8},
+    ]},
+  });
+  expect(posted.status()).toBe(201);
+  await page.setViewportSize({width:360,height:780});
+  const source=origin+"/workbench/stock-count?batch="+batch;
+  await page.goto(source);
+  await page.getByRole("link",{name:"預覽或查詢沖回"}).click();
+  const review=page.getByRole("region",{name:"核對沖回內容"});
+  const confirm=review.getByRole("button",{name:"確認整批沖回"});
+  await expect(review).toContainText("REV-WRAP · 目前 8 → 恢復 5 件 · 已保留 0 件 · 恢復後可用 5 件");
+  await review.getByLabel("沖回原因").fill("盤點區域選錯");
+  expect((await request.post(origin+"/reservations",{
+    headers:{"Idempotency-Key":"reversal-new-hold"},data:{sku:"REV-WRAP",quantity:6},
+  })).status()).toBe(201);
+  await confirm.click();
+  await expect(page.getByRole("alert")).toHaveText("這次操作未入帳，請核對最新資料。");
+  await expect(review).toContainText("恢復後低於保留量");
+  await expect(confirm).toBeDisabled();
+  expect((await request.get(origin+endpoint)).status()).toBe(404);
+  expect((await request.delete(origin+"/reservations/reversal-new-hold")).ok()).toBe(true);
+  await page.getByRole("button",{name:"擷取沖回預覽"}).click();
+  await expect(confirm).toBeEnabled();
+  const writes=[],results=[];
+  await page.route(origin+endpoint,async route=>{
+    if(route.request().method()!=="POST")return route.continue();
+    writes.push([route.request().headers()["idempotency-key"],route.request().postDataJSON()]);
+    const response=await route.fetch();
+    results.push([response.status(),await response.json()]);
+    if(writes.length===1)return route.abort();
+    await route.fulfill({response});
+  });
+  try{
+    await confirm.click();
+    await expect(page.getByRole("alert")).toContainText("尚未收到沖回結果");
+    await page.reload();
+    await expect(page.getByRole("region",{name:"待確認沖回"})).toContainText(batch);
+    await page.getByRole("button",{name:"重試原沖回操作"}).click();
+    await expect(page.getByRole("status")).toHaveText("已確認原沖回操作。");
+    expect(writes).toEqual([writes[0],writes[0]]);
+    expect(results).toEqual([[201,results[0][1]],[200,results[0][1]]]);
+    const downloading=page.waitForEvent("download");
+    await page.getByRole("button",{name:"下載沖回收據 JSON"}).click();
+    const download=await downloading;
+    expect(JSON.parse(await readFile(await download.path(),"utf8"))).toEqual(results[0][1]);
+    expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBe(360);
+    await page.getByRole("link",{name:"返回庫存盤點"}).click();
+    await expect(page).toHaveURL(source);
+    await expect(page.getByRole("region",{name:"盤點收據",exact:true})).toContainText(batch);
+  }finally{await page.unrouteAll({behavior:"wait"});}
+});

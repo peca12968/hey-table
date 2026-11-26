@@ -262,6 +262,61 @@ def reversal(client, key, batch_id="cycle", reason="Recount copied from the wron
     return client.post(f"{BATCH}/{batch_id}/reversal", headers={"Idempotency-Key": key}, json={"reason": reason})
 
 
+def test_reversal_preview_rechecks_the_reviewed_stock_and_reservations(tmp_path):
+    path = tmp_path / "reversal-preview.db"
+    with TestClient(create_app(path, clock=lambda: 100)) as left, TestClient(create_app(path, clock=lambda: 101)) as right:
+        with Store(path).transaction() as conn:
+            conn.execute("INSERT INTO products VALUES ('WRAP-01',5,5)")
+        batch_count(left, "cycle", [count_item("KIT-01", 18), count_item("WRAP-01", 8)]).raise_for_status()
+        preview_path = BATCH + "/cycle/reversal-preview"
+        apply_path = BATCH + "/cycle/reversal"
+
+        def submit(client, request_id, digest):
+            return client.post(apply_path, headers={"Idempotency-Key": request_id},
+                               json={"reason": "Recount", "preview_digest": digest})
+
+        opening = left.get(preview_path).raise_for_status()
+        assert opening.headers["Cache-Control"] == "no-store"
+        assert opening.json()["source_batch_id"] == "cycle"
+        safe = opening.json()["preview_digest"]
+        assert safe == right.get(preview_path).json()["preview_digest"]
+        assert submit(left, "bad-digest", "not-a-digest").status_code == 422
+        assert left.get(BATCH + "/missing/reversal-preview").status_code == 404
+        assert right.post("/reservations", headers={"Idempotency-Key": "wrap-heavy"},
+                          json={"sku": "WRAP-01", "quantity": 6}).status_code == 201
+        blocked = left.get(preview_path).json()
+        assert blocked["preview_digest"] is None
+        assert blocked["lines"][1] == {"sku": "WRAP-01", "current_capacity": 8, "current_revision": 1,
+                                        "original_revision": 1, "held": 6, "restore_to": 5,
+                                        "available_after": None, "revision_changed": False}
+        assert submit(left, "blocked", safe).status_code == 409
+        assert right.delete("/reservations/wrap-heavy").status_code == 200
+        assert right.post("/reservations", headers={"Idempotency-Key": "wrap-light"},
+                          json={"sku": "WRAP-01", "quantity": 2}).status_code == 201
+        newer = left.get(preview_path).json()
+        assert newer["preview_digest"] != safe and newer["lines"][1]["available_after"] == 3
+        assert submit(left, "outdated", safe).status_code == 409
+        assert left.get(apply_path).status_code == 404
+        assert left.get(BASIS).json()["capacity"] == 18
+
+        barrier = Barrier(2, timeout=5)
+
+        def race(client, key):
+            barrier.wait()
+            return key, submit(client, key, newer["preview_digest"])
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            attempts = [pool.submit(race, client, key) for client, key in ((left, "first"), (right, "second"))]
+            results = [attempt.result(timeout=10) for attempt in attempts]
+        assert sorted(response.status_code for _, response in results) == [201, 409]
+        winning, committed = next((key, response.json()) for key, response in results if response.status_code == 201)
+        saved = submit(left, winning, newer["preview_digest"])
+        assert saved.status_code == 200 and saved.json() == committed
+        final = left.get(preview_path).json()
+        assert (final["reversal_batch_id"], final["preview_digest"], final["lines"]) == (committed["batch_id"], None, [])
+        assert [line["available"] for line in committed["items"]] == [20, 3]
+
+
 def test_count_batch_reversal_preserves_original_and_replays_across_services(tmp_path):
     path = tmp_path / "reversals.db"
     opening = tmp_path / "before-count.db"

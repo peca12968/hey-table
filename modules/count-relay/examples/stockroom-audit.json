@@ -190,6 +190,126 @@
           ],
           "next": null
         }
+      },
+      "reversal": {
+        "workbench": "/workbench/stock-count-reversal",
+        "initial": {
+          "source_batch_id": "morning-cycle",
+          "captured_at_ms": 102000,
+          "lines": [
+            {
+              "sku": "KIT-01",
+              "current_capacity": 19,
+              "current_revision": 1,
+              "original_revision": 1,
+              "held": 6,
+              "restore_to": 20,
+              "available_after": 14,
+              "revision_changed": false
+            },
+            {
+              "sku": "WRAP-01",
+              "current_capacity": 12,
+              "current_revision": 2,
+              "original_revision": 2,
+              "held": 0,
+              "restore_to": 11,
+              "available_after": 11,
+              "revision_changed": false
+            }
+          ],
+          "preview_digest": "f2b9ca71a90530e44722a652269311078c084339382199ae46a990f909cbbd53",
+          "reversal_batch_id": null
+        },
+        "blocked": {
+          "source_batch_id": "morning-cycle",
+          "captured_at_ms": 103000,
+          "lines": [
+            {
+              "sku": "KIT-01",
+              "current_capacity": 19,
+              "current_revision": 1,
+              "original_revision": 1,
+              "held": 6,
+              "restore_to": 20,
+              "available_after": 14,
+              "revision_changed": false
+            },
+            {
+              "sku": "WRAP-01",
+              "current_capacity": 12,
+              "current_revision": 2,
+              "original_revision": 2,
+              "held": 12,
+              "restore_to": 11,
+              "available_after": null,
+              "revision_changed": false
+            }
+          ],
+          "preview_digest": null,
+          "reversal_batch_id": null
+        },
+        "refreshed": {
+          "source_batch_id": "morning-cycle",
+          "captured_at_ms": 103000,
+          "lines": [
+            {
+              "sku": "KIT-01",
+              "current_capacity": 19,
+              "current_revision": 1,
+              "original_revision": 1,
+              "held": 6,
+              "restore_to": 20,
+              "available_after": 14,
+              "revision_changed": false
+            },
+            {
+              "sku": "WRAP-01",
+              "current_capacity": 12,
+              "current_revision": 2,
+              "original_revision": 2,
+              "held": 2,
+              "restore_to": 11,
+              "available_after": 9,
+              "revision_changed": false
+            }
+          ],
+          "preview_digest": "e44784a3e47f7fc24855a0c4154a3061cdd64be9aa2250380fce7a354aa08d26",
+          "reversal_batch_id": null
+        },
+        "stale_status": 409,
+        "created_status": 201,
+        "replay_status": 200,
+        "receipt": {
+          "batch_id": "10000000000040008000000000000001",
+          "items": [
+            {
+              "sku": "KIT-01",
+              "count_session": "morning",
+              "reason": "second shelf review",
+              "recorded_at_ms": 103000,
+              "previous_revision": 1,
+              "previous_capacity": 19,
+              "previous_available": 13,
+              "counted": 20,
+              "available": 14,
+              "revision": 2
+            },
+            {
+              "sku": "WRAP-01",
+              "count_session": "morning",
+              "reason": "second shelf review",
+              "recorded_at_ms": 103000,
+              "previous_revision": 2,
+              "previous_capacity": 12,
+              "previous_available": 10,
+              "counted": 11,
+              "available": 9,
+              "revision": 3
+            }
+          ],
+          "source_batch_id": "morning-cycle"
+        }
       }
     }
   },

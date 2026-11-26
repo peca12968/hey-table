@@ -1,6 +1,8 @@
 """Transactional stock reservations. One short-lived connection per operation."""
 from contextlib import closing, contextmanager
+from hashlib import sha256
 from itertools import groupby
+import json
 from pathlib import Path
 import re
 import sqlite3
@@ -454,7 +456,36 @@ class Store:
         return {"source_batch_id": batch_id, "batch_id": reversal,
                 "items": self.stock_count_batch_rows(conn, reversal)}, link["request_id"]
 
-    def reverse_stock_count_batch(self, batch_id, request_id, reason):
+    def stock_count_reversal_lines(self, conn, original):
+        lines = []
+        for row in original:
+            sku, restore = row["sku"], row["previous_capacity"]
+            current = self.count_basis_row(conn, sku)
+            held = current["held"]
+            lines.append({"sku": sku, "current_capacity": current["capacity"], "current_revision": current["revision"],
+                          "original_revision": row["revision"], "held": held, "restore_to": restore,
+                          "available_after": restore - held if restore >= held else None,
+                          "revision_changed": current["revision"] != row["revision"]})
+        return lines
+
+    @staticmethod
+    def stock_count_reversal_digest(batch_id, lines):
+        if any(line["revision_changed"] or line["available_after"] is None for line in lines):
+            return None
+        return sha256(json.dumps([batch_id, lines], sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+
+    def stock_count_reversal_preview(self, batch_id):
+        with self.current_inventory() as (conn, now):
+            original = self.stock_count_batch_rows(conn, batch_id)
+            if not original:
+                raise Missing("Unknown stock count batch")
+            existing, _ = self.stock_count_batch_reversal_record(conn, batch_id)
+            lines = [] if existing else self.stock_count_reversal_lines(conn, original)
+            return {"source_batch_id": batch_id, "captured_at_ms": now, "lines": lines,
+                    "preview_digest": None if existing else self.stock_count_reversal_digest(batch_id, lines),
+                    "reversal_batch_id": existing["batch_id"] if existing else None}
+
+    def reverse_stock_count_batch(self, batch_id, request_id, reason, preview_digest=None):
         with self.current_inventory() as (conn, now):
             previous, operation = self.stock_count_batch_reversal_record(conn, batch_id)
             if previous is not None:
@@ -464,6 +495,10 @@ class Store:
             original = self.stock_count_batch_rows(conn, batch_id)
             if not original:
                 raise Missing("Unknown stock count batch")
+            if preview_digest is not None:
+                lines = self.stock_count_reversal_lines(conn, original)
+                if preview_digest != self.stock_count_reversal_digest(batch_id, lines):
+                    raise Conflict("Stock count reversal preview has changed")
             ordered = [(line["sku"], line["revision"], line["previous_capacity"]) for line in original]
             reversal_id = uuid4().hex
             if self.stock_count_batch_rows(conn, reversal_id):

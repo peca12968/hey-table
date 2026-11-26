@@ -138,6 +138,11 @@ function showReceipt(result, id, expected) {
     ' 件 · 可用 ' + row.previous_available + ' → ' + row.available + ' 件 · 版次 ' + row.revision));
   by('receipt').hidden = false;
   by('lookup-batch').value = id;
+  const back = new URLSearchParams({ batch: id });
+  const history = new URLSearchParams(location.search).get('from');
+  if (history) back.set('from', history);
+  const from = location.pathname + '?' + back;
+  by('reversal-link').href = '/workbench/stock-count-reversal?' + new URLSearchParams({ batch: id, from });
 }
 
 skuInput.addEventListener('input', () => {

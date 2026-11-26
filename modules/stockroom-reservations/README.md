@@ -88,6 +88,10 @@ SQLite 在同一筆交易核對實體庫存版次、結算到期保留並保存�
 
 #### 沖回已入帳的盤點批次
 
+在原盤點收據選「預覽或查詢沖回」，工作台會列出各 SKU 的目前件數、將恢復的件數、保留量及預估可用量。若版次已變或恢復後不足以支應保留，會標出受影響品項。確認時會在同一筆 SQLite 交易比對預覽的庫存與保留量；期間若保留件數改變，即使仍有足夠庫存，也要重新核對畫面再送出。送出後若斷線，同一分頁重新整理可用原操作重試並取回收據，再下載 JSON。
+
+整合時可先讀取 `GET /stock-count-batches/{batch_id}/reversal-preview`，把回傳的 `preview_digest` 隨原因送出，以綁定這次預覽。舊 API 仍支援僅提供原因的請求。[手機沖回與斷線回復測試](../../qa/stockroom-workbench.spec.mjs) · [私人 Demo](https://peca-github-demo.peca12968.chatgpt.site/?demo=inventory#demos)
+
 發現已入帳的盤點批次讀錯數量時，向 `POST /stock-count-batches/{batch_id}/reversal` 送出原因，例如 `{"reason":"查明原先讀錯貨架"}`。用 `Idempotency-Key` 記下此次沖回操作。
 
 SQLite 會核對每個 SKU 的原入帳後版次，並嘗試恢復原批次調整前的實體數量，同時保留目前已占用的件數。若任何 SKU 已有後續實體異動，或恢復的數量不足以支應保留，整批退回。成功會產生新的沖回批號和各品項收據，原批次仍可查閱。相同操作重送會取得原沖回收據，也可用 `GET /stock-count-batches/{batch_id}/reversal` 查回。庫存差異報表會保留原調整與沖回的兩筆異動。[沖回、重送與對帳測試](tests/test_stock_count.py)

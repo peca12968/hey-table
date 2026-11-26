@@ -229,6 +229,29 @@ class StockCountBatchReversal(StockCountBatchReceipt):
     source_batch_id: str
 
 
+class StockCountReversalRequest(StockCountReason):
+    preview_digest: Annotated[str, Field(pattern=r"^[a-f0-9]{64}$")] | None = None
+
+
+class StockCountReversalLine(BaseModel):
+    sku: str
+    current_capacity: int
+    current_revision: int
+    original_revision: int
+    held: int
+    restore_to: int
+    available_after: int | None
+    revision_changed: bool
+
+
+class StockCountReversalPreview(BaseModel):
+    source_batch_id: str
+    captured_at_ms: int
+    lines: list[StockCountReversalLine]
+    preview_digest: str | None
+    reversal_batch_id: str | None
+
+
 class StockCountHistoryBatch(BaseModel):
     batch_id: str
     recorded_at_ms: int
@@ -744,6 +767,7 @@ def create_app(path: Path, *, ttl_seconds=900, clock=time.time):
             "return-history.mjs": "text/javascript",
             "stock-count.mjs": "text/javascript",
             "stock-count-history.mjs": "text/javascript",
+            "stock-count-reversal.mjs": "text/javascript",
             "quarantine.css": "text/css",
             "workbench.css": "text/css",
         }.get(name)
@@ -756,7 +780,7 @@ def create_app(path: Path, *, ttl_seconds=900, clock=time.time):
     @app.get("/workbench/{tool_name}", include_in_schema=False)
     def workbench_page(tool_name: str):
         if tool_name not in ("dispatch", "quarantine", "quarantine-queue", "replacement", "returns", "return-history",
-                             "stock-count", "stock-count-history"):
+                             "stock-count", "stock-count-history", "stock-count-reversal"):
             raise HTTPException(status_code=404)
         return FileResponse(workbench / (tool_name + ".html"), media_type="text/html", headers={
             "Cache-Control": "no-store",
@@ -865,10 +889,15 @@ def create_app(path: Path, *, ttl_seconds=900, clock=time.time):
         response.headers["Cache-Control"] = "no-store"
         return store.stock_count_batch(batch_id)
 
+    @app.get("/stock-count-batches/{batch_id}/reversal-preview", response_model=StockCountReversalPreview)
+    def stock_count_reversal_preview(batch_id: BoxKey, response: Response):
+        response.headers["Cache-Control"] = "no-store"
+        return store.stock_count_reversal_preview(batch_id)
+
     @app.post("/stock-count-batches/{batch_id}/reversal", response_model=StockCountBatchReversal, status_code=201,
               responses={200: {"model": StockCountBatchReversal, "description": "Original stock count batch reversal"}})
-    def reverse_stock_count_batch(batch_id: BoxKey, correction: StockCountReason, response: Response, idempotency_key: RequestKey):
-        receipt, created = store.reverse_stock_count_batch(batch_id, idempotency_key, correction.reason)
+    def reverse_stock_count_batch(batch_id: BoxKey, correction: StockCountReversalRequest, response: Response, idempotency_key: RequestKey):
+        receipt, created = store.reverse_stock_count_batch(batch_id, idempotency_key, correction.reason, correction.preview_digest)
         response.headers["Cache-Control"] = "no-store"
         if not created:
             response.status_code = 200

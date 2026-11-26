@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>盤點沖回｜Stockroom</title>
+  <link rel="stylesheet" href="/workbench/assets/workbench.css">
+  <script type="module" src="/workbench/assets/stock-count-reversal.mjs"></script>
+</head>
+<body>
+  <header><div class="shell"><span>Stockroom</span><h1>盤點沖回</h1></div></header>
+  <main class="shell">
+    <p class="meta"><a id="back" href="/workbench/stock-count">返回庫存盤點</a></p>
+    <section class="panel" aria-labelledby="lookup-heading">
+      <h2 id="lookup-heading">查詢原盤點批次</h2>
+      <form id="lookup" class="actions">
+        <label>原盤點批號<input id="batch" required maxlength="80" pattern="[A-Za-z0-9_\-]+" autocomplete="off" disabled></label>
+        <button id="load" class="outline" disabled>擷取沖回預覽</button>
+      </form>
+    </section>
+    <p id="status" role="status" hidden></p>
+    <p id="error" role="alert" hidden></p>
+    <section class="panel" id="review" aria-labelledby="review-heading" hidden>
+      <h2 id="review-heading">核對沖回內容</h2>
+      <p id="capture" class="meta"></p>
+      <ul id="lines" aria-label="沖回品項"></ul>
+      <form id="confirm" class="actions">
+        <label>沖回原因<input id="reason" required maxlength="240" autocomplete="off"></label>
+        <button id="submit">確認整批沖回</button>
+      </form>
+    </section>
+    <section class="panel" id="pending" aria-labelledby="pending-heading" hidden>
+      <h2 id="pending-heading">待確認沖回</h2>
+      <p id="pending-info" class="meta"></p>
+      <button id="retry" class="outline" type="button">重試原沖回操作</button>
+    </section>
+    <section class="panel" id="receipt" aria-labelledby="receipt-heading" hidden>
+      <h2 id="receipt-heading">沖回收據</h2>
+      <p id="receipt-info" class="meta"></p>
+      <ul id="receipt-lines" aria-label="已沖回品項"></ul>
+      <div class="actions">
+        <a id="source-receipt">開啟原盤點收據</a>
+        <button id="download" class="outline" type="button">下載沖回收據 JSON</button>
+      </div>
+    </section>
+  </main>
+</body>
+</html>

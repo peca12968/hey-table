@@ -66,11 +66,33 @@ def demonstrate(database):
         assert api.get(history_path).status_code == 200
         query = {"sku": "WRAP-01", "limit": 1}
         original = api.get("/stock-count-batches", params=query).raise_for_status().json()
+        correction_path = "/stock-count-batches/" + batch + "/reversal"
+        preview_path = correction_path + "-preview"
+        initial_review = api.get(preview_path).raise_for_status().json()
         now[0] = 103.0
+        assert api.post("/reservations", headers={"Idempotency-Key": "wrap-review-hold"},
+                        json={"sku": "WRAP-01", "quantity": 12}).status_code == 201
+        blocked_review = api.get(preview_path).raise_for_status().json()
+        assert blocked_review["preview_digest"] is None
+
+        def reverse(digest):
+            return api.post(correction_path, headers={"Idempotency-Key": "undo-count"},
+                            json={"reason": "second shelf review", "preview_digest": digest})
+
+        stale_review = reverse(initial_review["preview_digest"])
+        assert stale_review.status_code == 409 and api.get(correction_path).status_code == 404
+        assert api.delete("/reservations/wrap-review-hold").status_code == 200
+        assert api.post("/reservations", headers={"Idempotency-Key": "wrap-small-hold"},
+                        json={"sku": "WRAP-01", "quantity": 2}).status_code == 201
+        refreshed_review = api.get(preview_path).raise_for_status().json()
+        assert refreshed_review["preview_digest"] != initial_review["preview_digest"]
         ids = [UUID(f"10000000-0000-4000-8000-{number:012d}") for number in (1, 2, 3)]
         with patch("stockroom.store.uuid4", side_effect=ids):
-            reversal = api.post("/stock-count-batches/" + batch + "/reversal", headers={"Idempotency-Key": "undo-count"},
-                                json={"reason": "second shelf review"}).raise_for_status().json()
+            reversed_response = reverse(refreshed_review["preview_digest"])
+            reversal = reversed_response.raise_for_status().json()
+        reversal_replay = reverse(refreshed_review["preview_digest"])
+        assert reversed_response.status_code == 201 and reversal_replay.status_code == 200
+        assert reversal_replay.json() == reversal
         latest = api.get("/stock-count-batches", params=query).raise_for_status().json()
         older = api.get("/stock-count-batches", params={**query, **latest["next"]}).raise_for_status().json()
         assert latest["batches"][0]["batch_id"] == reversal["batch_id"]
@@ -80,7 +102,13 @@ def demonstrate(database):
                 "stale_status": stale.status_code, "refreshed": refreshed, "created_status": applied.status_code,
                 "replay_status": replay.status_code, "receipt": {
                     "batch_id": batch, "items": [{key: value for key, value in row.items() if key != "id"} for row in saved["items"]],
-                }, "history": {"workbench": history_path, "original": original, "latest": latest, "older": older}}
+                }, "history": {"workbench": history_path, "original": original, "latest": latest, "older": older},
+                "reversal": {"workbench": "/workbench/stock-count-reversal", "initial": initial_review,
+                             "blocked": blocked_review, "refreshed": refreshed_review,
+                             "stale_status": stale_review.status_code, "created_status": reversed_response.status_code,
+                             "replay_status": reversal_replay.status_code,
+                             "receipt": {**reversal, "items": [{key: value for key, value in row.items() if key != "id"}
+                                                               for row in reversal["items"]]}}}
 
 
 if __name__ == "__main__":
