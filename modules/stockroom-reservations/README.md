@@ -72,6 +72,14 @@ SQLite 在同一筆交易核對實體庫存版次、結算到期保留並保存�
 
 任一 SKU 找不到、庫存版次變更或實點低於保留量時，整批退回，回應會指出該 SKU。成功後可從 `GET /stock-count-batches/{batch_id}` 取回整批收據，其中包含各品項的調整單號。原內容換序重送會取得同一批，單張及批次調整共用版次與盤點差異稽核。[跨 SKU 回滾與並行測試](tests/test_stock_count.py)
 
+##### 使用庫存盤點工作台
+
+啟動 Stockroom 後開啟 [庫存盤點工作台](http://127.0.0.1:8000/workbench/stock-count)。逐行貼上或掃入 SKU，擷取同一份庫存基準。填寫場次、理由與現場實點件數後，可先預覽帳面差異、保留量及預估可用量，再確認整批入帳。實點低於保留量時，畫面會標出受影響品項。
+
+若盤點期間有人先改了實體庫存，工作台會更新基準，清空版次已變的品項件數，等待重新複點。其餘品項的實點可沿用，送出前仍須再預覽。若送出後斷線，可在同一分頁重新整理，按原盤點批號取回收據或重送。已入帳的收據可另用批號查詢、下載 JSON。[手機瀏覽器測試](../../qa/stockroom-workbench.spec.mjs) · [私人 Demo](https://peca-github-demo.peca12968.chatgpt.site/?demo=inventory#demos)
+
+執行 `python stock_count_workbench_demo.py` 可重跑兩品項盤點、舊版退回、重新複點、入帳與取回原收據。
+
 #### 沖回已入帳的盤點批次
 
 發現已入帳的盤點批次讀錯數量時，向 `POST /stock-count-batches/{batch_id}/reversal` 送出原因，例如 `{"reason":"查明原先讀錯貨架"}`。用 `Idempotency-Key` 記下此次沖回操作。

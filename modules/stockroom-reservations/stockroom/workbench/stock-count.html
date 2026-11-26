@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>庫存盤點｜Stockroom</title>
+  <link rel="stylesheet" href="/workbench/assets/workbench.css">
+  <script type="module" src="/workbench/assets/stock-count.mjs"></script>
+</head>
+<body>
+  <header><div class="shell"><span>Stockroom</span><h1>庫存盤點</h1></div></header>
+  <main class="shell">
+    <section class="panel" aria-labelledby="basis-heading">
+      <h2 id="basis-heading">擷取盤點基準</h2>
+      <form id="scope">
+        <label>商品 SKU（每行一個）<textarea id="skus" rows="3" maxlength="8200" required spellcheck="false"></textarea></label>
+        <div class="actions"><button class="outline">擷取庫存基準</button></div>
+      </form>
+    </section>
+    <p id="status" role="status" hidden></p>
+    <p id="error" role="alert" hidden></p>
+    <section class="panel" id="count-panel" aria-labelledby="count-heading" hidden>
+      <h2 id="count-heading">填寫實點數量</h2>
+      <p id="captured" class="meta"></p>
+      <form id="draft">
+        <div class="box-fields">
+          <label>盤點批號<input id="batch" required maxlength="80" pattern="[A-Za-z0-9_\-]+" autocomplete="off"></label>
+          <label>盤點場次<input id="session" required maxlength="80" autocomplete="off"></label>
+          <label class="reason">盤點理由<input id="reason" required maxlength="240" autocomplete="off"></label>
+        </div>
+        <div id="counts"></div>
+        <button>預覽盤點差異</button>
+      </form>
+    </section>
+    <section class="panel" id="review" aria-labelledby="review-heading" hidden>
+      <h2 id="review-heading">核對盤點差異</h2>
+      <ul id="changes" aria-label="盤點差異"></ul>
+      <button type="button" id="confirm">確認整批入帳</button>
+    </section>
+    <section class="panel" aria-labelledby="lookup-heading">
+      <h2 id="lookup-heading">查詢盤點收據</h2>
+      <form class="actions" id="lookup">
+        <label>收據批號<input id="lookup-batch" required maxlength="80" pattern="[A-Za-z0-9_\-]+" autocomplete="off"></label>
+        <button class="outline">取回盤點收據</button>
+      </form>
+    </section>
+    <section class="panel" id="receipt" aria-labelledby="receipt-heading" hidden>
+      <h2 id="receipt-heading">盤點收據</h2>
+      <p id="receipt-batch" class="meta"></p>
+      <ul id="receipt-lines" aria-label="已入帳品項"></ul>
+      <button type="button" class="outline" id="download">下載盤點收據 JSON</button>
+    </section>
+  </main>
+</body>
+</html>

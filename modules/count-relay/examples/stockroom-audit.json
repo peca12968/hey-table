@@ -17,7 +17,103 @@
     "variance": -1,
     "missing_batches": [],
     "conflicted_batches": [],
-    "unmapped_batches": []
+    "unmapped_batches": [],
+    "workbench": {
+      "workbench": "/workbench/stock-count",
+      "opening": {
+        "captured_at_ms": 100000,
+        "products": [
+          {
+            "sku": "KIT-01",
+            "capacity": 20,
+            "available": 14,
+            "held": 6,
+            "revision": 0
+          },
+          {
+            "sku": "WRAP-01",
+            "capacity": 10,
+            "available": 10,
+            "held": 0,
+            "revision": 0
+          }
+        ]
+      },
+      "target": {
+        "KIT-01": 19,
+        "WRAP-01": 12
+      },
+      "before_attempt": {
+        "captured_at_ms": 101000,
+        "products": [
+          {
+            "sku": "KIT-01",
+            "capacity": 20,
+            "available": 14,
+            "held": 6,
+            "revision": 0
+          },
+          {
+            "sku": "WRAP-01",
+            "capacity": 11,
+            "available": 11,
+            "held": 0,
+            "revision": 1
+          }
+        ]
+      },
+      "stale_status": 409,
+      "refreshed": {
+        "captured_at_ms": 101000,
+        "products": [
+          {
+            "sku": "KIT-01",
+            "capacity": 20,
+            "available": 14,
+            "held": 6,
+            "revision": 0
+          },
+          {
+            "sku": "WRAP-01",
+            "capacity": 11,
+            "available": 11,
+            "held": 0,
+            "revision": 1
+          }
+        ]
+      },
+      "created_status": 201,
+      "replay_status": 200,
+      "receipt": {
+        "batch_id": "morning-cycle",
+        "items": [
+          {
+            "sku": "KIT-01",
+            "count_session": "morning",
+            "reason": "audited cycle count",
+            "recorded_at_ms": 102000,
+            "previous_revision": 0,
+            "previous_capacity": 20,
+            "previous_available": 14,
+            "counted": 19,
+            "available": 13,
+            "revision": 1
+          },
+          {
+            "sku": "WRAP-01",
+            "count_session": "morning",
+            "reason": "audited cycle count",
+            "recorded_at_ms": 102000,
+            "previous_revision": 1,
+            "previous_capacity": 11,
+            "previous_available": 11,
+            "counted": 12,
+            "available": 12,
+            "revision": 2
+          }
+        ]
+      }
+    }
   },
   {
     "stage": "balanced",

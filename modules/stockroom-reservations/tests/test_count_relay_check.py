@@ -6,6 +6,7 @@ import sys
 from fastapi.testclient import TestClient
 
 from stockroom.api import create_app
+from stock_count_workbench_demo import demonstrate
 
 
 COUNT_RELAY = Path(__file__).resolve().parents[2] / "count-relay"
@@ -80,6 +81,7 @@ def test_offline_count_against_stockroom_snapshot(tmp_path):
 
     relay("record", "east.db", "pallet", "20", "--device", "lead")
     balanced = display("balanced", check(0))
+    variance["workbench"] = demonstrate(tmp_path / "workbench-demo.sqlite")
     demo = json.loads((COUNT_RELAY / "examples" / "stockroom-audit.json").read_bytes())
     assert demo == [review, variance, balanced]
 

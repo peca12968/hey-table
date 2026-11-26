@@ -711,6 +711,7 @@ def create_app(path: Path, *, ttl_seconds=900, clock=time.time):
             "replacement.mjs": "text/javascript",
             "returns.mjs": "text/javascript",
             "return-history.mjs": "text/javascript",
+            "stock-count.mjs": "text/javascript",
             "quarantine.css": "text/css",
             "workbench.css": "text/css",
         }.get(name)
@@ -722,7 +723,7 @@ def create_app(path: Path, *, ttl_seconds=900, clock=time.time):
 
     @app.get("/workbench/{tool_name}", include_in_schema=False)
     def workbench_page(tool_name: str):
-        if tool_name not in ("dispatch", "quarantine", "quarantine-queue", "replacement", "returns", "return-history"):
+        if tool_name not in ("dispatch", "quarantine", "quarantine-queue", "replacement", "returns", "return-history", "stock-count"):
             raise HTTPException(status_code=404)
         return FileResponse(workbench / (tool_name + ".html"), media_type="text/html", headers={
             "Cache-Control": "no-store",

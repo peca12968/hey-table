@@ -464,6 +464,75 @@ with sqlite3.connect(sys.argv[1]) as db:
   await expect(page.getByText(batch+" · 尚待處理 1 件")).toBeVisible();
 });
 
+test("the mobile stock count workbench recounts a changed SKU and recovers a committed batch after reload",async({page,request})=>{
+  execFileSync(python,["-c",`import sqlite3, sys
+with sqlite3.connect(sys.argv[1]) as db:
+    db.executemany("INSERT INTO products VALUES (?,6,6)", [("SCAN-01",),("SCAN-02",)])
+`,join(directory,"stockroom.sqlite")],{windowsHide:true});
+  const stock="/stock-count-batches",batch="aisle-count";
+  const post=(path,key,data)=>request.post(origin+path,{headers:{"Idempotency-Key":key},data});
+  const bases=async()=> (await (await request.post(origin+"/stock-count-basis",{data:{skus:["SCAN-01","SCAN-02"]}})).json()).products;
+  const hold=await post("/reservations","count-hold",{sku:"SCAN-02",quantity:2});
+  expect(hold.status()).toBe(201);
+  expect((await post("/reservations/count-hold/renewals","count-hold-extend",{
+    expected_expires_at_ms:(await hold.json()).expires_at_ms,extend_seconds:120,
+  })).status()).toBe(201);
+  await page.setViewportSize({width:360,height:780});
+  const front=await page.goto(origin+"/workbench/stock-count");
+  expect(front.headers()["cache-control"]).toBe("no-store");
+  await page.getByRole("textbox",{name:"商品 SKU（每行一個）"}).fill("SCAN-02\nSCAN-01");
+  await page.getByRole("button",{name:"擷取庫存基準"}).click();
+  const first=page.getByRole("group",{name:"SCAN-01"}),second=page.getByRole("group",{name:"SCAN-02"});
+  await expect(second).toContainText("已保留 2 件");
+  await page.getByLabel("盤點批號",{exact:true}).fill(batch);
+  await page.getByLabel("盤點場次").fill("早班");
+  await page.getByLabel("盤點理由").fill("現場複點");
+  await first.getByLabel("實點件數").fill("4");
+  await second.getByLabel("實點件數").fill("1");
+  const preview=page.getByRole("button",{name:"預覽盤點差異"});
+  const confirm=page.getByRole("button",{name:"確認整批入帳"});
+  await preview.click();
+  await expect(page.getByText(/低於保留量 2 件/)).toBeVisible();
+  await expect(confirm).toBeDisabled();
+  await second.getByLabel("實點件數").fill("3");
+  await preview.click();
+  await expect(confirm).toBeEnabled();
+  const initial=await bases();
+  const competitor=await post("/inventory/SCAN-02/count-adjustments","shared-count",{
+    expected_revision:initial[1].revision,counted:5,count_session:"另一位人員",reason:"盤點校正",
+  });
+  expect(competitor.status()).toBe(201);
+  await confirm.click();
+  await expect(page.getByRole("alert")).toHaveText("整批未入帳，基準已更新。請複點 SCAN-02。");
+  await expect(first.getByLabel("實點件數")).toHaveValue("4");
+  await expect(second.getByLabel("實點件數")).toHaveValue("");
+  expect((await bases()).map(row=>row.capacity)).toEqual([6,5]);
+  expect((await request.get(origin+stock+"/"+batch)).status()).toBe(404);
+  await second.getByLabel("實點件數").fill("3");
+  await preview.click();
+  await expect(confirm).toBeEnabled();
+  let writes=0;
+  await page.route(url=>url.pathname===stock,async route=>{
+    writes++;
+    expect((await route.fetch()).status()).toBe(201);
+    await route.abort("connectionreset");
+  });
+  await confirm.click();
+  await expect(page.getByRole("alert")).toContainText("尚未收到盤點結果");
+  await page.reload();
+  await expect(page.getByRole("heading",{name:"待確認盤點批次 "+batch})).toBeVisible();
+  await page.getByRole("button",{name:"查詢或重試原盤點批次"}).click();
+  await expect(page.getByRole("status")).toHaveText("已取回原盤點收據。");
+  expect(writes).toBe(1);
+  expect((await bases()).map(row=>[row.capacity,row.available])).toEqual([[4,4],[3,1]]);
+  const file=page.waitForEvent("download");
+  await page.getByRole("button",{name:"下載盤點收據 JSON"}).click();
+  const exported=JSON.parse(await readFile(await (await file).path(),"utf8"));
+  const authoritative=await (await request.get(origin+stock+"/"+batch)).json();
+  expect(exported).toEqual(authoritative);
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBe(360);
+});
+
 test("the mobile quarantine queue can page past a finished batch and open the remaining work",async({page,request})=>{
   execFileSync(python,["-c",`import sqlite3, sys
 with sqlite3.connect(sys.argv[1]) as db:
