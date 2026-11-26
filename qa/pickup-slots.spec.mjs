@@ -1116,3 +1116,68 @@ test("mobile checkout compares same-day and later windows and rechecks a stale c
     await operator.close();
   }
 });
+
+test("mobile receipts and staff compare reschedule windows without releasing the booking",async({page,request})=>{
+  const now=Date.now(),date=businessDate(now+4*86_400_000),next=businessDate(now+5*86_400_000);
+  const start=Date.parse(date+"T11:00:00+08:00"),nearest=start+900_000,alternative=start+1_800_000;
+  const ticket={"X-Ticket":randomUUID()},staff={Authorization:"Bearer local-test-kitchen"};
+  const endpoint="/api/kitchen/pickup-slots";
+  const read=async at=>(await (await request.get(endpoint+"?date="+date,{headers:staff})).json()).slots.find(row=>row.start===at);
+  const cap=async capacity=>request.patch(endpoint,{headers:staff,
+    data:{date,start:nearest,capacity,revision:(await read(nearest)).revision}});
+  const previous=await read(nearest);
+  const receipt=async()=>(await (await request.get("/api/ticket?progress=1",{headers:ticket})).json());
+  const operator=await page.context().newPage(),note="請保留原餐單備註";
+  let booked=false;
+  try{
+    const created=await request.post("/api/orders",{data:{token:ticket["X-Ticket"],mode:"pickup",note,
+      pickupSlot:start,paymentMethod:"cash",items:[{id:"sencha",qty:2}]}});
+    expect(created.ok()).toBe(true);
+    booked=true;
+    const {id}=await created.json();
+    for(const browser of [page,operator])await browser.setViewportSize({width:360,height:780});
+    await operator.addInitScript(()=>sessionStorage.setItem("he-ri-staff","local-test-kitchen"));
+    await Promise.all([page.goto("/ticket#"+ticket["X-Ticket"]),operator.goto("/kitchen?booking="+id)]);
+
+    const compare=browser=>browser.getByRole("button",{name:"比較可用取餐時段"});
+    const choices=browser=>browser.getByRole("list",{name:"可用取餐時段",exact:true});
+    const confirm=browser=>browser.getByRole("button",{name:"確認改期"});
+    const closest="選擇 "+date+" · 11:15～11:30",second="選擇 "+date+" · 11:30～11:45";
+    for(const browser of [page,operator]){
+      await browser.getByRole("button",{name:"更改取餐時段"}).click();
+      await compare(browser).click();
+      await expect(choices(browser).getByRole("listitem")).toHaveCount(6);
+      await expect(choices(browser).getByRole("button").first()).toHaveAccessibleName(closest);
+      await expect(choices(browser).getByRole("button",{name:"選擇 "+next+" · 11:00～11:15",exact:true})).toBeVisible();
+      await expect(choices(browser).getByRole("button",{name:"選擇 "+date+" · 11:00～11:15",exact:true})).toHaveCount(0);
+      await expect(confirm(browser)).toBeDisabled();
+      expect(await browser.evaluate(()=>document.documentElement.scrollWidth)).toBe(360);
+    }
+
+    expect((await cap(1)).ok()).toBe(true);
+    await choices(page).getByRole("button",{name:closest,exact:true}).click();
+    await expect(page.getByLabel("新的取餐時段")).toHaveValue(String(nearest));
+    await expect(page.getByText("新時段目前無法容納這張餐單，原預約仍有效。",{exact:true})).toBeVisible();
+    await expect(confirm(page)).toBeDisabled();
+    expect((await receipt()).pickupSlot).toBe(start);
+    await compare(page).click();
+    await expect(choices(page).getByRole("button",{name:closest,exact:true})).toHaveCount(0);
+    for(const browser of [page,operator]){
+      await choices(browser).getByRole("button",{name:second,exact:true}).click();
+      await expect(browser.getByLabel("新的取餐時段")).toHaveValue(String(alternative));
+      await expect(confirm(browser)).toBeEnabled();
+    }
+    expect((await receipt()).pickupChanges??[]).toHaveLength(0);
+    await confirm(page).click();
+    await expect(page.locator(".pickupSlotTime time")).toHaveAttribute("datetime",new Date(alternative).toISOString());
+    const saved=await receipt();
+    expect([saved.pickupSlot,saved.paymentMethod,saved.note,saved.items[0].qty,saved.pickupChanges.length])
+      .toEqual([alternative,"cash",note,2,1]);
+    const changed=saved.pickupChanges[0];
+    expect([changed.from,changed.to]).toEqual([start,alternative]);
+  }finally{
+    if(booked)await request.post("/api/ticket/cancel",{headers:ticket,data:{}});
+    if((await read(nearest)).capacity!==previous.capacity)await cap(previous.capacity);
+    await operator.close();
+  }
+});

@@ -7,6 +7,8 @@ const portions="SUM(json_extract(line.value,'$.qty'))";
 const activeSlots="FROM orders JOIN json_each(orders.items) AS line WHERE status<>'cancelled'";
 const usedAt=start=>`COALESCE((SELECT ${portions} ${activeSlots} AND pickup_slot=${start}),0)`;
 const capacityAt=start=>`COALESCE((SELECT capacity FROM pickup_slot_limits WHERE start=${start}),${pickupSlotCapacity})`;
+const remainingAt=start=>`${capacityAt(start)}-${usedAt(start)}`;
+const suggestionPriority="ORDER BY ABS(start-COALESCE(?,start)),start<COALESCE(?,start),start";
 export const usedAtPickupSlot=usedAt("?");
 export const capacityAtPickupSlot=capacityAt("?");
 export const pickupDayPaused="EXISTS (SELECT 1 FROM pickup_day_intake WHERE date=? AND accepting=0)";
@@ -49,16 +51,9 @@ export async function pickupSlots(db,now,day){
   return (await pickupSlotOptions(db,now,day)).availability;
 }
 
-function firstFittingSlot(quantity,exclude=""){
-  return `SELECT candidate.value FROM json_each(?) AS candidate
-    WHERE ${usedAt("candidate.value")}+${quantity}<=${capacityAt("candidate.value")} ${exclude}
-    ORDER BY candidate.value LIMIT 1`;
-}
-
-function firstSuggestion(days,options){
-  const index=options.findIndex(result=>result.results[0]?.start!=null);
-  return index===-1?null:{date:days[index],start:options[index].results[0].start};
-}
+const byDate=(days,options)=>options.flatMap((option,index)=>option.results.map(row=>({date:days[index],...row})));
+const suggestionList=(now,choices)=>({capturedAt:now,
+  suggestions:choices.slice(0,6).map(choice=>({...choice,end:choice.start+pickupSlotDuration}))});
 
 async function cartSlotSuggestions(db,now,days,items,staff,perDay,nearDay=null,nearSlot=null){
   if(!days.length)return [];
@@ -66,7 +61,7 @@ async function cartSlotSuggestions(db,now,days,items,staff,perDay,nearDay=null,n
   const searches=days.map(day=>{
     const preference=day===nearDay?nearSlot:null;
     return db.prepare(`WITH options AS MATERIALIZED (
-      SELECT candidate.value AS start,${capacityAt("candidate.value")}-${usedAt("candidate.value")} AS remaining
+      SELECT candidate.value AS start,${remainingAt("candidate.value")} AS remaining
       FROM json_each(?) AS candidate WHERE (? IS NULL OR candidate.value<>?)
         AND NOT ${pickupDayPaused}
         AND (? OR NOT EXISTS(SELECT 1 FROM order_intake WHERE mode='pickup' AND accepting=0))
@@ -74,12 +69,12 @@ async function cartSlotSuggestions(db,now,days,items,staff,perDay,nearDay=null,n
           ON unavailable.dish=json_extract(chosen.value,'$.id'))
         AND NOT EXISTS (${exceededPortions})
     ) SELECT start,remaining FROM options WHERE remaining>=?
-    ORDER BY ABS(start-COALESCE(?,start)),start<COALESCE(?,start),start LIMIT ?`)
+    ${suggestionPriority} LIMIT ?`)
       .bind(JSON.stringify(bookablePickupSlots(now,day)),preference,preference,day,Number(staff),lines,
         lines,day,...businessDayRange(day),count,preference,preference,perDay);
   });
   const [, ...options]=await db.batch([expirePaymentHolds(db,now),...searches]);
-  return options.flatMap((option,index)=>option.results.map(row=>({date:days[index],...row})));
+  return byDate(days,options);
 }
 
 export async function suggestCartPickupSlot(db,now,after,items,staff){
@@ -91,22 +86,40 @@ export async function suggestCartPickupSlot(db,now,after,items,staff){
 export async function suggestCartPickupAlternatives(db,now,day,items,staff,fromSlot){
   const days=pickupBookingDays(now).filter(value=>value>=day);
   const choices=await cartSlotSuggestions(db,now,days,items,staff,2,day,fromSlot);
-  return {capturedAt:now,suggestions:choices.slice(0,6).map(choice=>({...choice,end:choice.start+pickupSlotDuration}))};
+  return suggestionList(now,choices);
+}
+
+async function orderSlotSuggestions(db,now,days,orderKey,ref,perDay,nearDay=null,nearSlot=null){
+  const searches=days.map(day=>{
+    const range=businessDayRange(day);
+    const preference=day===nearDay?nearSlot:null;
+    return db.prepare(`WITH options AS MATERIALIZED (
+      SELECT candidate.value AS start,${remainingAt("candidate.value")} AS remaining,${orderPortions} AS quantity
+      FROM orders CROSS JOIN json_each(?) AS candidate
+      WHERE orders.${orderKey}=? AND mode='pickup' AND status='pending' AND pickup_slot>?
+        AND candidate.value<>orders.pickup_slot AND (? IS NULL OR candidate.value<>?)
+        AND NOT ${pickupDayPaused}
+        AND ((pickup_slot>=? AND pickup_slot<?) OR NOT EXISTS (${exceededOrderPortions}))
+    ) SELECT start,remaining FROM options WHERE remaining>=quantity
+    ${suggestionPriority} LIMIT ?`)
+      .bind(JSON.stringify(bookablePickupSlots(now,day)),ref,now+pickupPrepLead,preference,preference,
+        day,...range,day,...range,preference,preference,perDay);
+  });
+  const [,found,...options]=await db.batch([expirePaymentHolds(db,now),
+    db.prepare(`SELECT mode,status,pickup_slot,pickup_changes FROM orders WHERE ${orderKey}=?`).bind(ref),...searches]);
+  return {order:found.results[0],choices:byDate(days,options)};
 }
 
 export async function suggestPickupSlot(db,now,after,orderKey,ref){
   const days=pickupBookingDays(now).filter(day=>day>after);
-  const searches=days.map(day=>{
-    const range=businessDayRange(day);
-    return db.prepare(`SELECT (${firstFittingSlot(orderPortions,"AND candidate.value<>orders.pickup_slot")}) AS start
-    FROM orders WHERE ${orderKey}=? AND mode='pickup' AND status='pending' AND pickup_slot>?
-    AND NOT ${pickupDayPaused}
-    AND ((pickup_slot>=? AND pickup_slot<?) OR NOT EXISTS (${exceededOrderPortions}))`)
-      .bind(JSON.stringify(bookablePickupSlots(now,day)),ref,now+pickupPrepLead,day,...range,day,...range);
-  });
-  const [,found,...options]=await db.batch([expirePaymentHolds(db,now),
-    db.prepare(`SELECT mode,status,pickup_slot FROM orders WHERE ${orderKey}=?`).bind(ref),...searches]);
-  return {order:found.results[0],suggestion:firstSuggestion(days,options)};
+  const {order,choices:[match]}=await orderSlotSuggestions(db,now,days,orderKey,ref,1);
+  return {order,suggestion:match?{date:match.date,start:match.start}:null};
+}
+
+export async function suggestPickupAlternatives(db,now,day,orderKey,ref,fromSlot){
+  const days=pickupBookingDays(now).filter(value=>value>=day);
+  const {order,choices}=await orderSlotSuggestions(db,now,days,orderKey,ref,2,day,fromSlot);
+  return {order,...suggestionList(now,choices)};
 }
 
 export async function pickupSlotLimits(db,date,now){

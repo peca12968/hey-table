@@ -2,13 +2,15 @@ import {useRef,useState} from "react";
 import {pickupBookingDays,pickupWindow} from "../lib/pickup-slots.mjs";
 import {businessDate} from "../lib/business-day.mjs";
 import {PickupDate,usePickupSlotAvailability} from "./pickup-slots";
+import {PickupChoiceList} from "./pickup-suggestion";
 import {useBusinessToday} from "./use-business-today.mjs";
 import {request} from "./shared";
 
 export default function ReschedulePickup({order,canReschedule=order.canReschedulePickup,disabled=false,submit,onChange,ticket,staffKey}){
   const [review,setReview]=useState(null);
   const [busy,setBusy]=useState(false),[failure,setFailure]=useState("");
-  const [finding,setFinding]=useState(false),[suggestionStatus,setSuggestionStatus]=useState("");
+  const [finding,setFinding]=useState(null),[suggestionStatus,setSuggestionStatus]=useState("");
+  const [comparison,setComparison]=useState(null);
   const inFlight=useRef(false);
   const revision=order.pickupRevision??order.pickupChanges?.length??0;
   const latest=order.latestPickupChange??order.pickupChanges?.at(-1);
@@ -36,19 +38,31 @@ export default function ReschedulePickup({order,canReschedule=order.canReschedul
     const [, ...future]=pickupBookingDays(Date.now());
     setReview({from:order.pickupSlot,to:null,day:future.includes(orderDay)?orderDay:"",revision,uncertain:false});
   }
-  async function findNext(){
+  function choose(slot){
+    refresh();
+    setReview(current=>current===review?{...current,day:slot.date,to:slot.start}:current);
+    setComparison(null);setFailure("");
+    setSuggestionStatus(`已選擇 ${slot.date} ${pickupWindow(slot.start)}，請核對時段後確認。`);
+  }
+  async function find(compare){
     if(locked||!validReview)return;
-    setFinding(true);setSuggestionStatus("");setFailure("");
+    setFinding(compare?"compare":"next");setComparison(null);setSuggestionStatus("");setFailure("");
     try{
       const headers=ticket?{"X-Ticket":ticket}:staffKey?{Authorization:"Bearer "+staffKey}:{};
-      const {suggestion}=await request(optionsUrl+"&suggest=1",{headers,signal:AbortSignal.timeout(10_000)});
-      if(suggestion){
-        refresh();
-        setReview(current=>current===review?{...current,day:suggestion.date,to:suggestion.start}:current);
-        setSuggestionStatus(`已選擇 ${suggestion.date} ${pickupWindow(suggestion.start)}，請核對時段後確認。`);
+      const preferred=review.to??(businessDate(review.from)===date?review.from:null);
+      const query=compare?"&alternatives=1"+(preferred===null?"":"&fromSlot="+preferred):"&suggest=1";
+      const result=await request(optionsUrl+query,{headers,signal:AbortSignal.timeout(10_000)});
+      if(compare&&(result.from!==review.from||result.revision!==review.revision)){
+        setSuggestionStatus("餐單預約已更新，請核對目前時段。");
+        onChange();
+      }else if(compare&&result.suggestions.length){
+        setComparison({review,choices:result.suggestions});
+        setSuggestionStatus(`找到 ${result.suggestions.length} 個可用時段。選擇後會重新核對供應。`);
+      }else if(result.suggestion){
+        choose(result.suggestion);
       }else setSuggestionStatus("接下來的可預約日期沒有符合這張餐單的時段。");
     }catch{setSuggestionStatus("暫時無法尋找可用日期，請再試一次。");}
-    finally{setFinding(false);}
+    finally{setFinding(null);}
   }
   async function confirm(event){
     event.preventDefault();
@@ -97,14 +111,19 @@ export default function ReschedulePickup({order,canReschedule=order.canReschedul
       </>}
     </>:<p role="status">餐單已更新，請核對最新預約時段。</p>}
     {validReview&&suggestionStatus&&<p role="status">{suggestionStatus}</p>}
+    {validReview&&!review.uncertain&&comparison?.review===review&&
+      <PickupChoiceList choices={comparison.choices} disabled={locked} onChoose={choose}/>}
     {failure&&<p className="error" role="alert">{failure}</p>}
     <div className="actions">
       {validReview&&<button className="primary" disabled={locked||!canConfirm}>{busy?"改期確認中…":review.uncertain?"重試同一次改期":"確認改期"}</button>}
       {validReview&&!review.uncertain&&(error||snapshot)&&<button type="button" className="outline" disabled={locked} onClick={refresh}>
         {error?"重讀時段":"重新檢查時段"}
       </button>}
-      {(canSuggest||finding)&&<button type="button" className="outline" disabled={locked} onClick={findNext}>
-        {finding?"正在尋找…":"找下一個可用日期"}
+      {validReview&&!review.uncertain&&<button type="button" className="outline" disabled={locked} onClick={()=>find(true)}>
+        {finding==="compare"?"正在尋找時段…":"比較可用取餐時段"}
+      </button>}
+      {(canSuggest||finding==="next")&&<button type="button" className="outline" disabled={locked} onClick={()=>find(false)}>
+        {finding==="next"?"正在尋找…":"找下一個可用日期"}
       </button>}
       {!validReview&&canReschedule&&<button type="button" className="outline" disabled={locked} onClick={showChoices}>重新選擇時段</button>}
       <button type="button" className="outline" disabled={locked} onClick={()=>setReview(null)}>關閉改期</button>

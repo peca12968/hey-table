@@ -2273,6 +2273,24 @@ test("D1 reserves supply by pickup day and moves that supply atomically across d
     {suggestion:{date:alternative,start:closed+900_000}});
   assert.deepEqual(await (await call(suggest(last),guest)).json(),{suggestion:null});
   assert.equal((await call(suggest(tomorrow))).status,404);
+  const compare=(day,preferred)=>options+day+"&alternatives=1&fromSlot="+preferred;
+  const from=accepted.pickupSlot,compareUrl=compare(tomorrow,from);
+  const compared=await call(compareUrl,guest);
+  assert.equal(compared.headers.get("Cache-Control"),"no-store");
+  const choices=await compared.json();
+  assert.deepEqual([choices.from,choices.revision,choices.suggestions.length],[from,0,6]);
+  assert.deepEqual(choices.suggestions.slice(0,2).map(row=>[row.date,row.start]),
+    [[tomorrow,from+900_000],[tomorrow,from-900_000]]);
+  assert.deepEqual(choices.suggestions.slice(2,4).map(row=>[row.date,row.start]),
+    [[alternative,closed+900_000],[alternative,closed+1_800_000]]);
+  assert.equal((await call(compareUrl)).status,404);
+  assert.equal((await call(compare(tomorrow,closed),guest)).status,400);
+  assert.equal((await call(compareUrl+"&fromSlot="+from,guest)).status,400);
+  assert.equal((await call(staffOptions+tomorrow+"&alternatives=1&fromSlot="+from)).status,403);
+  assert.deepEqual(await (await call(staffOptions+tomorrow+"&alternatives=1&fromSlot="+from,staff)).json(),choices);
+  const withPreference=await (await call(compare(tomorrow,from+900_000),guest)).json();
+  assert.ok(withPreference.suggestions.every(row=>row.start!==from&&row.start!==from+900_000));
+  assert.equal((await (await call("/api/ticket",guest)).json()).pickupSlot,from);
   const cart={afterDate:tomorrow,items:[{id:"sencha",qty:2}]};
   const findCart=(input=cart)=>write("/api/pickup-suggestion",input);
   const findStaff=(headers=staff)=>write("/api/kitchen/pickup-suggestion",cart,headers);
@@ -2292,6 +2310,9 @@ test("D1 reserves supply by pickup day and moves that supply atomically across d
   const receipt=async()=>(await (await call("/api/ticket?progress=1",guest)).json());
   const sameDay=start(tomorrow,"12:30"),nextDay=start(dayAfter);
   assert.equal((await move(accepted.pickupSlot,sameDay,0)).status,200);
+  const movedOptions=await (await call(compareUrl,guest)).json();
+  assert.deepEqual([movedOptions.from,movedOptions.revision],[sameDay,1]);
+  assert.ok(movedOptions.suggestions.every(row=>row.start!==sameDay));
   const full=await move(sameDay,nextDay,1);
   assert.equal(full.status,409);
   assert.equal((await full.json()).code,"portion_limit");

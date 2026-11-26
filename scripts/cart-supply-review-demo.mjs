@@ -6,7 +6,7 @@ import {businessDate} from "../lib/business-day.mjs";
 import {dishes} from "../lib/menu.mjs";
 import {planSupplyReview,supplyReviewRows} from "../lib/supply-review.mjs";
 import {api} from "../server/api.mjs";
-import {suggestCartPickupAlternatives} from "../server/pickup-slots.mjs";
+import {suggestCartPickupAlternatives,suggestPickupAlternatives} from "../server/pickup-slots.mjs";
 import {applyDemoMigrations} from "./apply-demo-migrations.mjs";
 import {sqliteD1} from "./sqlite-d1.mjs";
 
@@ -72,10 +72,24 @@ export async function buildCartSupplyReviewDemo(){
     closeSlot.run(closed);
     const refreshed=await suggestCartPickupAlternatives(db,at+5_000,pickupDay,pickupItems,false,fromSlot);
     assert.equal(refreshed.suggestions[0].start,fromSlot+1_800_000);
+    const bookingDay="2026-11-28",booked=Date.parse(bookingDay+"T11:00:00+08:00");
+    const bookingToken="00000000-0000-4000-8000-000000000003",bookingLines=linesFor({sencha:2});
+    sqlite.prepare(`INSERT INTO orders(token,mode,note,items,total,created,pickup_slot)
+      VALUES (?,'pickup','',?,?,?,?)`).run(bookingToken,JSON.stringify(bookingLines),subtotal(bookingLines),at,booked);
+    const {order:beforeReschedule,...beforeChoices}=await suggestPickupAlternatives(db,at,bookingDay,"token",bookingToken,booked);
+    const blocked=beforeChoices.suggestions[0].start;
+    assert.equal(blocked,booked+900_000);
+    closeSlot.run(blocked);
+    const {order:afterReschedule,...afterChoices}=await suggestPickupAlternatives(db,at+5_000,bookingDay,"token",bookingToken,booked);
+    assert.equal(afterChoices.suggestions[0].start,booked+1_800_000);
+    assert.deepEqual([beforeReschedule.pickup_slot,beforeReschedule.status,beforeReschedule.pickup_changes],[booked,"pending",null]);
+    assert.deepEqual(afterReschedule,beforeReschedule);
     return {format:"hey-table.cart-supply-review-demo.v1",original,before:before.preview,after:after.preview,
       rejected:rejection.code,receipt:{id,table:receiptTable,paymentMethod:method,total,
         lines:items.map(({id,name,price,qty})=>({id,name,price,qty}))},
-      pickupAlternatives:{fromSlot,count:pickupItems[0].qty,closed,initial,refreshed}};
+      pickupAlternatives:{fromSlot,count:pickupItems[0].qty,closed,initial,refreshed},
+      rescheduleAlternatives:{fromSlot:booked,count:bookingLines[0].qty,closed:blocked,initial:beforeChoices,
+        refreshed:afterChoices,keptOriginal:true}};
   }finally{
     sqlite.close();
   }
