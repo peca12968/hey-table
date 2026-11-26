@@ -557,7 +557,36 @@
         }
       ]
     },
-    "submit_status": 409
+    "submit_status": 409,
+    "workbench": "/workbench/dispatch",
+    "recovered": {
+      "accepted_status": 201,
+      "replay_status": 200,
+      "same_receipt": true,
+      "receipt": {
+        "batch_id": "dispatch-demo",
+        "boxes": [
+          {
+            "reservation_id": "north-load",
+            "shipment_id": "A",
+            "quantity": 2,
+            "held_after": 2
+          },
+          {
+            "reservation_id": "north-load",
+            "shipment_id": "B",
+            "quantity": 1,
+            "held_after": 1
+          },
+          {
+            "reservation_id": "south-load",
+            "shipment_id": "A",
+            "quantity": 1,
+            "held_after": 0
+          }
+        ]
+      }
+    }
   },
   "expiry_history": {
     "sku": "KIT-01",

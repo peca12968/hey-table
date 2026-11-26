@@ -292,8 +292,16 @@ def capture_dispatch_preview(db):
                  json={"quantity": 1}).raise_for_status()
         submit = api.post("/dispatch-batches", headers={"Idempotency-Key": "dispatch-demo"}, json={"boxes": boxes})
         after_conflict = preview(boxes)
+        corrected = [first_box, second_box, {**last_box, "quantity": 1}]
+        headers = {"Idempotency-Key": "dispatch-demo"}
+        accepted = api.post("/dispatch-batches", headers=headers, json={"boxes": corrected})
+        receipt = accepted.raise_for_status().json()
+        readback = api.get("/dispatch-batches/dispatch-demo").raise_for_status().json()
+        replay = api.post("/dispatch-batches", headers=headers, json={"boxes": corrected[::-1]})
         return {"blocked": blocked, "ready": ready, "after_conflict": after_conflict,
-                "submit_status": submit.status_code}
+                "submit_status": submit.status_code, "workbench": "/workbench/dispatch",
+                "recovered": {"accepted_status": accepted.status_code, "replay_status": replay.status_code,
+                              "same_receipt": receipt == readback == replay.json(), "receipt": receipt}}
 
 
 def capture_expiry_history(db):

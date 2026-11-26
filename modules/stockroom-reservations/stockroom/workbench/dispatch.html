@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>整車交運｜Stockroom</title>
+  <link rel="stylesheet" href="/workbench/assets/workbench.css">
+  <script type="module" src="/workbench/assets/dispatch.mjs"></script>
+</head>
+<body>
+  <header><div class="shell"><span>Stockroom</span><h1>整車交運</h1></div></header>
+  <main class="shell">
+    <section class="panel" aria-labelledby="boxes-heading">
+      <h2 id="boxes-heading">交運箱單</h2>
+      <form id="draft">
+        <label>交運批號<input id="batch" required maxlength="80" pattern="[A-Za-z0-9_\-]+" autocomplete="off"></label>
+        <div id="boxes"></div>
+        <div class="actions">
+          <button id="add" type="button" class="outline">新增箱件</button>
+          <button id="preview-button">預覽交運</button>
+        </div>
+      </form>
+    </section>
+    <p id="status" role="status" hidden></p>
+    <p id="error" role="alert" hidden></p>
+    <section id="review" class="panel" aria-labelledby="review-heading" hidden>
+      <h2 id="review-heading">核對交運</h2>
+      <p id="summary" class="meta"></p>
+      <ul id="review-lines"></ul>
+      <button id="ship" type="button">確認整車交運</button>
+    </section>
+    <section class="panel" aria-labelledby="lookup-heading">
+      <h2 id="lookup-heading">查詢收據</h2>
+      <form id="lookup-form" class="actions">
+        <label>收據批號<input id="receipt-key" required maxlength="80" pattern="[A-Za-z0-9_\-]+" autocomplete="off"></label>
+        <button id="lookup" class="outline">取回交運收據</button>
+      </form>
+    </section>
+    <section id="receipt" class="panel" aria-labelledby="receipt-heading" hidden>
+      <h2 id="receipt-heading">交運收據</h2>
+      <p id="saved-batch" class="meta"></p>
+      <ul id="saved-lines"></ul>
+      <button id="download" type="button" class="outline">下載交運收據 JSON</button>
+    </section>
+    <template id="box-template">
+      <fieldset>
+        <legend></legend>
+        <div class="box-fields">
+          <label>保留單號<input name="reservation_id" required maxlength="80" pattern="[A-Za-z0-9_\-]+" autocomplete="off"></label>
+          <label>箱號<input name="shipment_id" required maxlength="80" pattern="[A-Za-z0-9_\-]+" autocomplete="off"></label>
+          <label>件數<input name="quantity" required type="number" min="1" max="1000000" step="1" inputmode="numeric"></label>
+          <button type="button" class="outline" data-remove>移除箱件</button>
+        </div>
+      </fieldset>
+    </template>
+  </main>
+</body>
+</html>

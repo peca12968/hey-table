@@ -629,6 +629,7 @@ def create_app(path: Path, *, ttl_seconds=900, clock=time.time):
     @app.get("/workbench/assets/{name}", include_in_schema=False)
     def workbench_asset(name: str):
         media_type = {
+            "dispatch.mjs": "text/javascript",
             "quarantine.mjs": "text/javascript",
             "replacement.mjs": "text/javascript",
             "quarantine.css": "text/css",
@@ -642,7 +643,7 @@ def create_app(path: Path, *, ttl_seconds=900, clock=time.time):
 
     @app.get("/workbench/{tool_name}", include_in_schema=False)
     def workbench_page(tool_name: str):
-        if tool_name not in ("quarantine", "replacement"):
+        if tool_name not in ("dispatch", "quarantine", "replacement"):
             raise HTTPException(status_code=404)
         return FileResponse(workbench / (tool_name + ".html"), media_type="text/html", headers={
             "Cache-Control": "no-store",

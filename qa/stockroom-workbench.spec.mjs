@@ -209,3 +209,86 @@ test("replacement workbench refreshes shortages and retries the original batch a
   await expect(receipt).toContainText(committed.batch_id);
   expect(operations).toHaveLength(2);
 });
+
+test("dispatch workbench rechecks the entire truck, then recovers the committed batch after a lost reply",async({page,request})=>{
+  const endpoint="/dispatch-batches",batch="packed-van";
+  const post=(path,key,data)=>request.post(origin+path,{headers:{"Idempotency-Key":key},data});
+  for(const [reservation,quantity] of [["north",4],["south",2]]){
+    const reply=await post("/reservations",reservation,{sku:"KIT-01",quantity});
+    expect(reply.status()).toBe(201);
+    const deadline=(await reply.json()).expires_at_ms;
+    expect((await post("/reservations/"+reservation+"/renewals","loading",{
+      expected_expires_at_ms:deadline,extend_seconds:600,
+    })).status()).toBe(201);
+  }
+  const inventory=async()=>(await (await request.get(origin+"/inventory")).json()).find(row=>row.sku==="KIT-01");
+  const lookup=()=>request.get(origin+endpoint+"/"+batch);
+  await page.setViewportSize({width:360,height:780});
+  expect((await page.goto(origin+"/workbench/dispatch")).status()).toBe(200);
+  await page.getByLabel("交運批號").fill(batch);
+  for(const [index,[reservation,box,count]] of [["north","A",2],["north","B",3],["south","A",2]].entries()){
+    if(index)await page.getByRole("button",{name:"新增箱件"}).click();
+    const row=page.getByRole("group",{name:"箱件 "+(index+1),exact:true});
+    await row.getByLabel("保留單號").fill(reservation);
+    await row.getByLabel("箱號").fill(box);
+    await row.getByLabel("件數").fill(String(count));
+  }
+  const review=page.getByRole("region",{name:"核對交運"});
+  const receipt=page.getByRole("region",{name:"交運收據",exact:true});
+  const preview=page.getByRole("button",{name:"預覽交運"});
+  const confirm=review.getByRole("button",{name:"確認整車交運"});
+  await preview.click();
+  await expect(review).toContainText("north/B · KIT-01 · 3 件 · 保留量 2 · 缺 1 件");
+  await expect(confirm).toBeHidden();
+  expect((await lookup()).status()).toBe(404);
+
+  await page.getByRole("group",{name:"箱件 2",exact:true}).getByLabel("件數").fill("1");
+  await expect(review).toBeHidden();
+  await preview.click();
+  await expect(confirm).toBeVisible();
+  expect((await post(endpoint,"earlier-truck",{boxes:[{reservation_id:"south",shipment_id:"previous",quantity:1}]})).status()).toBe(201);
+  const before=await inventory();
+  await confirm.click();
+  await expect(page.getByRole("alert")).toContainText("未登記這份箱單");
+  await expect(review).toContainText("south/A · KIT-01 · 2 件 · 保留量 1 · 缺 1 件");
+  expect(await inventory()).toEqual(before);
+  expect((await lookup()).status()).toBe(404);
+  expect((await request.get(origin+"/reservations/north/fulfillments/A")).status()).toBe(404);
+
+  await page.getByRole("group",{name:"箱件 3",exact:true}).getByLabel("件數").fill("1");
+  await preview.click();
+  let attempts=0,writes=0,committed;
+  await page.route(url=>url.pathname===endpoint,async route=>{
+    expect(route.request().headers()["idempotency-key"]).toBe(batch);
+    if(++attempts===1)return route.abort("connectionreset");
+    writes++;
+    const response=await route.fetch();
+    expect(response.status()).toBe(201);
+    committed=await response.json();
+    await route.abort("connectionreset");
+  });
+  await confirm.click();
+  await expect(page.getByRole("alert")).toContainText("尚未確認交運結果");
+  expect((await lookup()).status()).toBe(404);
+  await page.reload();
+  await expect(page.getByLabel("交運批號")).toBeDisabled();
+  await review.getByRole("button",{name:"重試原交運批次"}).click();
+  await expect(page.getByRole("alert")).toContainText("尚未確認交運結果");
+  await page.reload();
+  await expect(page.getByLabel("交運批號")).toBeDisabled();
+  await review.getByRole("button",{name:"重試原交運批次"}).click();
+  await expect(receipt).toContainText("south/A · 已交運 1 件");
+  await expect(page.getByRole("status")).toHaveText("已確認原交運批次。");
+  expect(attempts).toBe(2);
+  expect(writes).toBe(1);
+  expect((await inventory()).capacity).toBe(before.capacity-4);
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBe(360);
+  const [file]=await Promise.all([page.waitForEvent("download"),receipt.getByRole("button",{name:"下載交運收據 JSON"}).click()]);
+  expect(file.suggestedFilename()).toBe(batch+"-dispatch.json");
+  expect(JSON.parse(await readFile(await file.path(),"utf8"))).toEqual(committed);
+  await page.reload();
+  await page.getByLabel("收據批號").fill(batch);
+  await page.getByRole("button",{name:"取回交運收據"}).click();
+  await expect(receipt).toContainText(batch);
+  expect(writes).toBe(1);
+});
