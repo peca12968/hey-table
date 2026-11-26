@@ -5,6 +5,8 @@ import json
 from pathlib import Path
 import sqlite3
 from tempfile import TemporaryDirectory
+from unittest.mock import patch
+from uuid import UUID
 
 from fastapi.testclient import TestClient
 
@@ -60,11 +62,25 @@ def demonstrate(database):
         assert replay.status_code == 200 and replay.json() == saved
         assert api.get("/stock-count-batches/" + batch).json() == saved
         assert [(row["counted"], row["available"]) for row in saved["items"]] == [(19, 13), (12, 12)]
+        history_path = "/workbench/stock-count-history"
+        assert api.get(history_path).status_code == 200
+        query = {"sku": "WRAP-01", "limit": 1}
+        original = api.get("/stock-count-batches", params=query).raise_for_status().json()
+        now[0] = 103.0
+        ids = [UUID(f"10000000-0000-4000-8000-{number:012d}") for number in (1, 2, 3)]
+        with patch("stockroom.store.uuid4", side_effect=ids):
+            reversal = api.post("/stock-count-batches/" + batch + "/reversal", headers={"Idempotency-Key": "undo-count"},
+                                json={"reason": "second shelf review"}).raise_for_status().json()
+        latest = api.get("/stock-count-batches", params=query).raise_for_status().json()
+        older = api.get("/stock-count-batches", params={**query, **latest["next"]}).raise_for_status().json()
+        assert latest["batches"][0]["batch_id"] == reversal["batch_id"]
+        assert latest["batches"][0]["source_batch_id"] == batch
+        assert older["batches"][0]["reversal_batch_id"] == reversal["batch_id"]
         return {"workbench": workbench, "opening": opening, "target": target, "before_attempt": before_attempt,
                 "stale_status": stale.status_code, "refreshed": refreshed, "created_status": applied.status_code,
                 "replay_status": replay.status_code, "receipt": {
                     "batch_id": batch, "items": [{key: value for key, value in row.items() if key != "id"} for row in saved["items"]],
-                }}
+                }, "history": {"workbench": history_path, "original": original, "latest": latest, "older": older}}
 
 
 if __name__ == "__main__":

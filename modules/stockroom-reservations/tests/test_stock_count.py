@@ -1,5 +1,6 @@
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import closing
+from datetime import datetime
 import sqlite3
 from threading import Barrier
 
@@ -136,6 +137,46 @@ def batch_count(client, key, items, reason="Joint recount"):
 
 def count_item(sku, counted, revision=0):
     return {"sku": sku, "counted": counted, "expected_revision": revision}
+
+
+def test_count_history_pages_same_time_batches_and_links_cross_day_reversals(tmp_path):
+    path = tmp_path / "count-history.db"
+    midnight = datetime.fromisoformat("2026-11-26T00:00:00+08:00").timestamp()
+    now = midnight - 0.001
+    with TestClient(create_app(path, clock=lambda: now)) as api:
+        with Store(path).transaction() as conn:
+            conn.execute("INSERT INTO products VALUES ('WRAP-01',5,5)")
+        assert batch_count(api, "prior", [count_item("WRAP-01", 5)]).status_code == 201
+        now = midnight
+        assert batch_count(api, "morning-a", [count_item("KIT-01", 20)]).status_code == 201
+        assert batch_count(api, "morning-z", [count_item("KIT-01", 18), count_item("WRAP-01", 5)]).status_code == 201
+        assert adjust(api, "single", 1, 18).status_code == 201
+    with TestClient(create_app(path, clock=lambda: now)) as api, TestClient(create_app(path, clock=lambda: now)) as writer:
+        filters = {"date": "2026-11-26", "sku": "KIT-01", "limit": 1}
+        first = api.get(BATCH, params=filters).raise_for_status()
+        assert first.headers["Cache-Control"] == "no-store"
+        current = first.json()
+        assert current == {"date": "2026-11-26", "sku": "KIT-01", "captured_at_ms": int(midnight * 1000),
+                           "summary": {"total_batches": 2, "reversal_batches": 0, "reversed_batches": 0},
+                           "batches": [{"batch_id": "morning-z", "recorded_at_ms": int(midnight * 1000),
+                                        "count_session": "shift-count", "items": 2, "changed_items": 1,
+                                        "source_batch_id": None, "reversal_batch_id": None}],
+                           "next": {"before_recorded_at_ms": int(midnight * 1000), "before_batch_id": "morning-z"}}
+        now = midnight + 86400
+        correction = reversal(writer, "undo", batch_id="morning-z").raise_for_status().json()["batch_id"]
+        older = api.get(BATCH, params={**filters, **current["next"]}).raise_for_status().json()
+        assert [row["batch_id"] for row in older["batches"]] == ["morning-a"]
+        assert older["summary"] == {"total_batches": 2, "reversal_batches": 0, "reversed_batches": 1}
+        assert older["next"] is None
+        original = api.get(BATCH, params=filters).json()["batches"][0]
+        assert original["reversal_batch_id"] == correction
+        next_day = api.get(BATCH, params={"date": "2026-11-27"}).json()
+        assert next_day["summary"] == {"total_batches": 1, "reversal_batches": 1, "reversed_batches": 0}
+        assert next_day["batches"][0]["source_batch_id"] == "morning-z"
+        assert api.get(BATCH, params={"date": "2026-11-25"}).json()["batches"][0]["batch_id"] == "prior"
+        assert api.get(BATCH, params={"sku": "UNKNOWN"}).json()["batches"] == []
+        assert api.get(BATCH, params={"date": "2026-02-30"}).status_code == 422
+        assert api.get(BATCH, params={"before_batch_id": "morning-z"}).status_code == 422
 
 
 def test_count_batch_rolls_back_and_replays_all_receipts_after_restart(tmp_path):

@@ -412,6 +412,39 @@ class Store:
                 raise Missing("Unknown stock count batch")
             return {"batch_id": batch_id, "items": receipts}
 
+    def stock_count_history(self, sku, day_range, before, limit):
+        from_ms, to_ms = day_range or (None, None)
+        page_filter = "" if before is None else "WHERE (recorded_at_ms,batch_id)<(?,?)"
+        parameters = (from_ms, from_ms, to_ms, sku, sku) + (() if before is None else before) + (limit + 1,)
+        with closing(self.connect()) as conn:
+            rows = conn.execute(f"""WITH counted AS (
+                SELECT b.batch_id,MAX(a.recorded_at_ms) AS recorded_at_ms,MAX(a.count_session) AS count_session,
+                       COUNT(*) AS items,SUM(a.counted<>a.previous_capacity) AS changed_items
+                FROM stock_count_batch_items AS b JOIN stock_count_adjustments AS a ON a.id=b.adjustment_id
+                WHERE (? IS NULL OR (a.recorded_at_ms>=? AND a.recorded_at_ms<?))
+                GROUP BY b.batch_id HAVING (? IS NULL OR MAX(a.sku=?)=1)
+            ), linked AS (
+                SELECT counted.*, earlier.source_batch_id,later.reversal_batch_id FROM counted
+                LEFT JOIN stock_count_batch_reversals AS earlier ON earlier.reversal_batch_id=counted.batch_id
+                LEFT JOIN stock_count_batch_reversals AS later ON later.source_batch_id=counted.batch_id
+            ), totals AS (
+                SELECT COUNT(*) AS total_batches,COUNT(source_batch_id) AS reversal_batches,
+                       COUNT(reversal_batch_id) AS reversed_batches FROM linked
+            ), page AS (
+                SELECT * FROM linked {page_filter} ORDER BY recorded_at_ms DESC,batch_id DESC LIMIT ?
+            )
+            SELECT page.*,totals.* FROM totals LEFT JOIN page ON TRUE
+            ORDER BY page.recorded_at_ms DESC,page.batch_id DESC""", parameters).fetchall()
+            captured_at_ms = int(self.clock() * 1000)
+        counts = {key: rows[0][key] for key in ("total_batches", "reversal_batches", "reversed_batches")}
+        batches = [{key: row[key] for key in row.keys() if key not in counts}
+                   for row in rows[:limit] if row["batch_id"] is not None]
+        next_cursor = None
+        if len(rows) > limit:
+            tail = batches[-1]
+            next_cursor = {"before_recorded_at_ms": tail["recorded_at_ms"], "before_batch_id": tail["batch_id"]}
+        return {"captured_at_ms": captured_at_ms, "summary": counts, "batches": batches, "next": next_cursor}
+
     def stock_count_batch_reversal_record(self, conn, batch_id):
         link = conn.execute("""SELECT reversal_batch_id,request_id FROM stock_count_batch_reversals
                                WHERE source_batch_id=?""", (batch_id,)).fetchone()

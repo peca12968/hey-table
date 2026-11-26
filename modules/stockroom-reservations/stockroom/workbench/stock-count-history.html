@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>庫存盤點紀錄｜Stockroom</title>
+  <link rel="stylesheet" href="/workbench/assets/workbench.css">
+  <script type="module" src="/workbench/assets/stock-count-history.mjs"></script>
+</head>
+<body>
+  <header><div class="shell"><span>Stockroom</span><h1>庫存盤點紀錄</h1></div></header>
+  <main class="shell">
+    <p class="meta"><a href="/workbench/stock-count">返回庫存盤點</a></p>
+    <section class="panel" aria-labelledby="filter-heading">
+      <h2 id="filter-heading">篩選批次</h2>
+      <form class="actions" id="filter">
+        <label>入帳日期（台灣）<input id="date" type="date" disabled></label>
+        <label>商品 SKU<input id="sku" maxlength="80" autocomplete="off" placeholder="留空查全庫" disabled></label>
+        <button id="search" disabled>查詢盤點紀錄</button>
+      </form>
+    </section>
+    <p id="error" role="alert" hidden></p>
+    <section class="panel" aria-labelledby="history-heading">
+      <h2 id="history-heading">盤點入帳及沖回</h2>
+      <p id="summary" role="status">正在擷取盤點紀錄…</p>
+      <p class="meta" id="captured" hidden>擷取時間（台灣） <time id="capture-time"></time></p>
+      <ol id="batches" aria-label="盤點批次"></ol>
+      <div class="actions">
+        <button id="first" class="outline" type="button" hidden>返回第一頁</button>
+        <button id="more" class="outline" type="button" hidden>下一頁</button>
+        <button id="download" class="outline" type="button" hidden>下載本頁 JSON</button>
+      </div>
+    </section>
+  </main>
+</body>
+</html>

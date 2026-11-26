@@ -5,9 +5,15 @@
     "available": 14,
     "counted": null,
     "variance": null,
-    "missing_batches": ["spare-bin"],
-    "conflicted_batches": ["pallet"],
-    "unmapped_batches": ["empty-box"]
+    "missing_batches": [
+      "spare-bin"
+    ],
+    "conflicted_batches": [
+      "pallet"
+    ],
+    "unmapped_batches": [
+      "empty-box"
+    ]
   },
   {
     "stage": "variance",
@@ -112,6 +118,78 @@
             "revision": 2
           }
         ]
+      },
+      "history": {
+        "workbench": "/workbench/stock-count-history",
+        "original": {
+          "date": null,
+          "sku": "WRAP-01",
+          "captured_at_ms": 102000,
+          "summary": {
+            "total_batches": 1,
+            "reversal_batches": 0,
+            "reversed_batches": 0
+          },
+          "batches": [
+            {
+              "batch_id": "morning-cycle",
+              "recorded_at_ms": 102000,
+              "count_session": "morning",
+              "items": 2,
+              "changed_items": 2,
+              "source_batch_id": null,
+              "reversal_batch_id": null
+            }
+          ],
+          "next": null
+        },
+        "latest": {
+          "date": null,
+          "sku": "WRAP-01",
+          "captured_at_ms": 103000,
+          "summary": {
+            "total_batches": 2,
+            "reversal_batches": 1,
+            "reversed_batches": 1
+          },
+          "batches": [
+            {
+              "batch_id": "10000000000040008000000000000001",
+              "recorded_at_ms": 103000,
+              "count_session": "morning",
+              "items": 2,
+              "changed_items": 2,
+              "source_batch_id": "morning-cycle",
+              "reversal_batch_id": null
+            }
+          ],
+          "next": {
+            "before_recorded_at_ms": 103000,
+            "before_batch_id": "10000000000040008000000000000001"
+          }
+        },
+        "older": {
+          "date": null,
+          "sku": "WRAP-01",
+          "captured_at_ms": 103000,
+          "summary": {
+            "total_batches": 2,
+            "reversal_batches": 1,
+            "reversed_batches": 1
+          },
+          "batches": [
+            {
+              "batch_id": "morning-cycle",
+              "recorded_at_ms": 102000,
+              "count_session": "morning",
+              "items": 2,
+              "changed_items": 2,
+              "source_batch_id": null,
+              "reversal_batch_id": "10000000000040008000000000000001"
+            }
+          ],
+          "next": null
+        }
       }
     }
   },

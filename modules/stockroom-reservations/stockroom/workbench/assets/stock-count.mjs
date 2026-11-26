@@ -292,3 +292,14 @@ if (pending) {
   setMessage('status', '這一批盤點等待確認。');
 }
 controls();
+const locationQuery = new URLSearchParams(location.search);
+try {
+  const back = new URL(locationQuery.get('from') ?? '', location.origin);
+  if (back.origin === location.origin && back.pathname === '/workbench/stock-count-history')
+    by('history-link').href = back.pathname + back.search;
+} catch {}
+const linkedBatch = locationQuery.get('batch');
+if (/^[A-Za-z0-9_-]{1,80}$/.test(linkedBatch ?? '')) {
+  by('lookup-batch').value = linkedBatch;
+  lookup.requestSubmit();
+}

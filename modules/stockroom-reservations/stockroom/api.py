@@ -1,4 +1,5 @@
 from contextlib import asynccontextmanager
+from datetime import date, datetime, time as day_time, timedelta, timezone
 import csv
 from io import StringIO
 from pathlib import Path
@@ -226,6 +227,36 @@ class StockCountBatchReceipt(BaseModel):
 
 class StockCountBatchReversal(StockCountBatchReceipt):
     source_batch_id: str
+
+
+class StockCountHistoryBatch(BaseModel):
+    batch_id: str
+    recorded_at_ms: int
+    count_session: str
+    items: int
+    changed_items: int
+    source_batch_id: str | None
+    reversal_batch_id: str | None
+
+
+class StockCountHistorySummary(BaseModel):
+    total_batches: int
+    reversal_batches: int
+    reversed_batches: int
+
+
+class StockCountHistoryCursor(BaseModel):
+    before_recorded_at_ms: int
+    before_batch_id: str
+
+
+class StockCountHistory(BaseModel):
+    date: str | None
+    sku: str | None
+    captured_at_ms: int
+    summary: StockCountHistorySummary
+    batches: list[StockCountHistoryBatch]
+    next: StockCountHistoryCursor | None
 
 
 class ExpiringReservation(BaseModel):
@@ -712,6 +743,7 @@ def create_app(path: Path, *, ttl_seconds=900, clock=time.time):
             "returns.mjs": "text/javascript",
             "return-history.mjs": "text/javascript",
             "stock-count.mjs": "text/javascript",
+            "stock-count-history.mjs": "text/javascript",
             "quarantine.css": "text/css",
             "workbench.css": "text/css",
         }.get(name)
@@ -723,7 +755,8 @@ def create_app(path: Path, *, ttl_seconds=900, clock=time.time):
 
     @app.get("/workbench/{tool_name}", include_in_schema=False)
     def workbench_page(tool_name: str):
-        if tool_name not in ("dispatch", "quarantine", "quarantine-queue", "replacement", "returns", "return-history", "stock-count"):
+        if tool_name not in ("dispatch", "quarantine", "quarantine-queue", "replacement", "returns", "return-history",
+                             "stock-count", "stock-count-history"):
             raise HTTPException(status_code=404)
         return FileResponse(workbench / (tool_name + ".html"), media_type="text/html", headers={
             "Cache-Control": "no-store",
@@ -802,6 +835,30 @@ def create_app(path: Path, *, ttl_seconds=900, clock=time.time):
         if not created:
             response.status_code = 200
         return receipt
+
+    @app.get("/stock-count-batches", response_model=StockCountHistory)
+    def stock_count_history(
+        response: Response,
+        recorded_on: Annotated[str | None, Query(alias="date", pattern=r"^\d{4}-\d{2}-\d{2}$")] = None,
+        sku: Annotated[str | None, Query(min_length=1, max_length=80)] = None,
+        limit: Annotated[int, Query(ge=1, le=100)] = 25,
+        before_recorded_at_ms: Annotated[int | None, Query(ge=-(2**63), le=2**63 - 1)] = None,
+        before_batch_id: Annotated[str | None, Query(pattern=r"^[A-Za-z0-9_-]{1,80}$")] = None,
+    ):
+        if (before_recorded_at_ms is None) != (before_batch_id is None):
+            raise HTTPException(422, "Supply a complete stock count history cursor")
+        bounds = None
+        if recorded_on is not None:
+            try:
+                day = date.fromisoformat(recorded_on)
+            except ValueError:
+                raise HTTPException(422, "Supply a valid stock count date") from None
+            midnight = datetime.combine(day, day_time.min, timezone(timedelta(hours=8)))
+            start = int(midnight.timestamp() * 1000)
+            bounds = (start, start + 86_400_000)
+        before = None if before_batch_id is None else (before_recorded_at_ms, before_batch_id)
+        response.headers["Cache-Control"] = "no-store"
+        return {"date": recorded_on, "sku": sku, **store.stock_count_history(sku, bounds, before, limit)}
 
     @app.get("/stock-count-batches/{batch_id}", response_model=StockCountBatchReceipt)
     def stock_count_batch_receipt(batch_id: BoxKey, response: Response):
