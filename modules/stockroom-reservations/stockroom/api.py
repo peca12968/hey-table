@@ -415,6 +415,14 @@ class ReturnInspectionReceipt(BaseModel):
     boxes: list[ReturnInspectedBox]
 
 
+class ReturnInspectionPreviewBox(ReturnInspectionBox):
+    label_quantity: int = Field(strict=True, ge=1, le=1_000_000)
+
+
+class ReturnInspectionPreviewBatch(ReturnInspectionBatch):
+    boxes: list[ReturnInspectionPreviewBox] = Field(min_length=1, max_length=100)
+
+
 class QuarantineStatusBox(BaseModel):
     reservation_id: BoxKey
     shipment_id: BoxKey
@@ -632,6 +640,7 @@ def create_app(path: Path, *, ttl_seconds=900, clock=time.time):
             "dispatch.mjs": "text/javascript",
             "quarantine.mjs": "text/javascript",
             "replacement.mjs": "text/javascript",
+            "returns.mjs": "text/javascript",
             "quarantine.css": "text/css",
             "workbench.css": "text/css",
         }.get(name)
@@ -643,7 +652,7 @@ def create_app(path: Path, *, ttl_seconds=900, clock=time.time):
 
     @app.get("/workbench/{tool_name}", include_in_schema=False)
     def workbench_page(tool_name: str):
-        if tool_name not in ("dispatch", "quarantine", "replacement"):
+        if tool_name not in ("dispatch", "quarantine", "replacement", "returns"):
             raise HTTPException(status_code=404)
         return FileResponse(workbench / (tool_name + ".html"), media_type="text/html", headers={
             "Cache-Control": "no-store",
@@ -843,6 +852,11 @@ def create_app(path: Path, *, ttl_seconds=900, clock=time.time):
     @app.get("/return-batches/{batch_id}", response_model=ReturnBatchReceipt)
     def return_batch_receipt(batch_id: str):
         return store.return_batch_receipt(batch_id)
+
+    @app.post("/return-inspections/preview")
+    def preview_return_inspection(batch: ReturnInspectionPreviewBatch, response: Response):
+        response.headers["Cache-Control"] = "no-store"
+        return store.preview_return_inspection([box.model_dump() for box in batch.boxes])
 
     @app.post("/return-inspections", response_model=ReturnInspectionReceipt, status_code=201,
               responses={200: {"model": ReturnInspectionReceipt, "description": "Original return inspection receipt"}})

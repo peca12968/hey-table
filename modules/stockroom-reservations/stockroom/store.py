@@ -1214,6 +1214,26 @@ class Store:
                                ORDER BY reservation_id,shipment_id""", (batch_id,))
         return [dict(row) for row in rows]
 
+    def preview_return_inspection(self, boxes):
+        reviewed = []
+        with closing(self.connect()) as conn:
+            conn.execute("BEGIN")
+            for box in boxes:
+                try:
+                    balance = self.shipment_balance(conn, box["reservation_id"], box["shipment_id"])
+                except Missing:
+                    reviewed.append(dict(box, status="unknown_shipment", sku=None, dispatched=None, returnable=None))
+                    continue
+                remaining = balance["returnable"] - box["sellable"] - box["quarantined"]
+                status = "ready"
+                if box["label_quantity"] != balance["dispatched"]:
+                    status = "label_mismatch"
+                elif remaining < 0:
+                    status = "insufficient_returnable"
+                reviewed.append(dict(box, status=status, sku=balance["sku"], dispatched=balance["dispatched"],
+                                     returnable=balance["returnable"]))
+        return {"can_receive": all(box["status"] == "ready" for box in reviewed), "boxes": reviewed}
+
     def return_inspection(self, batch_id, boxes):
         ordered = sorted(boxes)
         with self.current_inventory() as (conn, _):

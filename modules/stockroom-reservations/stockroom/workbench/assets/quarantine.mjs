@@ -294,4 +294,10 @@ if (pending) {
   batchInput.value = pending.batch;
   setMessage('status', '有一筆複驗等待確認結果。');
   showReview();
+} else {
+  const batch = new URLSearchParams(location.search).get('batch');
+  if (batch && idPattern.test(batch)) {
+    batchInput.value = batch;
+    batchForm.requestSubmit();
+  }
 }

@@ -30,6 +30,39 @@ def shipment(api, order):
     return api.get(f"/reservations/{order}/fulfillments/box").json()
 
 
+def test_return_preview_checks_original_label_and_current_balance_without_writing(tmp_path):
+    with TestClient(create_app(tmp_path / "stockroom.db")) as api:
+        shipped(api, "east", 3)
+        shipped(api, "west", 2)
+        assert inspect(api, "earlier", [box("east", 0, 1)]).status_code == 201
+        before = api.get("/inventory").json()
+        east = dict(box("east", 1, 1), label_quantity=3)
+        west = dict(box("west", 1, 0), label_quantity=2)
+
+        def preview(*rows):
+            return api.post("/return-inspections/preview", json={"boxes": rows})
+
+        ready = preview(west, east)
+        assert (ready.status_code, ready.headers["Cache-Control"]) == (200, "no-store")
+        assert ready.json() == {"can_receive": True, "boxes": [
+            dict(west, sku="KIT-01", dispatched=2, returnable=2, status="ready"),
+            dict(east, sku="KIT-01", dispatched=3, returnable=2, status="ready"),
+        ]}
+        blocked = preview(dict(west, label_quantity=1), dict(east, quarantined=2),
+                          dict(east, shipment_id="unshipped"))
+        assert blocked.status_code == 200 and not blocked.json()["can_receive"]
+        assert [row["status"] for row in blocked.json()["boxes"]] == [
+            "label_mismatch", "insufficient_returnable", "unknown_shipment",
+        ]
+        assert blocked.json()["boxes"][2]["returnable"] is None
+        assert preview(east, east).status_code == 422
+        assert preview(dict(east, label_quantity=True)).status_code == 422
+        assert api.get("/return-inspections/preview").status_code == 404
+        assert api.get("/inventory").json() == before
+        assert shipment(api, "east")["returnable"] == 2
+        assert shipment(api, "west")["returnable"] == 2
+
+
 def test_legacy_receipt_upgrade_mixed_inspection_and_audit(tmp_path):
     database, opening = tmp_path / "stockroom.db", tmp_path / "before.db"
     with TestClient(create_app(database)) as api:

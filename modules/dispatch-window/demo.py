@@ -68,6 +68,23 @@ def condition_demo(client, request):
     assert client.get("/inventory").json()[0] == before
     preview = receive(valid, batch, request)
     assert preview["state"] == "ready"
+    workbench_url = "/workbench/returns"
+    workbench = client.get(workbench_url)
+    assert workbench.status_code == 200 and workbench.headers["Cache-Control"] == "no-store"
+    assert 'name="barcode"' in workbench.text
+
+    def workbench_preview(report):
+        fields = ("reservation_id", "shipment_id", "sellable", "quarantined", "label_quantity")
+        boxes = [{field: row[field] for field in fields} for row in report["boxes"]]
+        response = client.post("/return-inspections/preview", json={"boxes": boxes})
+        assert response.status_code == 200 and response.headers["Cache-Control"] == "no-store"
+        result = response.json()
+        assert [row["status"] for row in result["boxes"]] == [row["status"] for row in report["boxes"]]
+        assert result["can_receive"] == (report["state"] == "ready")
+        return result
+
+    workbench_checks = {"blocked": workbench_preview(blocked), "ready": workbench_preview(preview)}
+    assert client.get("/inventory").json()[0] == before
     confirmed = receive(valid, batch, request, confirm=True)
     assert confirmed["state"] == "received"
     recovered = receive(valid, batch, request, confirm=True)
@@ -78,6 +95,7 @@ def condition_demo(client, request):
     assert client.get("/reservations/D/fulfillments/D1").json()["quarantined"] == 1
     return {"format": "dispatch-window.return-conditions-demo.v1", "blocked_csv": invalid, "accepted_csv": valid,
             "blocked": blocked, "preview": preview, "confirmed": confirmed, "recovered": recovered,
+            "workbench": workbench_url, "workbench_checks": workbench_checks,
             "inventory_before": before, "inventory_after": after}
 
 

@@ -157,6 +157,12 @@ SQLite 會核對每個 SKU 的原入帳後版次，並嘗試恢復原批次調�
 
 每批最多 100 箱，合格與隔離加總須在各箱可退量內。任何一箱不符時，整批都會回滾。舊的單箱退貨、整批退貨和新版驗收共用同一個剩餘可退量。用原批號重送相同箱件與條件可查回原收據。SQLite 快照對帳會分列合格入庫與新增隔離，只有合格入庫影響可販售盤點。[舊資料、回滾與並行驗收測試](tests/test_return_inspections.py)
 
+#### 用瀏覽器驗收退貨
+
+啟動 Stockroom 後開啟 [退貨驗收工作台](http://127.0.0.1:8000/workbench/returns)。輸入驗收批號，掃描或貼上每箱的原出貨條碼，例如 `DW1/east/box/3`，再填合格、隔離件數。工作台透過 `POST /return-inspections/preview` 逐箱核對原出貨件數與目前可退量。確認時若有其他人先驗收，整批回滾並刷新各箱可退量。
+
+送出後若斷線，可在同一分頁重新整理，再以原批號重試。工作台會取回原收據，或以同一批號重送。完成後可查詢和下載 JSON 收據，有隔離件時可直接開啟該批的複驗工作台。[手機瀏覽器對端測試](../../qa/stockroom-workbench.spec.mjs) · [退貨驗收試玩（私人預覽）](https://peca-github-demo.peca12968.chatgpt.site/?demo=returnReceiving#demos)
+
 ### 複驗隔離品並登記回庫或報廢
 
 先用 `GET /return-inspections/{batch_id}/quarantine` 查原驗收批的待處理件數。複驗後把當時查到的 `remaining` 放進每箱的 `expected_remaining`，並記錄回庫、報廢及原因。依同一驗收批一次送 1 至 100 箱。以下 `decision.json` 將 2 件中的 1 件回庫、1 件報廢。

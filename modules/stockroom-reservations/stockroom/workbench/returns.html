@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>退貨驗收｜Stockroom</title>
+  <link rel="stylesheet" href="/workbench/assets/workbench.css">
+  <script type="module" src="/workbench/assets/returns.mjs"></script>
+</head>
+<body>
+  <header><div class="shell"><span>Stockroom</span><h1>退貨驗收</h1></div></header>
+  <main class="shell">
+    <section class="panel" aria-labelledby="boxes-heading">
+      <h2 id="boxes-heading">登記退回箱件</h2>
+      <form id="draft">
+        <label>驗收批號<input id="batch" required maxlength="80" pattern="[A-Za-z0-9_\-]+" autocomplete="off"></label>
+        <p class="meta" id="barcode-hint">掃描原出貨條碼，或貼上 DW1/訂單/箱號/原出貨件數。</p>
+        <div id="boxes"></div>
+        <div class="actions">
+          <button id="add" type="button" class="outline">新增箱件</button>
+          <button id="preview-button">預覽退貨驗收</button>
+        </div>
+      </form>
+    </section>
+    <p id="status" role="status" hidden></p>
+    <p id="error" role="alert" hidden></p>
+    <section id="review" class="panel" aria-labelledby="review-heading" hidden>
+      <h2 id="review-heading">核對退貨箱件</h2>
+      <p id="summary" class="meta"></p>
+      <ul id="review-lines"></ul>
+      <button id="confirm" type="button">確認整批驗收</button>
+    </section>
+    <section class="panel" aria-labelledby="lookup-heading">
+      <h2 id="lookup-heading">查詢驗收收據</h2>
+      <form id="lookup-form" class="actions">
+        <label>收據批號<input id="receipt-key" required maxlength="80" pattern="[A-Za-z0-9_\-]+" autocomplete="off"></label>
+        <button class="outline">取回驗收收據</button>
+      </form>
+    </section>
+    <section id="receipt" class="panel" aria-labelledby="receipt-heading" hidden>
+      <h2 id="receipt-heading">退貨驗收收據</h2>
+      <p id="saved-batch" class="meta"></p>
+      <ul id="saved-lines"></ul>
+      <div class="actions">
+        <button id="download" type="button" class="outline">下載驗收收據 JSON</button>
+        <a id="quarantine" hidden>開啟隔離品複驗</a>
+      </div>
+    </section>
+    <template id="box-template">
+      <fieldset>
+        <legend></legend>
+        <div class="box-fields">
+          <label class="reason">原出貨條碼<input name="barcode" required maxlength="173" autocomplete="off" spellcheck="false" aria-describedby="barcode-hint"></label>
+          <label>合格件數<input name="sellable" type="number" required min="0" max="1000000" step="1" inputmode="numeric" value="0"></label>
+          <label>隔離件數<input name="quarantined" type="number" required min="0" max="1000000" step="1" inputmode="numeric" value="0"></label>
+          <button type="button" class="outline" data-remove>移除箱件</button>
+        </div>
+      </fieldset>
+    </template>
+  </main>
+</body>
+</html>

@@ -922,6 +922,63 @@
         ]
       }
     },
+    "workbench": "/workbench/returns",
+    "workbench_checks": {
+      "blocked": {
+        "can_receive": false,
+        "boxes": [
+          {
+            "reservation_id": "C",
+            "shipment_id": "C1",
+            "sellable": 1,
+            "quarantined": 3,
+            "label_quantity": 3,
+            "status": "insufficient_returnable",
+            "sku": "KIT-01",
+            "dispatched": 3,
+            "returnable": 3
+          },
+          {
+            "reservation_id": "D",
+            "shipment_id": "D1",
+            "sellable": 0,
+            "quarantined": 1,
+            "label_quantity": 2,
+            "status": "ready",
+            "sku": "KIT-01",
+            "dispatched": 2,
+            "returnable": 1
+          }
+        ]
+      },
+      "ready": {
+        "can_receive": true,
+        "boxes": [
+          {
+            "reservation_id": "C",
+            "shipment_id": "C1",
+            "sellable": 1,
+            "quarantined": 1,
+            "label_quantity": 3,
+            "status": "ready",
+            "sku": "KIT-01",
+            "dispatched": 3,
+            "returnable": 3
+          },
+          {
+            "reservation_id": "D",
+            "shipment_id": "D1",
+            "sellable": 0,
+            "quarantined": 1,
+            "label_quantity": 2,
+            "status": "ready",
+            "sku": "KIT-01",
+            "dispatched": 2,
+            "returnable": 1
+          }
+        ]
+      }
+    },
     "inventory_before": {
       "sku": "KIT-01",
       "capacity": 14,

@@ -377,3 +377,89 @@ test("the workbench imports a real scan export, enforces its window and shares o
   expect(attempts).toBe(2);
   expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBe(360);
 });
+
+test("return workbench checks scanned labels, refreshes a stale batch and hands a recovered receipt to quarantine",async({page,request})=>{
+  execFileSync(python,["-c",`import sqlite3, sys
+with sqlite3.connect(sys.argv[1]) as db:
+    db.execute("INSERT INTO products VALUES ('RTN-01', 8, 8)")
+`,join(directory,"stockroom.sqlite")],{windowsHide:true});
+  const endpoint="/return-inspections",batch="scanned-dock";
+  const post=(path,key,data)=>request.post(origin+path,{headers:{"Idempotency-Key":key},data});
+  for(const [order,quantity] of [["rtn-a",2],["rtn-b",3],["rtn-c",2]]){
+    expect((await post("/reservations",order,{sku:"RTN-01",quantity})).status()).toBe(201);
+    expect((await post("/reservations/"+order+"/fulfillments","box",{quantity})).status()).toBe(201);
+  }
+  const stock=async()=>((await (await request.get(origin+"/inventory")).json()).find(row=>row.sku==="RTN-01").available);
+  expect(await stock()).toBe(1);
+
+  await page.setViewportSize({width:360,height:780});
+  const front=await page.goto(origin+"/workbench/returns");
+  expect(front.headers()["cache-control"]).toBe("no-store");
+  const batchInput=page.getByLabel("驗收批號",{exact:true});
+  await batchInput.fill(batch);
+  const first=page.getByRole("group",{name:"箱件 1"}),second=page.getByRole("group",{name:"箱件 2"});
+  const preview=page.getByRole("button",{name:"預覽退貨驗收"});
+  const confirm=page.getByRole("button",{name:"確認整批驗收"});
+  await first.getByLabel("原出貨條碼").fill("DW1/rtn-a/box/3");
+  await first.getByLabel("原出貨條碼").press("Enter");
+  await expect(first.getByLabel("合格件數")).toBeFocused();
+  await first.getByLabel("合格件數").fill("1");
+  await first.getByLabel("隔離件數").fill("1");
+  await page.getByRole("button",{name:"新增箱件"}).click();
+  await second.getByLabel("原出貨條碼").fill("DW1/rtn-a/box/2");
+  await second.getByLabel("合格件數").fill("1");
+  await preview.click();
+  await expect(page.getByRole("alert")).toContainText("已掃描");
+  await second.getByLabel("原出貨條碼").fill("DW1/rtn-b/box/3");
+  await preview.click();
+  await expect(page.getByText("條碼標示 3 件，原出貨紀錄為 2 件",{exact:false})).toBeVisible();
+  await expect(confirm).toBeDisabled();
+  await first.getByLabel("原出貨條碼").fill("DW1/rtn-a/box/2");
+  await preview.click();
+  await expect(confirm).toBeEnabled();
+  expect(await stock()).toBe(1);
+
+  expect((await post(endpoint,"other-dock",{boxes:[
+    {reservation_id:"rtn-b",shipment_id:"box",sellable:0,quarantined:3},
+  ]})).status()).toBe(201);
+  await confirm.click();
+  await expect(page.getByRole("alert")).toContainText("整批未登記");
+  await expect(page.getByText("本次件數超過尚可驗收件數",{exact:false})).toBeVisible();
+  expect((await request.get(origin+endpoint+"/"+batch)).status()).toBe(404);
+  expect(await stock()).toBe(1);
+  expect((await (await request.get(origin+"/reservations/rtn-a/fulfillments/box")).json()).returnable).toBe(2);
+
+  await second.getByLabel("原出貨條碼").fill("DW1/rtn-c/box/2");
+  await preview.click();
+  await expect(confirm).toBeEnabled();
+  let sends=0;
+  await page.route(origin+endpoint,async route=>{
+    sends++;
+    expect((await route.fetch()).status()).toBe(201);
+    await route.abort("failed");
+  });
+  await confirm.click();
+  await expect(page.getByRole("alert")).toContainText("尚未收到驗收結果");
+  await page.reload();
+  await expect(batchInput).toHaveValue(batch);
+  await expect(batchInput).toBeDisabled();
+  await page.getByRole("button",{name:"重試原驗收批次"}).click();
+  await expect(page.getByRole("status")).toHaveText("已取回原驗收收據。");
+  await expect(batchInput).toBeEnabled();
+  expect(sends).toBe(1);
+  expect(await stock()).toBe(3);
+  await page.getByRole("button",{name:"取回驗收收據"}).click();
+  await expect(page.getByRole("heading",{name:"退貨驗收收據"})).toBeVisible();
+  const downloadPromise=page.waitForEvent("download");
+  await page.getByRole("button",{name:"下載驗收收據 JSON"}).click();
+  const download=await downloadPromise;
+  expect(download.suggestedFilename()).toBe(batch+".json");
+  const saved=JSON.parse(await readFile(await download.path(),"utf8"));
+  expect(saved).toEqual({batch_id:batch,boxes:[
+    {reservation_id:"rtn-a",shipment_id:"box",sellable:1,quarantined:1,returnable_after:0},
+    {reservation_id:"rtn-c",shipment_id:"box",sellable:1,quarantined:0,returnable_after:1},
+  ]});
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBe(360);
+  await page.getByRole("link",{name:"開啟隔離品複驗"}).click();
+  await expect(page.getByText(batch+" · 尚待處理 1 件")).toBeVisible();
+});
